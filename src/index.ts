@@ -11,7 +11,8 @@ import { preview } from "./routes/preview.js";
 
 const app = new Hono();
 app.use("*", logger());
-app.use("*", cors({ origin: [env.appOrigin, "http://localhost:5173"], allowHeaders: ["authorization", "content-type"] }));
+const origins = [...env.appOrigin.split(",").map((o) => o.trim()).filter(Boolean), "http://localhost:5173"];
+app.use("*", cors({ origin: origins, allowHeaders: ["authorization", "content-type"] }));
 
 app.get("/health", (c) => c.json({ ok: true, v: "0.1.0" }));
 app.route("/auth", auth);
