@@ -60,9 +60,13 @@ export async function runShot(shotId: string) {
       output: { ...out, ...scores(out.matches), pdf_path },
     }).eq("id", shotId);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error("[shot]", shotId, msg);
-    await db.from("shots").update({ status: "failed", error: msg }).eq("id", shotId);
+    const raw = e instanceof Error ? e.message : String(e);
+    console.error("[shot]", shotId, raw);
+    // user sees a plain sentence; the real error stays in the log and in `detail`
+    const friendly = (e as { status?: number }).status && (e as { status?: number }).status! < 500
+      ? raw
+      : "We couldn't finish this one. Your shot is back — try again in a minute.";
+    await db.from("shots").update({ status: "failed", error: friendly, output: { detail: raw.slice(0, 500) } }).eq("id", shotId);
     // refund the shot
     await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
   }
