@@ -1,0 +1,694 @@
+{
+  "profile": {
+    "name": "KARTHIKEYAN RAMAKRISHNAN",
+    "headline": "Director, FMCG and Grocery",
+    "contact": {
+      "email": "karthikmramakrishnan@gmail.com",
+      "phone": "+91 99520 37479",
+      "city": "Bengaluru, India",
+      "links": []
+    },
+    "years_total": 10,
+    "roles": [
+      {
+        "company": "Ninjacart",
+        "title": "Director, FMCG and Grocery",
+        "start": "Aug’24",
+        "end": "Present",
+        "bullets": [
+          "Business Side: End-to-end category management, product selection, market intelligence, pricing strategies, inventory optimization, P&L management, vendor negotiations, and retail strategy implementation.",
+          "Product Side: Worked closely with the tech and engineering teams and product managed the entire development and deployment of the seller and buyer facing applications."
+        ]
+      },
+      {
+        "company": "Unacademy",
+        "title": "Associate Director, Growth & Revenue",
+        "start": "Feb’22",
+        "end": "Jan’24",
+        "bullets": [
+          "Managed a portfolio of $5M with an EBITDA of 20%.",
+          "Enhancing engagement, retention, and user stickiness through the optimization of Customer Lifecycle Management (CLM) campaigns.",
+          "Devising targeted content strategies for top-of-funnel (Performance Marketing and GTMs), mid-funnel (product interaction), and bottom-funnel (conversion) stages. Utilizing market research to identify untapped opportunities and potential threats adjusting strategies accordingly.",
+          "Drove online revenue market share from 8% to a commanding 55% in just 18 months, showcasing a strategic and successful growth trajectory.",
+          "Delivered an ROI of >10X on Performance Marketing campaigns, generating $ 1.3M in revenue against $100K spending.",
+          "Collaborated with engineering and design teams to drive measurable growth in adoption and engagement.",
+          "Crafted a client feedback loop and fine-tuned it for optimal alignment with both client satisfaction and key business success metrics.",
+          "Led the development of product assortments, and ensured they aligned with customer preferences and market demand."
+        ]
+      },
+      {
+        "company": "Fashinza (Tirupur)",
+        "title": "Senior Manager, Category Management and Operations",
+        "start": "Mar’21",
+        "end": "Feb’22",
+        "bullets": [
+          "Established a network of 500+ suppliers and managed the entire base for sourcing.",
+          "Scaled monthly GMV to $100K within a year, setting up core backend functions from scratch.",
+          "Collaborated with engineering and design teams to drive measurable growth in adoption and engagement.",
+          "Crafted a client feedback loop and fine-tuned it for optimal alignment with both client satisfaction and key business success metrics.",
+          "Led the development of product assortments, and ensured they aligned with customer preferences and market demand."
+        ]
+      },
+      {
+        "company": "Ninjacart (Chennai)",
+        "title": "Senior Manager, Category Management",
+        "start": "Apr’18",
+        "end": "Mar’21",
+        "bullets": [
+          "Managed P&L for key categories contributing 60% of revenue, driving 5x growth in daily volumes within 100 days.",
+          "Led P&L optimization and market intelligence for 30+ cities, conducting daily price benchmarking across 75+ SKUs."
+        ]
+      },
+      {
+        "company": "Accenture (Chennai)",
+        "title": "Software Engineer",
+        "start": "Sep’14",
+        "end": "Aug’17",
+        "bullets": [
+          "Led end-to-end software development lifecycle, including design and implementation of business-critical applications while analyzing key performance drivers.",
+          "Managed incident resolution through multiple channels and integrated new technologies/automation solutions to enhance existing systems."
+        ]
+      }
+    ],
+    "skills": [
+      {
+        "name": "Revenue Growth Strategies",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "Market Intelligence",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "Customer Lifecycle Management",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "Supply Chain Optimization",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "Business Process Re-engineering",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "Market Trend Analysis",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "Category Management",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "Marketing Campaigns",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "P&L Optimization",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "Operations Scaling",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "ROI Optimization",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "Procurement and Fulfillment",
+        "evidence": "Listed under Core Competencies"
+      },
+      {
+        "name": "Microsoft Office Suite",
+        "evidence": "Listed under Technical Skills"
+      },
+      {
+        "name": "Figma",
+        "evidence": "Listed under Technical Skills"
+      },
+      {
+        "name": "Tableau",
+        "evidence": "Listed under Technical Skills"
+      },
+      {
+        "name": "Amplitude",
+        "evidence": "Listed under Technical Skills"
+      },
+      {
+        "name": "SQL",
+        "evidence": "Listed under Technical Skills"
+      },
+      {
+        "name": "AppsFlyer",
+        "evidence": "Listed under Technical Skills"
+      },
+      {
+        "name": "Google Analytics",
+        "evidence": "Listed under Technical Skills"
+      },
+      {
+        "name": "Jira",
+        "evidence": "Listed under Technical Skills"
+      },
+      {
+        "name": "Salesforce",
+        "evidence": "Listed under Technical Skills"
+      },
+      {
+        "name": "Google Ads",
+        "evidence": "Mentioned in Profile Summary tools list"
+      },
+      {
+        "name": "GPT engines",
+        "evidence": "Mentioned in Profile Summary tools list"
+      },
+      {
+        "name": "Analytical",
+        "evidence": "Listed under Soft Skills"
+      },
+      {
+        "name": "Team Building",
+        "evidence": "Listed under Soft Skills"
+      },
+      {
+        "name": "Time Management",
+        "evidence": "Listed under Soft Skills"
+      },
+      {
+        "name": "Problem-solving",
+        "evidence": "Listed under Soft Skills"
+      },
+      {
+        "name": "Communication & Collaboration",
+        "evidence": "Listed under Soft Skills"
+      }
+    ],
+    "education": [
+      {
+        "school": "CEG, Anna University",
+        "degree": "B.E. Computer Science",
+        "year": "2014"
+      }
+    ],
+    "extra_sections": [
+      {
+        "title": "Job Objective",
+        "items": [
+          "Results-driven business leader with over 10 years of experience, specializing in Category & Business Development, Operations, P&L Management, Product Marketing, Project Management, and now targeting similar roles."
+        ]
+      },
+      {
+        "title": "Profile Summary",
+        "items": [
+          "Possess extensive experience in leading business strategies, optimizing P&L, and guiding cross-functional teams with over 10 years of experience, contributing to organizational success.",
+          "Currently heading the FMCG and Grocery business vertical at Ninjacart, India's leading Agri-commerce company.",
+          "Prior to Ninjacart, led revenue and growth at Unacademy, India’s leading Ed-tech platform. Attained a 30% YoY growth in revenue with a 20% EBITDA, delivering positive cash flow in the challenging Ed-Tech landscape.",
+          "Proficient in utilizing tools like Microsoft Office Suite, Figma, Tableau, AppsFlyer, Google Analytics, Google Ads, Amplitude, SQL, Jira, Salesforce, and GPT engines.",
+          "Deep understanding of Cost Reduction, Performance Marketing, Product Management, UI/UX, Program Management, Lead Generation, Customer Lifecycle Management, and driving Growth.",
+          "Cultivated strong relationships with key brands and sellers to ensure sustainable business growth across geographies.",
+          "Established core backend functions from scratch, built a robust supplier base, and collaborated with engineering and design teams for successful product launches.",
+          "Experienced in reducing CAC, and optimize marketing spends.",
+          "Led cross-functional teams of over 250 members across layers.",
+          "Developing and implementing revenue growth strategies, market trend analysis, and customer lifecycle management to drive business expansion and profitability across diverse industries."
+        ]
+      },
+      {
+        "title": "Entrepreneurial Ventures",
+        "items": [
+          "Dazzilo: Conceptualized and developed an AI powered influencer marketing platform and secured three term sheets. However, did not proceed due to unfavorable terms.",
+          "Livepurse: Pitched the concept of a fintech platform for micro and fractional investing in India to marqee VCs. Despite having the Minimum Viable Product (MVP) ready, the launch was hindered by SEBI regulations in India.",
+          "Valarlife: Launched this spirulina and moringa health supplement online store to promote healthy living. Revenue Generated: $200 K Funding: $100 K",
+          "Fraternitee: B2B apparel manufacturing for schools, colleges, startups, corporates, NGOs, etc. Revenue Generated: $250 K"
+        ]
+      },
+      {
+        "title": "Languages Known",
+        "items": [
+          "English, Hindi, Tamil, Kannada & Telugu"
+        ]
+      }
+    ],
+    "pages": 2
+  },
+  "posting": {
+    "company": "Elevation Capital portfolio company (unnamed)",
+    "title": "Director & Head - D2C",
+    "location": "Bengaluru, Karnataka, India (on-site, full-time)",
+    "years_required": "8-12 years",
+    "must_have": [
+      "Own the end-to-end E-commerce P&L: revenue, margins, contribution and sustainable growth",
+      "Proven experience owning P&L, revenue or contribution for a meaningful business or category",
+      "Identify and prioritize growth levers across acquisition, conversion, AOV, repeat purchase, pricing, assortment and retention",
+      "Build business plans, revenue forecasts and growth targets; track against plan and course-correct quickly",
+      "Balance growth with profitability and build a scalable business model",
+      "Own overall category strategy and continuously expand the assortment",
+      "Identify whitespace and new product/category opportunities from customer needs and trends",
+      "Drive SKU-level performance: pick winners, fix underperformers, improve portfolio mix",
+      "Own the customer journey across app and web store, from discovery through post-purchase",
+      "Improve traffic, CTR, conversion, AOV, repeat rate and customer lifetime value",
+      "Partner with Supply Chain and Operations to build a scalable, efficient operating model",
+      "Build a data-driven decision culture and bring strong analytical orientation to translate data into decisions",
+      "Build and lead a high-performing team across category, merchandising and business operations",
+      "Operate in an ambiguous, fast-moving environment; build processes as the business scales"
+    ],
+    "nice_to_have": [
+      "Experience across both consumer internet and D2C/retail settings",
+      "Track record of entrepreneurial, high-ownership execution in a startup or growth-stage company"
+    ],
+    "company_language": [
+      "high-ownership business leadership",
+      "think like a business owner",
+      "own the P&L and growth agenda end-to-end",
+      "translate opportunities into execution",
+      "build the next phase of the business",
+      "balance growth with profitability",
+      "data-driven culture",
+      "comfortable in ambiguous, fast-moving environments"
+    ],
+    "red_flags": [
+      "Company is not named; posting only says 'one of our portfolio companies'",
+      "No salary or compensation information provided",
+      "Scope is very broad: category, merchandising, marketing, supply chain, tech, customer experience and team building in one role",
+      "Heavy buzzword language ('high ownership', 'entrepreneurial mindset', 'think like a business owner') with few concrete targets or metrics",
+      "Ambiguity is explicitly part of the job, with processes still to be built as the business scales"
+    ]
+  },
+  "matches": [
+    {
+      "requirement": "Own the end-to-end E-commerce P&L: revenue, margins, contribution and sustainable growth",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "Managed a portfolio of $5M with an EBITDA of 20%.",
+      "suggestion": "Say it as owning the e-commerce P&L: 'Owned a $5M online revenue P&L at 20% EBITDA at Unacademy' and name the revenue, margin and growth levers you controlled. Ninjacart's seller/buyer apps can support the e-commerce angle, but the résumé never calls the business D2C."
+    },
+    {
+      "requirement": "Proven experience owning P&L, revenue or contribution for a meaningful business or category",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Managed P&L for key categories contributing 60% of revenue, driving 5x growth in daily volumes within 100 days.",
+      "suggestion": "Lead with this and the $5M / 20% EBITDA portfolio. Use the posting's words: 'owned P&L for a category contributing 60% of revenue.'"
+    },
+    {
+      "requirement": "Identify and prioritize growth levers across acquisition, conversion, AOV, repeat purchase, pricing, assortment and retention",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "Devising targeted content strategies for top-of-funnel (Performance Marketing and GTMs), mid-funnel (product interaction), and bottom-funnel (conversion) stages.",
+      "suggestion": "Frame it as a growth-levers story: acquisition (performance marketing, >10X ROI), conversion (funnel), retention (CLM campaigns), pricing and assortment (Ninjacart). Add AOV and repeat-rate numbers only if you actually have them."
+    },
+    {
+      "requirement": "Build business plans, revenue forecasts and growth targets; track against plan and course-correct quickly",
+      "kind": "must",
+      "bucket": "missing",
+      "evidence": "",
+      "suggestion": "No explicit planning or forecasting evidence. If you built annual plans or targets at Unacademy or Ninjacart, add that with specifics; otherwise don't claim it."
+    },
+    {
+      "requirement": "Balance growth with profitability and build a scalable business model",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Attained a 30% YoY growth in revenue with a 20% EBITDA, delivering positive cash flow in the challenging Ed-Tech landscape.",
+      "suggestion": "Use this as your headline: 'Grew revenue 30% YoY while holding 20% EBITDA and positive cash flow.'"
+    },
+    {
+      "requirement": "Own overall category strategy and continuously expand the assortment",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "End-to-end category management, product selection, market intelligence, pricing strategies, inventory optimization, P&L management, vendor negotiations, and retail strategy implementation.",
+      "suggestion": "Use 'own category strategy and assortment expansion' directly, and pair it with Fashinza's 500+ supplier network and the 'product assortments' bullet."
+    },
+    {
+      "requirement": "Identify whitespace and new product/category opportunities from customer needs and trends",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "Utilizing market research to identify untapped opportunities and potential threats adjusting strategies accordingly.",
+      "suggestion": "Use the word 'whitespace' and give one concrete example of a new category or product you launched from customer or market insight."
+    },
+    {
+      "requirement": "Drive SKU-level performance: pick winners, fix underperformers, improve portfolio mix",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "Led P&L optimization and market intelligence for 30+ cities, conducting daily price benchmarking across 75+ SKUs.",
+      "suggestion": "Add SKU-level outcomes (winners scaled, laggards cut, mix or margin improvement) in the posting's language. Right now it shows SKU-level pricing work, not portfolio mix decisions."
+    },
+    {
+      "requirement": "Own the customer journey across app and web store, from discovery through post-purchase",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "Product Side: Worked closely with the tech and engineering teams and product managed the entire development and deployment of the seller and buyer facing applications.",
+      "suggestion": "Describe it as owning the app customer journey: discovery (performance marketing), conversion, and retention/CLM, plus the Ninjacart apps. Mention web only if you did work on it."
+    },
+    {
+      "requirement": "Improve traffic, CTR, conversion, AOV, repeat rate and customer lifetime value",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "Enhancing engagement, retention, and user stickiness through the optimization of Customer Lifecycle Management (CLM) campaigns.",
+      "suggestion": "Quantify the retention and engagement gains if you can. Cite the >10X performance marketing ROI and CAC reduction, and name any conversion, repeat or LTV metrics you moved."
+    },
+    {
+      "requirement": "Partner with Supply Chain and Operations to build a scalable, efficient operating model",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "Scaled monthly GMV to $100K within a year, setting up core backend functions from scratch.",
+      "suggestion": "Use 'built scalable operating model with supply chain and ops': backend setup at Fashinza, inventory optimization and procurement/fulfillment at Ninjacart."
+    },
+    {
+      "requirement": "Build a data-driven decision culture and bring strong analytical orientation to translate data into decisions",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "Proficient in utilizing tools like Microsoft Office Suite, Figma, Tableau, AppsFlyer, Google Analytics, Google Ads, Amplitude, SQL, Jira, Salesforce, and GPT engines.",
+      "suggestion": "Pair the analytics toolkit (SQL, Tableau, Amplitude) with a decision it drove, e.g. daily price benchmarking leading to pricing changes. Use the phrase 'data-driven'."
+    },
+    {
+      "requirement": "Build and lead a high-performing team across category, merchandising and business operations",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Led cross-functional teams of over 250 members across layers.",
+      "suggestion": "State it as 'built and led a 250+ person team across category and operations,' and clarify which parts were category, merchandising or ops."
+    },
+    {
+      "requirement": "Operate in an ambiguous, fast-moving environment; build processes as the business scales",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "Scaled monthly GMV to $100K within a year, setting up core backend functions from scratch.",
+      "suggestion": "Frame as 'built processes from scratch in high-growth startups,' backed by Fashinza, the 5x volume growth in 100 days, and your own ventures."
+    },
+    {
+      "requirement": "Experience across both consumer internet and D2C/retail settings",
+      "kind": "nice",
+      "bucket": "have_not_said",
+      "evidence": "Valarlife: Launched this spirulina and moringa health supplement online store to promote healthy living. Revenue Generated: $200 K Funding: $100 K",
+      "suggestion": "Highlight Valarlife as hands-on D2C experience, alongside consumer internet (Unacademy, Ninjacart apps). Say 'D2C' explicitly."
+    },
+    {
+      "requirement": "Track record of entrepreneurial, high-ownership execution in a startup or growth-stage company",
+      "kind": "nice",
+      "bucket": "said",
+      "evidence": "Fraternitee: B2B apparel manufacturing for schools, colleges, startups, corporates, NGOs, etc. Revenue Generated: $250 K",
+      "suggestion": "Feature the Entrepreneurial Ventures section (Valarlife, Fraternitee, Dazzilo) and growth-stage roles as 'high-ownership' evidence."
+    }
+  ],
+  "after_matches": [
+    {
+      "requirement": "Own the end-to-end E-commerce P&L: revenue, margins, contribution and sustainable growth",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Owns end-to-end P&L for FMCG and Grocery at Ninjacart; Unacademy 30% YoY revenue growth at 20% EBITDA with positive cash flow.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Proven experience owning P&L, revenue or contribution for a meaningful business or category",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "$5M portfolio P&L at Unacademy; P&L for categories contributing 60% of revenue at Ninjacart.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Identify and prioritize growth levers across acquisition, conversion, AOV, repeat purchase, pricing, assortment and retention",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Unacademy bullet covers acquisition, conversion and retention levers; relevant section lists levers including assortment and pricing.",
+      "suggestion": "AOV and repeat purchase are not named explicitly."
+    },
+    {
+      "requirement": "Build business plans, revenue forecasts and growth targets; track against plan and course-correct quickly",
+      "kind": "must",
+      "bucket": "missing",
+      "evidence": "No explicit planning, forecasting or target-tracking evidence in the rewrite.",
+      "suggestion": "Add a bullet on annual plans, forecasts and targets if you have done this, otherwise leave it out."
+    },
+    {
+      "requirement": "Balance growth with profitability and build a scalable business model",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "30% YoY revenue growth at 20% EBITDA with positive cash flow; online market share 8% to 55%.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Own overall category strategy and continuously expand the assortment",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Owns category strategy at Ninjacart; led product assortment development at Fashinza.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Identify whitespace and new product/category opportunities from customer needs and trends",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Used market research to identify whitespace (untapped opportunities) and threats at Unacademy.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Drive SKU-level performance: pick winners, fix underperformers, improve portfolio mix",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "Daily price benchmarking across 75+ SKUs; product selection and inventory optimization.",
+      "suggestion": "Frame it as SKU performance: how you picked winners and fixed underperformers."
+    },
+    {
+      "requirement": "Own the customer journey across app and web store, from discovery through post-purchase",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Product managed seller and buyer apps; Unacademy funnel strategy from discovery to conversion; CLM for retention.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Improve traffic, CTR, conversion, AOV, repeat rate and customer lifetime value",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": ">10X ROI on Performance Marketing; CLM campaigns for engagement and retention; conversion levers.",
+      "suggestion": "Add metrics on conversion, repeat rate or LTV improvements if available."
+    },
+    {
+      "requirement": "Partner with Supply Chain and Operations to build a scalable, efficient operating model",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Built core backend functions from scratch at Fashinza; inventory optimization; 500+ supplier network; skills in Supply Chain Optimization and Operations Scaling.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Build a data-driven decision culture and bring strong analytical orientation to translate data into decisions",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Data-driven P&L optimization and market intelligence; SQL, Tableau, Amplitude.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Build and lead a high-performing team across category, merchandising and business operations",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Led cross-functional teams of over 250 members.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Operate in an ambiguous, fast-moving environment; build processes as the business scales",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Built backend functions from scratch at Fashinza; 5x daily volume growth in 100 days; launched ventures.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Experience across both consumer internet and D2C/retail settings",
+      "kind": "nice",
+      "bucket": "said",
+      "evidence": "Unacademy and the Ninjacart apps (consumer internet); Valarlife D2C store; Fraternitee apparel.",
+      "suggestion": ""
+    },
+    {
+      "requirement": "Track record of entrepreneurial, high-ownership execution in a startup or growth-stage company",
+      "kind": "nice",
+      "bucket": "said",
+      "evidence": "Entrepreneurial Ventures section: Valarlife $200K revenue, Fraternitee $250K revenue; Fashinza built from scratch.",
+      "suggestion": ""
+    }
+  ],
+  "rewrite": {
+    "headline": "Director, FMCG and Grocery",
+    "summary": "Heads the FMCG and Grocery vertical at Ninjacart: P&L, category strategy, pricing and the seller and buyer apps. Previously led revenue and growth at Unacademy: 30% YoY revenue growth at 20% EBITDA with positive cash flow. Built core backend functions from scratch at Fashinza and launched Valarlife, a D2C online store. 10+ years; led cross-functional teams of over 250 members.",
+    "relevant": [
+      "E-commerce P&L and growth levers: managed P&L for a $5M portfolio at 20% EBITDA at Unacademy; worked levers across acquisition (Performance Marketing, >10X ROI), conversion, retention (CLM), assortment",
+      "Category, SKU and whitespace: category strategy, product selection and pricing at Ninjacart; daily price benchmarking across 75+ SKUs in 30+ cities; used market research to identify whitespace (untapped opportunities) and",
+      "Customer journey and data-driven decisions: product managed Ninjacart's seller and buyer apps; Unacademy funnel strategy from discovery to conversion; CLM campaigns for engagement, retention and stickiness; SQL, Tableau, Amplitude, Google",
+      "Operating model, D2C and ownership: built core backend functions from scratch at Fashinza (monthly GMV to $100K in a year); 5x daily volume growth in 100 days at Ninjacart; launched"
+    ],
+    "roles": [
+      {
+        "company": "Ninjacart",
+        "title": "Director, FMCG and Grocery",
+        "start": "Aug’24",
+        "end": "Present",
+        "bullets": [
+          "Own end-to-end P&L management for the FMCG and Grocery vertical, including pricing strategies and inventory optimization",
+          "Own category strategy: end-to-end category management, product selection and retail strategy implementation",
+          "Run market intelligence and vendor negotiations behind pricing and product selection",
+          "Product managed the entire development and deployment of the seller and buyer facing applications, working closely with the tech and engineering teams"
+        ]
+      },
+      {
+        "company": "Unacademy",
+        "title": "Associate Director, Growth & Revenue",
+        "start": "Feb’22",
+        "end": "Jan’24",
+        "bullets": [
+          "Managed P&L for a $5M portfolio at 20% EBITDA; attained 30% YoY revenue growth with 20% EBITDA and positive cash flow",
+          "Drove online revenue market share from 8% to 55% in 18 months",
+          "Delivered >10X ROI on Performance Marketing campaigns: $1.3M in revenue against $100K spend",
+          "Devised content strategies for top-of-funnel (Performance Marketing and GTMs), mid-funnel (product interaction) and bottom-funnel (conversion), covering acquisition, conversion and retention levers",
+          "Optimized Customer Lifecycle Management (CLM) campaigns to improve engagement, retention and user stickiness",
+          "Used market research to identify whitespace (untapped opportunities) and threats, adjusting strategies accordingly"
+        ]
+      },
+      {
+        "company": "Fashinza (Tirupur)",
+        "title": "Senior Manager, Category Management and Operations",
+        "start": "Mar’21",
+        "end": "Feb’22",
+        "bullets": [
+          "Scaled monthly GMV to $100K within a year, setting up core backend functions from scratch",
+          "Established a network of 500+ suppliers and managed the entire base for sourcing",
+          "Led the development of product assortments aligned with customer preferences and market demand",
+          "Collaborated with engineering and design teams to support product launches"
+        ]
+      },
+      {
+        "company": "Ninjacart (Chennai)",
+        "title": "Senior Manager, Category Management",
+        "start": "Apr’18",
+        "end": "Mar’21",
+        "bullets": [
+          "Managed P&L for key categories contributing 60% of revenue",
+          "Drove 5x growth in daily volumes within 100 days",
+          "Led data-driven P&L optimization and market intelligence for 30+ cities, with daily price benchmarking across 75+ SKUs"
+        ]
+      },
+      {
+        "company": "Accenture (Chennai)",
+        "title": "Software Engineer",
+        "start": "Sep’14",
+        "end": "Aug’17",
+        "bullets": [
+          "Led the end-to-end software development lifecycle, including design and implementation of business-critical applications, while analyzing key performance drivers",
+          "Managed incident resolution through multiple channels and integrated new technologies and automation to improve existing systems"
+        ]
+      }
+    ],
+    "skills": [
+      "P&L Optimization",
+      "Category Management",
+      "Revenue Growth Strategies",
+      "Customer Lifecycle Management",
+      "Performance Marketing",
+      "ROI Optimization",
+      "Market Intelligence",
+      "Market Trend Analysis",
+      "Supply Chain Optimization",
+      "Procurement and Fulfillment",
+      "Operations Scaling",
+      "Business Process Re-engineering",
+      "SQL",
+      "Tableau"
+    ],
+    "education": [
+      {
+        "school": "CEG, Anna University",
+        "degree": "B.E. Computer Science",
+        "year": "2014"
+      }
+    ],
+    "extra_sections": [
+      {
+        "title": "Entrepreneurial Ventures",
+        "items": [
+          "Valarlife: launched a D2C online store for spirulina and moringa health supplements; revenue generated $200 K, funding $100 K",
+          "Fraternitee: B2B apparel manufacturing for schools, colleges, startups, corporates and NGOs; revenue generated $250 K",
+          "Dazzilo: conceptualized and developed an AI powered influencer marketing platform; secured three term sheets, did not proceed due to unfavorable terms",
+          "Livepurse: pitched a fintech platform for micro and fractional investing to marquee VCs; MVP ready, launch hindered by SEBI regulations"
+        ]
+      },
+      {
+        "title": "Languages Known",
+        "items": [
+          "English, Hindi, Tamil, Kannada & Telugu"
+        ]
+      }
+    ],
+    "changes": [
+      {
+        "what": "Moved Entrepreneurial Ventures to the first extra section, with Valarlife first and labelled D2C",
+        "why": "It is your only hands-on D2C evidence and shows high-ownership execution, both of which the posting asks for"
+      },
+      {
+        "what": "Rewrote the summary to lead with P&L, category and growth with profitability; removed the Job Objective and the long Profile Summary list",
+        "why": "The objective's wording was generic, including 'similar roles'. The useful facts (30% YoY at 20% EBITDA, 250+ team) are now in the summary and relevant block"
+      },
+      {
+        "what": "Added a four-line relevant block covering P&L, growth levers, category/SKU/whitespace, customer journey, data-driven decisions, operating model, D2C and team",
+        "why": "Maps your evidence to the posting's must-haves in its own language, without claiming anything missing"
+      },
+      {
+        "what": "Expanded the two compressed Ninjacart (Director) bullets into four: P&L, category strategy, pricing/vendors/market intelligence, and the apps",
+        "why": "The original packed everything into two long lines. Every item comes from the original text"
+      },
+      {
+        "what": "Reordered Unacademy to lead with the $5M / 20% EBITDA P&L and the 30% YoY growth, then market share, ROI, funnel, CLM and whitespace",
+        "why": "P&L ownership and growth with profitability are what the role is built around"
+      },
+      {
+        "what": "Cut 'Collaborated with engineering and design teams...' and 'Crafted a client feedback loop...' from Unacademy, and the feedback loop from Fashinza",
+        "why": "They were generic, duplicated across roles and did not serve this role"
+      },
+      {
+        "what": "Reworded 'untapped opportunities' as 'whitespace (untapped opportunities)'",
+        "why": "Uses the posting's word for something the original already says"
+      },
+      {
+        "what": "Split the Ninjacart Chennai bullets into three and added 'data-driven' to the P&L optimization line, with SKU-level benchmarking",
+        "why": "Makes the 60% revenue P&L, the 5x growth and the SKU-level work stand out separately. No new facts"
+      },
+      {
+        "what": "Moved 250+ team size, CAC reduction and the tools list into the summary and relevant block, not pinned to an employer",
+        "why": "The original keeps these in the profile, so they are not attributed to a specific role"
+      },
+      {
+        "what": "Trimmed skills to those relevant to this role; dropped Microsoft Office, Salesforce, GPT engines and most soft skills",
+        "why": "Keeps the skills list focused on P&L, growth, category and analytics"
+      },
+      {
+        "what": "Shortened the Accenture bullets and the Dazzilo and Livepurse lines",
+        "why": "Older and less relevant material, tightened to keep the two pages dense on what matters"
+      },
+      {
+        "what": "Left contact unchanged",
+        "why": "Résumé and posting are both in Bengaluru, India"
+      }
+    ],
+    "referral_note": "Hi, I'm applying for the Director & Head - D2C role at the Elevation Capital portfolio company. I currently head FMCG and Grocery at Ninjacart and previously ran a $5M portfolio at 20% EBITDA at Unacademy, growing revenue 30% YoY with positive cash flow. I've also launched my own D2C store. Could you refer me or pass my résumé to the hiring team?",
+    "fit_line": "Strong on P&L ownership, category and assortment, growth with profitability and team size; the gaps are that the résumé has no evidence of building business plans, forecasts or targets, and no AOV, repeat-rate or LTV numbers or SKU-level winner/laggard outcomes, and your D2C proof is small ventures rather than a scaled brand, so apply and expect questions on those."
+  },
+  "verification": {
+    "ok": true,
+    "problems": []
+  },
+  "broken": [],
+  "needs_review": false,
+  "timing": {
+    "posting": 7806,
+    "write": 82338,
+    "verify": 8322,
+    "repair": 22491,
+    "rescore": 32200
+  },
+  "first_pass": {
+    "problems": [
+      {
+        "claim": "E-commerce P&L and growth levers: ... worked levers across acquisition (Performance Marketing, >10X ROI), conversion, retention (CLM), pricing and assortment",
+        "reason": "The Unacademy role's original bullets cover performance marketing, funnel, CLM and assortment, but nothing about pricing. Pricing is attributed to Unacademy here, which the original does not support."
+      }
+    ],
+    "broken": [
+      "R8 Unacademy: 7 bullets (recent roles need 4–6)",
+      "R8 repeated bullet: \"Led the development of product assortments aligned…\"",
+      "R11 banned word: results-driven"
+    ]
+  }
+}

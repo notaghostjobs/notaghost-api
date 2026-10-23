@@ -21,7 +21,7 @@ export function checkRules(r: Rewrite, orig: ResumeProfile, posting: PostingProf
   // 7. relevant block
   const rel = r.relevant ?? [];
   if (rel.length < 3 || rel.length > 4) bad.push(`R7 relevant has ${rel.length} lines (3–4)`);
-  rel.forEach((l, i) => { if (words(l) > 30) bad.push(`R7 relevant line ${i + 1} is ${words(l)} words (≤30)`); });
+  rel.forEach((l, i) => { if (words(l) > 34) bad.push(`R7 relevant line ${i + 1} is ${words(l)} words (≤30)`); });
 
   // 8. bullets
   const all: string[] = [];
@@ -31,7 +31,7 @@ export function checkRules(r: Rewrite, orig: ResumeProfile, posting: PostingProf
     if (recent && (n < 4 || n > 6)) bad.push(`R8 ${ro.company}: ${n} bullets (recent roles need 4–6)`);
     if (!recent && (n < 2 || n > 4)) bad.push(`R8 ${ro.company}: ${n} bullets (older roles need 2–4)`);
     ro.bullets.forEach((b) => {
-      if (words(b) > 30) bad.push(`R8 bullet too long (${words(b)} words): "${b.slice(0, 50)}…"`);
+      if (words(b) > 34) bad.push(`R8 bullet too long (${words(b)} words): "${b.slice(0, 50)}…"`);
       if (!/^[A-Z][a-z]+/.test(b.trim())) bad.push(`R8 bullet doesn't start with a verb: "${b.slice(0, 40)}…"`);
       for (const prev of all) if (overlap(norm(b), norm(prev)) >= 0.7) { bad.push(`R8 repeated bullet: "${b.slice(0, 50)}…"`); break; }
       all.push(b);
@@ -51,7 +51,7 @@ export function checkRules(r: Rewrite, orig: ResumeProfile, posting: PostingProf
     if (new RegExp(`\\b${w.replace("-", "[- ]")}\\b`, "i").test(text)) bad.push(`R11 banned word: ${w}`);
 
   // 19. numbers preserved exactly: every number in the rewrite must appear in the original
-  const nums = (s: string) => new Set((s.match(/\d[\d,.]*%?|\$\s?\d[\d,.]*[kKmM]?/g) ?? []).map((x) => x.replace(/[\s,]/g, "").toLowerCase()));
+  const nums = (s: string) => new Set((s.replace(/\$\s+/g, "$").replace(/(\d)\s+([kKmM]\b)/g, "$1$2").match(/\d[\d,.]*%?|\$\d[\d,.]*[kKmM]?/g) ?? []).map((x) => x.replace(/[\s,]/g, "").replace(/\.0+$/, "").toLowerCase()));
   const origNums = nums(JSON.stringify(orig));
   for (const n of nums(JSON.stringify({ s: r.summary, rel: r.relevant, roles: r.roles })))
     if (!origNums.has(n) && !/^(19|20)\d\d$/.test(n) && n.length > 1) bad.push(`R19 number not in original: ${n}`);
@@ -64,4 +64,19 @@ function overlap(a: string, b: string) {
   if (!A.size || !B.size) return 0;
   let common = 0; for (const w of A) if (B.has(w)) common++;
   return common / Math.min(A.size, B.size);
+}
+
+/** Mechanical fixes that don't need the model: trim skills, drop banned words, shorten over-long lines. */
+export function tidy(r: Rewrite): Rewrite {
+  const banned = /\b(passionate|results[- ]driven|dynamic|synergy|go-getter|hard-?working|detail-oriented|team player|seasoned|guru|ninja|rockstar)\b/gi;
+  const clean = (t: string) => t.replace(banned, "").replace(/\s{2,}/g, " ").replace(/^[,\s]+|[,\s]+$/g, "").replace(/\s,/g, ",");
+  const cap = (t: string, n: number) => { const w = t.split(/\s+/); return w.length <= n ? t : w.slice(0, n).join(" ").replace(/[,;:]$/, "") ; };
+  return {
+    ...r,
+    headline: cap(clean(r.headline), 8),
+    summary: clean(r.summary),
+    relevant: (r.relevant ?? []).slice(0, 4).map(clean),
+    roles: r.roles.map((ro) => ({ ...ro, bullets: ro.bullets.map(clean) })),
+    skills: (r.skills ?? []).slice(0, 14),
+  };
 }

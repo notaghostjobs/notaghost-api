@@ -21,6 +21,7 @@ shots.post("/", async (c) => {
       product: z.enum(["sharpen", "build"]),
       posting_url: z.string().url().optional(),
       posting_text: z.string().min(80).optional(),
+      preview_id: z.string().uuid().optional(),
     })
     .refine((b) => b.posting_url || b.posting_text, "Give a link or paste the posting.")
     .safeParse(await c.req.json());

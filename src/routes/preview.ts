@@ -18,7 +18,8 @@ export function scores(matches: Match[]) {
     else if (m.bucket === "have_not_said") { before += w * 0.25; after += w; }
   }
   if (!tot) return { before: 0, after: 0 };
-  return { before: Math.round((before / tot) * 100), after: Math.round((after / tot) * 100) };
+  // "after" assumes every hidden strength gets said; a missing requirement stays missing. Never promise 100 unless nothing is missing.
+  return { before: Math.round((before / tot) * 100), after: Math.min(Math.round((after / tot) * 100), 96 + (matches.some((m) => m.bucket === "missing") ? 0 : 4)) };
 }
 
 /** Free step: read the posting, match against the current résumé. No shot spent. */
@@ -48,10 +49,12 @@ preview.post("/", async (c) => {
   if (postingId && !parsed) await db.from("postings").update({ company: posting.company, title: posting.title, parsed: posting }).eq("id", postingId);
   const { matches } = await matchResume(resume.parsed as ResumeProfile, posting);
   const s = scores(matches);
+  // remember this exact match so the paid run scores against the same list the user saw
+  const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting, matches, score_before: s.before, score_after: s.after }).select("id").single();
   // the three reasons the verdict page shows: strongest have_not_said, a missing must, and another have_not_said/said-weak
   const reasons = [
     ...matches.filter((m) => m.bucket === "have_not_said").slice(0, 2).map((m) => ({ tone: "ok", label: "You have it, you just didn’t say it", title: m.requirement, body: m.suggestion, evidence: m.evidence })),
     ...matches.filter((m) => m.bucket === "missing" && m.kind === "must").slice(0, 1).map((m) => ({ tone: "bad", label: "Genuinely missing", title: m.requirement, body: m.suggestion })),
   ].slice(0, 3);
-  return c.json({ posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location }, score_before: s.before, score_after: s.after, reasons, matches });
+  return c.json({ preview_id: pv?.id ?? null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location }, score_before: s.before, score_after: s.after, reasons, matches });
 });

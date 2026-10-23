@@ -1,0 +1,18 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { runSharpen } from "../../src/engine/sharpen.js";
+import { resumePdf } from "../../src/engine/pdf.js";
+import { scores } from "../../src/routes/preview.js";
+const profile = JSON.parse(readFileSync("samples/kr/out.json","utf8")).profile;
+const t0 = Date.now();
+const out = await runSharpen(profile, readFileSync("samples/kr/elevation.txt","utf8"), (s)=>console.log("..", s, ((Date.now()-t0)/1000).toFixed(0)+"s"));
+writeFileSync("samples/kr/out2.json", JSON.stringify({ profile, ...out }, null, 2));
+writeFileSync("samples/kr/out2.pdf", await resumePdf(out.rewrite, profile));
+const b = scores(out.matches), a = scores(out.after_matches);
+console.log("done", ((Date.now()-t0)/1000).toFixed(0)+"s", JSON.stringify(out.timing));
+console.log("BEFORE", b.before, "PROMISED", b.after, "AFTER", a.before, "| reqs", out.matches.length, "verified", out.verification.ok, "broken", out.broken);
+console.log("HEAD:", out.rewrite.headline); console.log("SUM:", out.rewrite.summary);
+console.log("REL:"); out.rewrite.relevant.forEach(x=>console.log("  -",x));
+console.log("NINJACART:"); out.rewrite.roles[0].bullets.forEach(x=>console.log("  •",x));
+console.log("SECTIONS:", out.rewrite.extra_sections.map(x=>x.title+"("+x.items.length+")").join(", "));
+console.log("FIT:", out.rewrite.fit_line);
+process.exit(0);

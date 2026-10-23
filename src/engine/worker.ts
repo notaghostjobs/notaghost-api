@@ -1,6 +1,6 @@
 import { db } from "../lib/db.js";
 import { extractText, fetchPosting } from "./extract.js";
-import { parseResume, runSharpen, type ResumeProfile } from "./sharpen.js";
+import { parseResume, runSharpen, type ResumeProfile, type PostingProfile, type Match } from "./sharpen.js";
 import { resumePdf } from "./pdf.js";
 import { createHash } from "node:crypto";
 import { scores } from "../routes/preview.js";
@@ -30,7 +30,12 @@ export async function runShot(shotId: string) {
     const profile = res.parsed as ResumeProfile;
 
     // posting: fetch or pasted; cache by url hash
-    const input = shot.input as { posting_url?: string; posting_text?: string };
+    const input = shot.input as { posting_url?: string; posting_text?: string; preview_id?: string };
+    let pre: { posting: PostingProfile; matches: Match[] } | undefined;
+    if (input.preview_id) {
+      const { data: pv } = await db.from("previews").select("posting, matches, posting_text").eq("id", input.preview_id).eq("user_id", shot.user_id).maybeSingle();
+      if (pv?.posting && pv?.matches) { pre = { posting: pv.posting as PostingProfile, matches: pv.matches as Match[] }; if (!input.posting_text && pv.posting_text) input.posting_text = pv.posting_text; }
+    }
     let postingId: string | null = null;
     let postingText = input.posting_text ?? "";
     if (input.posting_url) {
@@ -47,7 +52,7 @@ export async function runShot(shotId: string) {
     }
     if (postingText.length < 80) throw new Error("That posting is too short to work with. Paste the full description.");
 
-    const out = await runSharpen(profile, postingText);
+    const out = await runSharpen(profile, postingText, undefined, pre);
     if (postingId) await db.from("postings").update({ company: out.posting.company, title: out.posting.title, parsed: out.posting }).eq("id", postingId);
 
     const pdf = await resumePdf(out.rewrite, profile);
@@ -57,7 +62,7 @@ export async function runShot(shotId: string) {
 
     await db.from("shots").update({
       status: "done", posting_id: postingId, done_at: new Date().toISOString(),
-      output: { ...out, ...scores(out.matches), pdf_path },
+      output: { ...out, before: scores(out.matches).before, after: scores(out.after_matches).before, promised: scores(out.matches).after, pdf_path },
     }).eq("id", shotId);
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
