@@ -1,8 +1,5 @@
 import mammoth from "mammoth";
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-// pdf-parse is CJS
-const pdfParse: (b: Buffer) => Promise<{ text: string; numpages: number }> = require("pdf-parse");
+import { PDFParse } from "pdf-parse";
 
 /** Plain text out of a PDF or DOCX résumé. No AI here. */
 export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number }> {
@@ -11,8 +8,11 @@ export async function extractText(buf: Buffer, filename: string): Promise<{ text
     const text = clean(r.value);
     return { text, pages: Math.max(1, Math.round(text.length / 3000)) };
   }
-  const r = await pdfParse(buf);
-  return { text: clean(r.text), pages: r.numpages };
+  const parser = new PDFParse({ data: new Uint8Array(buf) });
+  try {
+    const r = await parser.getText();
+    return { text: clean(r.text), pages: r.total };
+  } finally { await parser.destroy(); }
 }
 
 function clean(s: string) {

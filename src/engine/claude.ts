@@ -14,9 +14,11 @@ export async function json<T>(system: string, user: string, maxTokens = 4000): P
       messages: [{ role: "user", content: user }],
     });
     const text = r.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+    const a = text.indexOf("{"), b = text.lastIndexOf("}");
     try {
-      return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "")) as T;
+      return JSON.parse(text.slice(a, b + 1)) as T;
     } catch {
+      console.error("[claude] bad JSON, stop_reason=%s, len=%d, tail=%s", r.stop_reason, text.length, text.slice(-200));
       if (attempt === 1) throw new Error("Model returned non-JSON twice");
     }
   }
