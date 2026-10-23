@@ -55,7 +55,7 @@ export interface Verification {
 export function parseResume(text: string, pages: number) {
   return json<ResumeProfile>(
     `You turn a résumé into a structured profile. Copy facts exactly; do not improve, infer or embellish. Dates as written. If something is absent, use an empty string or empty array. Bullets are the candidate's own lines, verbatim.`,
-    `Résumé (${pages} page(s)):\n\n${text}\n\nReturn: {name, headline, contact{email,phone,city,links[]}, years_total (number), roles[{company,title,start,end,bullets[]}], skills[{name, evidence}], education[{school,degree,year}], extra_sections[{title, items[]}], pages: ${pages}}. extra_sections = any other block on the résumé (entrepreneurial ventures, certifications, languages, awards, publications), items verbatim. Skip personal details like DOB or marital status.`,
+    `Résumé (${pages} page(s)):\n\n${text}\n\nReturn: {name, headline, contact{email,phone,city,links[]}, years_total (number), roles[{company,title,start,end,bullets[]}], skills[{name, evidence}], education[{school,degree,year}], extra_sections[{title, items[]}], pages: ${pages}}. Keep every string compact; this must fit in one response. extra_sections = any other block on the résumé (entrepreneurial ventures, certifications, languages, awards, publications), items verbatim. Skip personal details like DOB or marital status.`,
     8000
   );
 }
@@ -99,7 +99,7 @@ export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, mo
 7. fit_line: one honest sentence to the candidate about their odds here (e.g. "Strong on the core stack; two of five must-haves are missing — apply, but expect questions on X").
 8. changes: every meaningful edit with a one-line why, so the candidate can see exactly what moved.`,
     `ORIGINAL:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nReturn: {headline, summary, relevant[], roles[{company,title,start,end,bullets[]}], skills[], education[], extra_sections[{title,items[]}], changes[{what,why}], referral_note, fit_line}`,
-    8000, model
+    16000, model
   );
 }
 
@@ -137,7 +137,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     rewrite = await json<Rewrite>(
       `Fix a résumé rewrite. Remove or reword exactly the flagged items and fix the listed rule breaks; change nothing else. Rules: title = candidate's real title (≤6 words); summary 35–80 words; relevant 3–4 lines ≤30 words; bullets ≤30 words, start with a verb, none repeated, 4–6 on the two most recent roles and 2–4 on older ones; skills 6–14; no personal details; no numbers that aren't in the original. Keep the same JSON shape.`,
       `ORIGINAL:\n${JSON.stringify(resume)}\n\nREWRITE:\n${JSON.stringify(rewrite)}\n\nUNSUPPORTED CLAIMS:\n${JSON.stringify(verification.problems)}\n\nRULE BREAKS:\n${JSON.stringify(broken)}`,
-      8000, FAST
+      16000, FAST
     );
     verification = await verifyRewrite(resume, rewrite);
     broken = checkRules(rewrite, resume, posting);

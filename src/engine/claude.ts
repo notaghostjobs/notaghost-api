@@ -20,8 +20,10 @@ export async function json<T>(system: string, user: string, maxTokens = 4000, mo
     try {
       return JSON.parse(text.slice(a, b + 1)) as T;
     } catch {
-      console.error("[claude] bad JSON, stop_reason=%s, len=%d, tail=%s", r.stop_reason, text.length, text.slice(-200));
-      if (attempt === 1) throw new Error("Model returned non-JSON twice");
+      console.error("[claude] bad JSON, model=%s stop_reason=%s, len=%d, tail=%s", model, r.stop_reason, text.length, text.slice(-200));
+      if (r.stop_reason === "max_tokens") { maxTokens = Math.min(maxTokens * 2, 32000); }
+      if (attempt === 1) throw Object.assign(new Error("We couldn't finish writing this one. Your shot is back — try again."), { status: 502 });
+      if (model !== MODEL) model = MODEL;  // second try on the stronger model
     }
   }
   throw new Error("unreachable");
