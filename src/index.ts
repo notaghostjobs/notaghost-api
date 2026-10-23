@@ -7,6 +7,7 @@ import { auth } from "./routes/auth.js";
 import { resumes } from "./routes/resumes.js";
 import { shots } from "./routes/shots.js";
 import { payments } from "./routes/payments.js";
+import { preview } from "./routes/preview.js";
 
 const app = new Hono();
 app.use("*", logger());
@@ -17,6 +18,7 @@ app.route("/auth", auth);
 app.route("/resumes", resumes);
 app.route("/shots", shots);
 app.route("/payments", payments);
+app.route("/preview", preview);
 
 app.onError((err, c) => {
   const status = (err as { status?: number }).status ?? 500;

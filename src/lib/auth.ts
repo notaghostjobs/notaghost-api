@@ -18,7 +18,7 @@ export async function sendOtp(phone: string) {
     .gt("created_at", since);
   if ((count ?? 0) >= 3) throw Object.assign(new Error("Too many codes. Wait ten minutes."), { status: 429 });
 
-  const code = String(randomInt(100000, 999999));
+  const code = env.otpProvider === "dev" && process.env.OTP_DEV_CODE ? process.env.OTP_DEV_CODE : String(randomInt(100000, 999999));
   await db.from("otp_codes").insert({
     phone,
     code_hash: sha(phone + code),

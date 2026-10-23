@@ -3,6 +3,7 @@ import { extractText, fetchPosting } from "./extract.js";
 import { parseResume, runSharpen, type ResumeProfile } from "./sharpen.js";
 import { resumePdf } from "./pdf.js";
 import { createHash } from "node:crypto";
+import { scores } from "../routes/preview.js";
 
 /** Called right after upload. Extracts + parses once; stores text and profile. */
 export async function processResume(resumeId: string) {
@@ -56,7 +57,7 @@ export async function runShot(shotId: string) {
 
     await db.from("shots").update({
       status: "done", posting_id: postingId, done_at: new Date().toISOString(),
-      output: { ...out, pdf_path },
+      output: { ...out, ...scores(out.matches), pdf_path },
     }).eq("id", shotId);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
