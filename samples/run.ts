@@ -1,0 +1,12 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { parseResume, runSharpen } from "../src/engine/sharpen.js";
+import { resumePdf } from "../src/engine/pdf.js";
+const t0 = Date.now();
+const profile = await parseResume(readFileSync("samples/resume1.txt", "utf8"), 1);
+const out = await runSharpen(profile, readFileSync("samples/posting1.txt", "utf8"));
+writeFileSync("samples/out1.json", JSON.stringify({ profile, ...out }, null, 2));
+writeFileSync("samples/out1.pdf", await resumePdf(out.rewrite, profile));
+console.log("done in", ((Date.now() - t0) / 1000).toFixed(1), "s; verified:", out.verification.ok);
+console.log("FIT:", out.rewrite.fit_line);
+console.log("BUCKETS:", out.matches.map(m => `${m.bucket}:${m.requirement.slice(0,40)}`).join("\n  "));
+console.log("CHANGES:", out.rewrite.changes.length);

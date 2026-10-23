@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db, activePlan, type User, type Product } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
+import { runShot } from "../engine/worker.js";
 
 export const shots = new Hono<{ Variables: { user: User } }>();
 shots.use("*", requireUser);
@@ -30,10 +31,9 @@ shots.post("/", async (c) => {
   if (!plan) return c.json({ error: "No active plan.", pay: product }, 402);
 
   const { data: resume } = await db
-    .from("resumes").select("id").eq("user_id", u.id).eq("is_current", true).maybeSingle();
-  if (!resume) return c.json({ error: "Upload your résumé first." }, 400);
+    .from("resumes").select("id, parsed").eq("user_id", u.id).eq("is_current", true).maybeSingle();
+  if (!resume?.parsed) return c.json({ error: "Upload your résumé first." }, 400);
 
-  // TODO: posting fetch/parse -> postings row (next step)
   const { data: shot, error } = await db
     .from("shots")
     .insert({ user_id: u.id, plan_id: plan.id, product, resume_id: resume.id, input: body.data })
@@ -42,8 +42,17 @@ shots.post("/", async (c) => {
   if (error) return c.json({ error: error.message }, 500);
 
   await db.from("plans").update({ shots_used: plan.shots_used + 1 }).eq("id", plan.id);
-  // TODO: enqueue worker (Sharpen rewrite / Build interview)
+  void runShot(shot.id);
   return c.json({ shot, remaining: plan.shots_total - plan.shots_used - 1 });
+});
+
+shots.get("/:id/pdf", async (c) => {
+  const { data } = await db.from("shots").select("output").eq("id", c.req.param("id")).eq("user_id", c.get("user").id).maybeSingle();
+  const path = (data?.output as { pdf_path?: string } | null)?.pdf_path;
+  if (!path) return c.json({ error: "Not ready." }, 404);
+  const f = await db.storage.from("outputs").download(path);
+  if (f.error) return c.json({ error: f.error.message }, 500);
+  return new Response(f.data, { headers: { "content-type": "application/pdf", "content-disposition": `attachment; filename="resume-sharpened.pdf"` } });
 });
 
 shots.get("/:id", async (c) => {

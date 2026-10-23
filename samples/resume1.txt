@@ -1,0 +1,24 @@
+Priya Nair
+Bengaluru · priya.nair@example.com · +91 98xxx xxxxx · linkedin.com/in/priyanair
+
+Business Analyst with 4 years in e-commerce and fintech.
+
+EXPERIENCE
+Senior Business Analyst — Meesho, Bengaluru (Jun 2023 – Present)
+- Worked with product and engineering on seller onboarding funnel
+- Built weekly dashboards in Metabase for the supply team
+- Wrote SQL queries on Redshift for ad-hoc requests from leadership
+- Ran A/B test readouts for the onboarding flow; one test increased seller activation by 11%
+- Documented requirements for the seller payouts revamp
+
+Business Analyst — Razorpay, Bengaluru (Jul 2021 – May 2023)
+- Supported the merchant risk team with reporting
+- Automated monthly MIS using Python scripts, saving ~20 hours a month
+- Worked with data engineering to define events for the merchant dashboard
+- Handled stakeholder requests from sales and ops
+
+SKILLS
+SQL, Python (pandas), Metabase, Excel, Mixpanel, JIRA, basic Tableau
+
+EDUCATION
+B.Tech, Computer Science — PES University, Bengaluru, 2021

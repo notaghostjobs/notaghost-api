@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { db, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
+import { processResume } from "../engine/worker.js";
 
 export const resumes = new Hono<{ Variables: { user: User } }>();
 resumes.use("*", requireUser);
@@ -21,7 +22,6 @@ resumes.post("/", async (c) => {
   const up = await db.storage.from("resumes").upload(path, buf, { contentType: file.type });
   if (up.error) return c.json({ error: up.error.message }, 500);
 
-  // TODO: text extraction + Claude parse (next step)
   await db.from("resumes").update({ is_current: false }).eq("user_id", user.id);
   const { data, error } = await db
     .from("resumes")
@@ -29,7 +29,13 @@ resumes.post("/", async (c) => {
     .select("id, filename, created_at")
     .single();
   if (error) return c.json({ error: error.message }, 500);
-  return c.json({ resume: data });
+  try {
+    const parsed = await processResume(id);
+    return c.json({ resume: { ...data, parsed } });
+  } catch (e) {
+    await db.from("resumes").delete().eq("id", id);
+    throw e;
+  }
 });
 
 resumes.get("/current", async (c) => {

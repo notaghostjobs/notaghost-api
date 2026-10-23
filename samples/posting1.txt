@@ -1,0 +1,23 @@
+Product Analyst — Swiggy Instamart
+Bengaluru · Full-time
+
+About the role
+We're looking for a Product Analyst to partner with product managers on the Instamart consumer experience. You'll own the metrics for a product area, design and read experiments, and turn data into decisions.
+
+What you'll do
+- Own the metrics framework for a consumer product area and drive the weekly business review
+- Design experiments with PMs, run power analysis, and write crisp readouts
+- Build self-serve dashboards so PMs stop asking you for numbers
+- Deep-dive into funnels to find where users drop and why
+- Partner with data engineering on event instrumentation
+
+What we need
+- 3-6 years as a product/business analyst in a consumer internet company
+- Advanced SQL (window functions, CTEs) on large datasets; Python for analysis
+- Hands-on experience designing and analysing A/B tests
+- Experience with product analytics tools (Mixpanel, Amplitude, or similar)
+- Strong written communication — you'll write for leadership
+
+Nice to have
+- Experience in quick-commerce, food delivery or e-commerce
+- Familiarity with Airflow or dbt

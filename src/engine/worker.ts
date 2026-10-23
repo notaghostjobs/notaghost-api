@@ -1,0 +1,77 @@
+import { db } from "../lib/db.js";
+import { extractText, fetchPosting } from "./extract.js";
+import { parseResume, runSharpen, type ResumeProfile } from "./sharpen.js";
+import { resumePdf } from "./pdf.js";
+import { createHash } from "node:crypto";
+
+/** Called right after upload. Extracts + parses once; stores text and profile. */
+export async function processResume(resumeId: string) {
+  const { data: row } = await db.from("resumes").select("*").eq("id", resumeId).single();
+  if (!row) return;
+  const file = await db.storage.from("resumes").download(row.storage_path);
+  if (file.error) throw file.error;
+  const buf = Buffer.from(await file.data.arrayBuffer());
+  const { text, pages } = await extractText(buf, row.filename ?? "resume.pdf");
+  if (text.length < 300) throw Object.assign(new Error("Couldn't read text from that file. Export it as a text PDF, not a scan."), { status: 400 });
+  const parsed = await parseResume(text, pages);
+  await db.from("resumes").update({ text, parsed }).eq("id", resumeId);
+  return parsed;
+}
+
+/** Runs one Sharpen shot end to end. Fire-and-forget from the route; status is polled. */
+export async function runShot(shotId: string) {
+  const { data: shot } = await db.from("shots").select("*").eq("id", shotId).single();
+  if (!shot || shot.status !== "queued") return;
+  await db.from("shots").update({ status: "running" }).eq("id", shotId);
+  try {
+    const { data: res } = await db.from("resumes").select("parsed, text").eq("id", shot.resume_id).single();
+    if (!res?.parsed) throw new Error("Résumé not parsed yet.");
+    const profile = res.parsed as ResumeProfile;
+
+    // posting: fetch or pasted; cache by url hash
+    const input = shot.input as { posting_url?: string; posting_text?: string };
+    let postingId: string | null = null;
+    let postingText = input.posting_text ?? "";
+    if (input.posting_url) {
+      const url_hash = createHash("sha256").update(input.posting_url.trim().toLowerCase()).digest("hex");
+      const { data: cached } = await db.from("postings").select("id, raw_text").eq("url_hash", url_hash).maybeSingle();
+      if (cached) { postingId = cached.id; postingText = cached.raw_text; }
+      else {
+        postingText = await fetchPosting(input.posting_url);
+        const { data: p } = await db.from("postings")
+          .insert({ url: input.posting_url, url_hash, source: sourceOf(input.posting_url), raw_text: postingText })
+          .select("id").single();
+        postingId = p?.id ?? null;
+      }
+    }
+    if (postingText.length < 80) throw new Error("That posting is too short to work with. Paste the full description.");
+
+    const out = await runSharpen(profile, postingText);
+    if (postingId) await db.from("postings").update({ company: out.posting.company, title: out.posting.title, parsed: out.posting }).eq("id", postingId);
+
+    const pdf = await resumePdf(out.rewrite, profile);
+    const pdf_path = `${shot.user_id}/${shotId}.pdf`;
+    const up = await db.storage.from("outputs").upload(pdf_path, pdf, { contentType: "application/pdf" });
+    if (up.error) throw up.error;
+
+    await db.from("shots").update({
+      status: "done", posting_id: postingId, done_at: new Date().toISOString(),
+      output: { ...out, pdf_path },
+    }).eq("id", shotId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[shot]", shotId, msg);
+    await db.from("shots").update({ status: "failed", error: msg }).eq("id", shotId);
+    // refund the shot
+    await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
+  }
+}
+
+function sourceOf(url: string) {
+  const h = new URL(url).hostname;
+  if (h.includes("linkedin")) return "linkedin";
+  if (h.includes("naukri")) return "naukri";
+  if (h.includes("greenhouse")) return "greenhouse";
+  if (h.includes("lever")) return "lever";
+  return "careers";
+}
