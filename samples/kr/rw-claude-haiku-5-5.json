@@ -1,0 +1,183 @@
+{
+  "rw": {
+    "headline": "Head of Category, Grocery & FMCG",
+    "summary": "Category and P&L leader with 10 years across FMCG, grocery and online commerce, currently heading the FMCG and Grocery vertical at Ninjacart. Owns category P&L, pricing and inventory, negotiates with vendors, and works directly with tech teams on seller and buyer applications. Ran a $5M portfolio at 20% EBITDA at Unacademy and built a 500+ supplier base at Fashinza.",
+    "relevant": [
+      "Category P&L: managed P&L for key categories at Ninjacart contributing 60% of revenue, with 5x daily volume growth within 100 days.",
+      "Daily benchmarking: ran daily price benchmarking across 75+ SKUs for market intelligence across 30+ cities.",
+      "Team leadership: led cross-functional teams of over 250 members across layers.",
+      "Product and engineering: worked with tech and engineering on seller and buyer-facing applications from development through deployment."
+    ],
+    "roles": [
+      {
+        "company": "Ninjacart",
+        "title": "Director, FMCG and Grocery",
+        "start": "Aug’24",
+        "end": "Present",
+        "bullets": [
+          "Head the FMCG and Grocery business vertical at Ninjacart, India’s leading Agri-commerce company.",
+          "Run end-to-end category management, including product selection, market intelligence and retail strategy implementation.",
+          "Own P&L management and pricing strategies, with inventory optimization across the category.",
+          "Lead vendor negotiations and build relationships with key brands and sellers to support sustainable growth across geographies.",
+          "Work closely with tech and engineering teams and product-manage the development and deployment of seller and buyer-facing applications."
+        ]
+      },
+      {
+        "company": "Unacademy",
+        "title": "Associate Director, Growth & Revenue",
+        "start": "Feb’22",
+        "end": "Jan’24",
+        "bullets": [
+          "Managed a $5M portfolio at 20% EBITDA; drove 30% YoY revenue growth with positive cash flow in a challenging Ed-Tech landscape.",
+          "Drove online revenue market share from 8% to 55% in 18 months.",
+          "Delivered an ROI of >10X on performance marketing campaigns, generating $1.3M in revenue against $100K spend.",
+          "Optimized Customer Lifecycle Management (CLM) campaigns to lift engagement, retention and user stickiness.",
+          "Set content strategies across top-funnel (performance marketing and GTMs), mid-funnel (product interaction) and bottom-funnel (conversion), using market research to spot opportunities and threats.",
+          "Led product assortments aligned with customer preferences and market demand; worked with engineering and design teams to drive growth in adoption and engagement."
+        ]
+      },
+      {
+        "company": "Fashinza (Tirupur)",
+        "title": "Senior Manager, Category Management and Operations",
+        "start": "Mar’21",
+        "end": "Feb’22",
+        "bullets": [
+          "Established a network of 500+ suppliers and managed the full sourcing base.",
+          "Scaled monthly GMV to $100K within a year, setting up core backend functions from scratch.",
+          "Led product assortments aligned with customer preferences and market demand."
+        ]
+      },
+      {
+        "company": "Ninjacart (Chennai)",
+        "title": "Senior Manager, Category Management",
+        "start": "Apr’18",
+        "end": "Mar’21",
+        "bullets": [
+          "Managed P&L for key categories contributing 60% of revenue, driving 5x growth in daily volumes within 100 days.",
+          "Led P&L optimization and market intelligence for 30+ cities.",
+          "Conducted daily price benchmarking across 75+ SKUs."
+        ]
+      },
+      {
+        "company": "Accenture (Chennai)",
+        "title": "Software Engineer",
+        "start": "Sep’14",
+        "end": "Aug’17",
+        "bullets": [
+          "Led end-to-end software development lifecycle, including design and implementation of business-critical applications, while analyzing key performance drivers.",
+          "Managed incident resolution across multiple channels and integrated new technologies and automation into existing systems."
+        ]
+      }
+    ],
+    "skills": [
+      "Category Management",
+      "P&L Optimization",
+      "Revenue Growth Strategies",
+      "Market Intelligence",
+      "Market Trend Analysis",
+      "Supply Chain Optimization",
+      "Procurement and Fulfillment",
+      "Customer Lifecycle Management",
+      "Marketing Campaigns",
+      "ROI Optimization",
+      "Operations Scaling",
+      "Business Process Re-engineering",
+      "SQL",
+      "Tableau",
+      "Amplitude",
+      "Google Analytics",
+      "AppsFlyer",
+      "Google Ads",
+      "Jira",
+      "Salesforce",
+      "Figma",
+      "Microsoft Office Suite",
+      "GPT engines",
+      "Team Building",
+      "Problem-solving",
+      "Communication & Collaboration"
+    ],
+    "education": [
+      {
+        "school": "CEG, Anna University",
+        "degree": "B.E. Computer Science",
+        "year": "2014"
+      }
+    ],
+    "extra_sections": [
+      {
+        "title": "Entrepreneurial Ventures",
+        "items": [
+          "Valarlife: Launched a spirulina and moringa health supplement online store. Revenue Generated: $200K; Funding: $100K.",
+          "Fraternitee: B2B apparel manufacturing for schools, colleges, startups, corporates and NGOs. Revenue Generated: $250K."
+        ]
+      },
+      {
+        "title": "Languages",
+        "items": [
+          "English, Hindi, Tamil, Kannada, Telugu"
+        ]
+      }
+    ],
+    "changes": [
+      {
+        "what": "Headline set to 'Head of Category, Grocery & FMCG'",
+        "why": "Mirrors the target title so the posting's role is matched at first glance."
+      },
+      {
+        "what": "Summary rewritten for this posting",
+        "why": "Replaces the generic Job Objective and Profile Summary with a 3-line statement tied to P&L, supplier and product/engineering proof."
+      },
+      {
+        "what": "Relevant block added with four proof lines",
+        "why": "Puts the strongest evidence for must-haves (category P&L, data benchmarking, team leadership, product/engineering) above the fold."
+      },
+      {
+        "what": "Ninjacart Director bullets expanded from 2 to 5",
+        "why": "The original compressed the role into two bullets; unpacked using facts from the same résumé's profile summary and original bullets, covering category management, P&L, vendor negotiations and product work."
+      },
+      {
+        "what": "Unacademy bullets reduced from 8 to 6, with the 30% YoY growth and positive cash flow pulled in from the profile summary",
+        "why": "Keeps the P&L and growth proof, drops duplicated lines, and adds revenue and cash-flow evidence in the role where it happened."
+      },
+      {
+        "what": "Duplicate 'collaborated with engineering and design' and 'client feedback loop' bullets removed from Fashinza",
+        "why": "These were copy-pasted across roles; kept once in Unacademy where they fit the growth work."
+      },
+      {
+        "what": "Fashinza trimmed to 3 bullets; Ninjacart Chennai kept at 3 with the daily benchmarking bullet split out",
+        "why": "Older roles get 2-3 bullets; the 75+ SKU benchmarking is a must-have data proof and now stands alone."
+      },
+      {
+        "what": "Accenture reduced to 2 bullets, wording unchanged in substance",
+        "why": "Older role; engineering background is kept as evidence for the nice-to-have but given less space."
+      },
+      {
+        "what": "Skills list reordered with category, P&L and data tools first; Time Management and Analytical removed",
+        "why": "Puts must-have tools (SQL, dashboards, pricing) at the top and drops generic soft skills."
+      },
+      {
+        "what": "Entrepreneurial Ventures cut from four to two (Dazzilo and Livepurse removed)",
+        "why": "Dazzilo (AI influencer marketing) and Livepurse (fintech MVP) do not serve a grocery category role; Valarlife and Fraternitee show revenue and P&L work."
+      },
+      {
+        "what": "Job Objective and Profile Summary removed as separate sections",
+        "why": "Their content is folded into the summary and role bullets; the 'results-driven' wording was dropped."
+      },
+      {
+        "what": "Languages kept, trimmed to one line",
+        "why": "Hindi, Tamil, Kannada and Telugu are relevant to a South region role; personal details were not carried over."
+      },
+      {
+        "what": "Quick-commerce, dark-store and national FMCG brand negotiation not claimed",
+        "why": "The source has no evidence of these, so they are left out rather than implied."
+      }
+    ],
+    "referral_note": "Hi, I'm applying for the Head of Category, Grocery & FMCG role in Bengaluru and wondered if you'd be open to referring me. I currently head the FMCG and Grocery vertical at Ninjacart, where I manage category P&L, pricing and inventory, and I ran daily price benchmarking across 75+ SKUs in 30+ cities. I also work directly with tech teams on seller and buyer applications, which fits your product and supply chain model. Would you be willing to refer me or point me to the right hiring manager?",
+    "fit_line": "You match well on category P&L, team leadership (250+ people) and product/engineering work, and you are Bengaluru-based. The gaps are quick-commerce or dark-store experience, direct negotiation with national FMCG brands, and hands-on SQL depth; apply, but expect questions on those and on whether your 8-plus years of category work meets the bar."
+  },
+  "v": {
+    "ok": true,
+    "problems": []
+  }
+}

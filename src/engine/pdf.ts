@@ -111,34 +111,49 @@ ${r.education.length ? sec("Education", edu) : ""}
 }
 
 /**
- * HTML → PDF. Auto-fits: scales type/spacing (CSS --s) so content fills exactly
- * `pages` A4 pages (default: same as the original résumé).
+ * HTML → PDF. Auto-fits: picks the page count so the last page is never a short spill
+ * (shrinks into fewer pages when the overflow is small, otherwise fills the extra page),
+ * then scales type/spacing (CSS --s) so the pages end near the bottom margin.
  */
 export async function resumePdf(r: Rewrite, o: ResumeProfile): Promise<Buffer> {
-  return htmlToPdf(resumeHtml(r, o), Math.max(1, o.pages || 1));
+  return htmlToPdf(resumeHtml(r, o));
 }
 
-export async function htmlToPdf(html: string, pages = 1): Promise<Buffer> {
+export async function htmlToPdf(html: string): Promise<Buffer> {
   const b = await browser();
   const page = await b.newPage();
   try {
     await page.setContent(html, { waitUntil: "load" });
     // passed as a string: tsx/esbuild inject helpers into function bodies that don't exist in the page
-    await page.evaluate(`(() => {
-      const target = (1122.5 - 117.2) * ${pages} * (${pages} > 1 ? 0.94 : 0.985);   // printable height × pages, minus slack lost to page breaks
-      const pg = document.querySelector(".page"); pg.style.minHeight = "0";
+    const PAGE = 1122.5 - 117.2;                     // printable height per A4 page in CSS px
+    const chosen: number = await page.evaluate(`(() => {
+      const PAGE = ${PAGE};
+      const pg = document.querySelector(".page");
       const h = () => pg.getBoundingClientRect().height;
       const set = (s) => document.documentElement.style.setProperty("--s", String(s));
-      let lo = 0.8, hi = 1.75;
-      for (let i = 0; i < 18; i++) { const mid = (lo + hi) / 2; set(mid); if (h() <= target) lo = mid; else hi = mid; }
+      const slackFor = (n) => n > 1 ? 0.94 : 0.985;  // page breaks lose a little height
+      const fits = (s, n) => { set(s); return h() <= PAGE * n * slackFor(n); };
+
+      // 1. How many pages does it naturally need at scale 1?
+      set(1); const natural = Math.max(1, Math.ceil(h() / (PAGE * 0.985)));
+      // 2. If the last page would be mostly empty, try to shrink into one fewer page (down to 0.86).
+      let pages = natural;
+      const lastFrac = (h() - PAGE * (natural - 1)) / PAGE;
+      if (natural > 1 && lastFrac < 0.45 && fits(0.86, natural - 1)) pages = natural - 1;
+      // 3. Largest scale that fits in the chosen page count.
+      let lo = 0.86, hi = 1.6;
+      for (let i = 0; i < 18; i++) { const mid = (lo + hi) / 2; if (fits(mid, pages)) lo = mid; else hi = mid; }
       set(lo);
-      const slack = target - h();
+      // 4. Spread remaining slack across section gaps so pages end near the margin.
+      const slack = PAGE * pages * slackFor(pages) - h();
       const secs = document.querySelectorAll("section");
       if (slack > 0 && secs.length) {
         const per = Math.min(slack / secs.length, 28);
         secs.forEach((s) => { s.style.marginTop = "calc(" + getComputedStyle(s).marginTop + " + " + per + "px)"; });
       }
+      return pages;
     })()`);
+    void chosen;
     const pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true });
     return Buffer.from(pdf);
   } finally {

@@ -1,12 +1,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { parseResume, runSharpen } from "../../src/engine/sharpen.js";
 import { resumePdf } from "../../src/engine/pdf.js";
-const t0 = Date.now();
-const profile = await parseResume(readFileSync("samples/kr/text.txt", "utf8"), 2);
+const t0 = Date.now(); void 0;
+const profile = JSON.parse(readFileSync("samples/kr/out.json","utf8")).profile; const tp = Date.now();
 const out = await runSharpen(profile, readFileSync("samples/kr/posting.txt", "utf8"));
 writeFileSync("samples/kr/out.json", JSON.stringify({ profile, ...out }, null, 2));
 writeFileSync("samples/kr/out.pdf", await resumePdf(out.rewrite, profile));
-console.log("done", ((Date.now()-t0)/1000).toFixed(0), "s verified:", out.verification.ok, JSON.stringify(out.verification.problems));
+console.log("done", ((Date.now()-t0)/1000).toFixed(0), "s", JSON.stringify(out.timing), "verified:", out.verification.ok, "broken:", out.broken, "review:", out.needs_review);
 console.log("FIT:", out.rewrite.fit_line);
 console.log("bullets/role:", out.rewrite.roles.map(r=>r.bullets.length).join(","), "relevant:", out.rewrite.relevant?.length, "extras:", out.rewrite.extra_sections?.map(x=>x.title).join("|"));
 process.exit(0);

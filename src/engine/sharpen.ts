@@ -1,4 +1,5 @@
-import { json } from "./claude.js";
+import { json, FAST, MODEL } from "./claude.js";
+import { checkRules } from "./rules.js";
 
 // ---------- types ----------
 export interface ResumeProfile {
@@ -63,7 +64,8 @@ export function parseResume(text: string, pages: number) {
 export function parsePosting(text: string) {
   return json<PostingProfile>(
     `You read a job posting and extract what the employer is actually asking for. Must-haves are explicit requirements or things the role cannot be done without. Nice-to-haves are preferences. company_language = 6-10 short phrases the posting uses to describe the work (e.g. "owning the roadmap", "SQL-first analysis"). red_flags = only things visible in the text (no salary, vague scope, unrealistic stack list, "urgent", posting older than 45 days if dated). Be concrete and short.`,
-    `Posting:\n\n${text}\n\nReturn: {company, title, location, years_required, must_have[], nice_to_have[], company_language[], red_flags[]}`
+    `Posting:\n\n${text}\n\nReturn: {company, title, location, years_required, must_have[], nice_to_have[], company_language[], red_flags[]}`,
+    2500, FAST
   );
 }
 
@@ -81,22 +83,23 @@ Evidence must be a verbatim quote from the résumé. suggestion: for said/have_n
 }
 
 // ---------- 4. rewrite ----------
-export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, matches: Match[]) {
+export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, model = FAST) {
   return json<Rewrite>(
     `You sharpen a résumé for one specific posting. Rules, in order of importance:
-1. NEVER invent. No new employers, titles, dates, degrees, tools, numbers or outcomes. Every bullet must be traceable to the original résumé or to evidence in the matches.
+0. First, silently map each must-have and nice-to-have to evidence in the résumé: clearly stated / present but under another name / absent. Then write.
+1. NEVER invent. No new employers, titles, dates, degrees, tools, numbers or outcomes. Every bullet must be traceable to the original résumé.
 2. Reorder and reword: lift the proof that answers the must-haves to the top of each role; mirror the posting's language where it is true of the candidate; cut bullets that don't serve this role (list what you cut in changes).
 3. EXPAND, don't pad. Most résumés under-write. Where a bullet compresses real work ("managed P&L for key categories"), unpack it into 2-3 specific bullets using only facts present anywhere in the résumé (summary, competencies, other roles). Each unpacked bullet must still be traceable. Never add numbers, tools or outcomes that aren't in the source. Target: a dense page — 4-6 bullets per recent role, 2-3 for older ones.
-3b. relevant: 3-4 one-line statements mapping the candidate's proof to the posting's must-haves, in the employer's language (e.g. "Category P&L: ran FMCG & grocery P&L at Ninjacart; 60% of revenue, 5x volume in 100 days"). Only "said" and "have_not_said" matches — never a missing one.
+3b. relevant: 3-4 one-line statements mapping the candidate's proof to the posting's must-haves, in the employer's language (e.g. "Category P&L: ran FMCG & grocery P&L at Ninjacart; 60% of revenue, 5x volume in 100 days"). Only requirements with real evidence — never an absent one.
 3c. extra_sections: keep the résumé's own extra blocks (ventures, certifications, languages) tightened to what serves this role; drop personal details.
 3d. Length: ${resume.pages} page(s) in, ${resume.pages} page(s) out — full pages, not half.
 4. Bullets: start with a verb, one line each, concrete, numbers kept exactly as the original had them.
-5. headline: the single target title, at most 6 words, no pipes or lists (e.g. "Director, FMCG and Grocery"). summary: 2-3 lines for this posting, no adjectives like "passionate" or "results-driven".
+5. headline: the candidate's real current (or most recent) title, at most 6 words, no pipes or lists (e.g. "Director, FMCG and Grocery"). NEVER the posting's title — a title they have not held reads as a stretch. summary: 2-3 lines for this posting, no adjectives like "passionate" or "results-driven".
 6. referral_note: ~60 words, first person, to someone at the company — names the role, gives one specific reason the candidate fits, asks for a referral. No flattery.
 7. fit_line: one honest sentence to the candidate about their odds here (e.g. "Strong on the core stack; two of five must-haves are missing — apply, but expect questions on X").
 8. changes: every meaningful edit with a one-line why, so the candidate can see exactly what moved.`,
-    `ORIGINAL:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nMATCHES:\n${JSON.stringify(matches)}\n\nReturn: {headline, summary, relevant[], roles[{company,title,start,end,bullets[]}], skills[], education[], extra_sections[{title,items[]}], changes[{what,why}], referral_note, fit_line}`,
-    8000
+    `ORIGINAL:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nReturn: {headline, summary, relevant[], roles[{company,title,start,end,bullets[]}], skills[], education[], extra_sections[{title,items[]}], changes[{what,why}], referral_note, fit_line}`,
+    8000, model
   );
 }
 
@@ -105,24 +108,49 @@ export function verifyRewrite(original: ResumeProfile, rewrite: Rewrite) {
   return json<Verification>(
     `You are an auditor. Compare a rewritten résumé against the original profile. Flag ANY claim in the rewrite that the original does not support: a tool, number, outcome, title, employer, date, degree, or responsibility that isn't there. Rewording and reordering are fine. Mirroring an employer's phrase is fine if the underlying fact exists. Be strict about numbers and tools; be reasonable about synonyms. If nothing is unsupported, ok=true with an empty list.`,
     `ORIGINAL:\n${JSON.stringify(original)}\n\nREWRITE:\n${JSON.stringify({ headline: rewrite.headline, summary: rewrite.summary, relevant: rewrite.relevant, roles: rewrite.roles, skills: rewrite.skills, education: rewrite.education, extra_sections: rewrite.extra_sections })}\n\nReturn: {ok: boolean, problems:[{claim, reason}]}`,
-    3000
+    3000, FAST
   );
 }
 
 // ---------- orchestration ----------
-export async function runSharpen(resume: ResumeProfile, postingText: string) {
+export async function runSharpen(resume: ResumeProfile, postingText: string, onStage?: (s: string) => void) {
+  const t = (label: string) => { onStage?.(label); return Date.now(); };
+  const timing: Record<string, number> = {};
+  let t0 = t("Reading the posting");
   const posting = await parsePosting(postingText);
-  const { matches } = await matchResume(resume, posting);
-  let rewrite = await rewriteResume(resume, posting, matches);
+  timing.posting = Date.now() - t0;
+
+  t0 = t("Matching and writing");
+  const [{ matches }, firstDraft] = await Promise.all([matchResume(resume, posting), rewriteResume(resume, posting)]);
+  timing.write = Date.now() - t0;
+  let rewrite = firstDraft;
+
+  t0 = t("Checking every claim");
   let verification = await verifyRewrite(resume, rewrite);
-  if (!verification.ok) {
-    // one repair pass: feed the problems back
+  let broken = checkRules(rewrite, resume, posting);
+  timing.verify = Date.now() - t0;
+
+  if (!verification.ok || broken.length) {
+    // one repair pass on the fast model: feed back problems + broken rules
+    t0 = t("Fixing a few things");
     rewrite = await json<Rewrite>(
-      `Fix a résumé rewrite so it contains no unsupported claims. Remove or reword exactly the flagged items; change nothing else. Keep the same JSON shape.`,
-      `ORIGINAL:\n${JSON.stringify(resume)}\n\nREWRITE:\n${JSON.stringify(rewrite)}\n\nPROBLEMS:\n${JSON.stringify(verification.problems)}`,
-      8000
+      `Fix a résumé rewrite. Remove or reword exactly the flagged items and fix the listed rule breaks; change nothing else. Rules: title = candidate's real title (≤6 words); summary 35–80 words; relevant 3–4 lines ≤30 words; bullets ≤30 words, start with a verb, none repeated, 4–6 on the two most recent roles and 2–4 on older ones; skills 6–14; no personal details; no numbers that aren't in the original. Keep the same JSON shape.`,
+      `ORIGINAL:\n${JSON.stringify(resume)}\n\nREWRITE:\n${JSON.stringify(rewrite)}\n\nUNSUPPORTED CLAIMS:\n${JSON.stringify(verification.problems)}\n\nRULE BREAKS:\n${JSON.stringify(broken)}`,
+      8000, FAST
     );
     verification = await verifyRewrite(resume, rewrite);
+    broken = checkRules(rewrite, resume, posting);
+    timing.repair = Date.now() - t0;
   }
-  return { posting, matches, rewrite, verification };
+  if (!verification.ok || broken.length) {
+    // still not clean: one full regeneration on the stronger model, then accept what we have and flag for review
+    t0 = t("Taking another pass");
+    const second = await rewriteResume(resume, posting, MODEL);
+    const v2 = await verifyRewrite(resume, second);
+    const b2 = checkRules(second, resume, posting);
+    if (v2.problems.length + b2.length < verification.problems.length + broken.length) { rewrite = second; verification = v2; broken = b2; }
+    timing.regen = Date.now() - t0;
+  }
+  const needs_review = !verification.ok || broken.length > 0;
+  return { posting, matches, rewrite, verification, broken, needs_review, timing };
 }
