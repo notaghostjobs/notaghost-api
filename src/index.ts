@@ -18,7 +18,12 @@ app.use("*", cors({ origin: origins, allowHeaders: ["authorization", "content-ty
 
 app.get("/health", async (c) => {
   const { error } = await db.from("users").select("id", { count: "exact", head: true });
-  return c.json({ ok: !error, v: "0.1.1", db: error ? error.message : "ok", otp: env.otpProvider, dev_code: !!process.env.OTP_DEV_CODE });
+  let raw = "";
+  try {
+    const r = await fetch(`${env.supabaseUrl}/rest/v1/users?select=id&limit=1`, { headers: { apikey: env.supabaseServiceKey, authorization: `Bearer ${env.supabaseServiceKey}` }, signal: AbortSignal.timeout(8000) });
+    raw = `${r.status} ${(await r.text()).slice(0, 200)}`;
+  } catch (e) { raw = `fetch failed: ${(e as Error).message} ${(e as any)?.cause?.code ?? ""}`; }
+  return c.json({ ok: !error, v: "0.1.2", db: error ? JSON.stringify(error) : "ok", raw, url: env.supabaseUrl, keylen: env.supabaseServiceKey.length, otp: env.otpProvider, dev_code: !!process.env.OTP_DEV_CODE });
 });
 app.route("/auth", auth);
 app.route("/resumes", resumes);
