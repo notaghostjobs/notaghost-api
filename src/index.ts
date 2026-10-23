@@ -8,6 +8,7 @@ import { resumes } from "./routes/resumes.js";
 import { shots } from "./routes/shots.js";
 import { payments } from "./routes/payments.js";
 import { preview } from "./routes/preview.js";
+import { check } from "./routes/check.js";
 
 const app = new Hono();
 app.use("*", logger());
@@ -20,6 +21,7 @@ app.route("/resumes", resumes);
 app.route("/shots", shots);
 app.route("/payments", payments);
 app.route("/preview", preview);
+app.route("/check", check);
 
 app.onError((err, c) => {
   const status = (err as { status?: number }).status ?? 500;
