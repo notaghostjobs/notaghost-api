@@ -1,118 +1,128 @@
-import PDFDocument from "pdfkit";
+import { chromium, type Browser } from "playwright-core";
+import { readFileSync, existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import type { Rewrite, ResumeProfile } from "./sharpen.js";
 
-const A4 = { w: 595.28, h: 841.89 };
-const M = { top: 50, bottom: 50, left: 56, right: 56 };
-const W = A4.w - M.left - M.right;
-const INK = "#111111", MID = "#444444", FAINT = "#777777", RULE = "#B8B8B8";
+const require = createRequire(import.meta.url);
 
-/**
- * Clean one-column résumé. Auto-fits: scales type and spacing so the content
- * fills the target page count (same as the original) without spilling.
- */
-export async function resumePdf(r: Rewrite, orig: ResumeProfile): Promise<Buffer> {
-  const targetPages = Math.max(1, orig.pages || 1);
-  // find the largest scale that still fits in targetPages
-  let best = 1, endY = 0;
-  for (let s = 1.0; s <= 1.5; s += 0.02) {
-    const m = await render(r, orig, s, true);
-    if (m.pages > targetPages) break;
-    best = s; endY = m.endY;
+// ---------- fonts (Inter, embedded as data URIs so the PDF is self-contained) ----------
+const fontCss = (() => {
+  const dir = require.resolve("@fontsource/inter/package.json").replace(/package\.json$/, "files/");
+  return [400, 500, 600, 700, 800]
+    .map((w) => {
+      const b64 = readFileSync(`${dir}inter-latin-${w}-normal.woff2`).toString("base64");
+      return `@font-face{font-family:Inter;font-weight:${w};font-style:normal;src:url(data:font/woff2;base64,${b64}) format('woff2')}`;
+    })
+    .join("\n");
+})();
+
+// ---------- browser (one per process) ----------
+let browserP: Promise<Browser> | null = null;
+function browser() {
+  if (!browserP) {
+    const candidates = [process.env.CHROMIUM_PATH, "/opt/pw-browsers/chromium", "/usr/bin/chromium", "/usr/bin/chromium-browser"].filter(Boolean) as string[];
+    const executablePath = candidates.find((p) => existsSync(p)); // undefined -> playwright default (Docker image)
+    browserP = chromium.launch({ headless: true, executablePath, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
   }
-  // spread any leftover on the last page across the section gaps (4 sections), capped so it never looks airy
-  const leftover = A4.h - M.bottom - endY;
-  const extra = Math.max(0, Math.min(leftover / 4, 22 * best));
-  const check = await render(r, orig, best, true, extra);
-  return render(r, orig, best, false, check.pages > targetPages ? 0 : extra) as Promise<Buffer>;
+  return browserP;
 }
 
-export function render(r: Rewrite, orig: ResumeProfile, s: number, measure: true, extra?: number): Promise<{ pages: number; endY: number }>;
-export function render(r: Rewrite, orig: ResumeProfile, s: number, measure: false, extra?: number): Promise<Buffer>;
-export function render(r: Rewrite, orig: ResumeProfile, s: number, measure: boolean, extra = 0): Promise<{ pages: number; endY: number } | Buffer> {
-  return new Promise((resolve) => {
-    const doc = new PDFDocument({ size: "A4", margins: M, bufferPages: true, info: { Title: `${orig.name} — Résumé`, Author: orig.name } });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c) => chunks.push(c));
-    let pageCount = 0, endY = 0;
-    doc.on("end", () => resolve(measure ? { pages: pageCount, endY } : Buffer.concat(chunks)));
+const esc = (s: string) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
-    // type scale
-    const F = {
-      name: 21 * s, head: 11 * s, contact: 9 * Math.min(s, 1.15), sec: 8.6 * s, role: 10.5 * s, body: 10 * s, date: 9 * s,
-    };
-    const gap = (n: number) => doc.moveDown(n * s);
-    const lineGap = 2.2 * s;
+// ---------- template: "Morton" — editorial, left-aligned, rule under headings, skill chips ----------
+export function resumeHtml(r: Rewrite, o: ResumeProfile) {
+  const contact = [o.contact.email, o.contact.phone, o.contact.city, ...(o.contact.links ?? [])].filter(Boolean);
+  const sec = (title: string, body: string) => `<section><h2>${esc(title)}</h2>${body}</section>`;
 
-    // ---- header ----
-    doc.font("Helvetica-Bold").fontSize(F.name).fillColor(INK).text(orig.name, { width: W });
-    doc.moveDown(0.12);
-    doc.font("Helvetica").fontSize(F.head).fillColor(MID).text(r.headline, { width: W });
-    const contact = [orig.contact.email, orig.contact.phone, orig.contact.city, ...(orig.contact.links ?? [])]
-      .filter(Boolean).join("   ·   ");
-    if (contact) { doc.moveDown(0.25); doc.fontSize(F.contact).fillColor(FAINT).text(contact, { width: W }); }
+  const roles = r.roles.map((ro) => `
+    <div class="role">
+      <div class="role-h"><div><div class="t">${esc(ro.title)}</div><div class="c">${esc(ro.company)}</div></div><div class="d">${esc(ro.start)} – ${esc(ro.end)}</div></div>
+      <ul>${ro.bullets.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>
+    </div>`).join("");
 
-    // ---- section heading: title, rule tight beneath, then one line of air ----
-    const section = (t: string) => {
-      gap(1.15);
-      if (extra) doc.y += extra;
-      doc.font("Helvetica-Bold").fontSize(F.sec).fillColor(INK).text(t.toUpperCase(), M.left, doc.y, { width: W, characterSpacing: 1.4 * s });
-      const y = doc.y + 2.5 * s;
-      doc.moveTo(M.left, y).lineTo(M.left + W, y).lineWidth(0.6).strokeColor(RULE).stroke();
-      doc.y = y + 7 * s;
-    };
+  const edu = r.education.map((e) => `
+    <div class="role">
+      <div class="role-h"><div><div class="t">${esc(e.degree)}</div><div class="c">${esc(e.school)}</div></div>${e.year ? `<div class="d">${esc(e.year)}</div>` : ""}</div>
+    </div>`).join("");
 
-    const bullet = (b: string) => {
-      const x = M.left + 10 * s;
-      const yTop = doc.y;
-      doc.font("Helvetica").fontSize(F.body).fillColor(INK);
-      doc.text("•", M.left, yTop, { width: 10 * s, lineBreak: false });
-      doc.text(b, x, yTop, { width: W - 10 * s, lineGap });
-      doc.moveDown(0.18);
-    };
+  const skills = r.skills.length ? `<div class="chips">${r.skills.map((s) => `<span>${esc(s)}</span>`).join("")}</div>` : "";
 
-    // ---- summary ----
-    section("Summary");
-    doc.font("Helvetica").fontSize(F.body).fillColor(INK).text(r.summary, M.left, doc.y, { width: W, lineGap });
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(o.name)}</title>
+<style>
+${fontCss}
+:root{ --s:1; --ink:#15171a; --mid:#4a4f57; --faint:#7d838c; --accent:#6b5d4a; --rule:#2a2d31; --chip:#f1efeb; }
+*{box-sizing:border-box;margin:0;padding:0}
+@page{ size:A4; margin:0 }
+html,body{ width:210mm; }
+body{ font-family:Inter,system-ui,sans-serif; color:var(--ink); -webkit-font-smoothing:antialiased;
+      font-size:calc(10pt * var(--s)); line-height:1.42; }
+.page{ padding:calc(16mm * var(--s)) 17mm calc(14mm * var(--s)); min-height:297mm; }
+header .name{ font-size:calc(27pt * var(--s)); font-weight:800; letter-spacing:-0.02em; line-height:1.05; }
+header .head{ font-size:calc(11.5pt * var(--s)); color:var(--mid); margin-top:calc(3pt * var(--s)); font-weight:500; }
+header .bar{ height:1.6pt; background:var(--accent); margin:calc(8pt * var(--s)) 0 calc(7pt * var(--s)); }
+header .contact{ display:flex; flex-wrap:wrap; gap:0 calc(10pt * var(--s)); font-size:calc(8.8pt * var(--s)); color:var(--mid); }
+header .contact span + span::before{ content:"|"; color:#c9ccd1; margin-right:calc(10pt * var(--s)); }
+section{ margin-top:calc(13pt * var(--s)); }
+h2{ font-size:calc(9.6pt * var(--s)); font-weight:700; letter-spacing:0.12em; text-transform:uppercase;
+    padding-bottom:calc(3pt * var(--s)); border-bottom:0.9pt solid var(--rule); margin-bottom:calc(7pt * var(--s)); }
+p.sum{ color:var(--ink); }
+.role + .role{ margin-top:calc(9pt * var(--s)); }
+.role-h{ display:flex; justify-content:space-between; align-items:baseline; gap:12pt; }
+.role-h .t{ font-weight:700; font-size:calc(11pt * var(--s)); letter-spacing:-0.005em; }
+.role-h .c{ color:var(--accent); font-weight:500; font-size:calc(9.6pt * var(--s)); margin-top:1pt; }
+.role-h .d{ color:var(--faint); font-size:calc(9pt * var(--s)); white-space:nowrap; font-variant-numeric:tabular-nums; }
+ul{ list-style:none; margin-top:calc(4pt * var(--s)); }
+li{ position:relative; padding-left:calc(11pt * var(--s)); margin-top:calc(2.2pt * var(--s)); }
+li::before{ content:""; position:absolute; left:2pt; top:calc(0.58em - 1.2pt); width:3.2pt; height:3.2pt; border-radius:50%; background:var(--accent); }
+.chips{ display:flex; flex-wrap:wrap; gap:calc(5pt * var(--s)) calc(6pt * var(--s)); }
+.chips span{ background:var(--chip); padding:calc(3pt * var(--s)) calc(8pt * var(--s)); border-radius:3pt; font-size:calc(9.2pt * var(--s)); font-weight:500; color:var(--ink); }
+</style></head><body><div class="page">
+<header>
+  <div class="name">${esc(o.name)}</div>
+  <div class="head">${esc(r.headline)}</div>
+  <div class="bar"></div>
+  <div class="contact">${contact.map((c) => `<span>${esc(c!)}</span>`).join("")}</div>
+</header>
+${sec("Profile", `<p class="sum">${esc(r.summary)}</p>`)}
+${sec("Experience", roles)}
+${r.education.length ? sec("Education", edu) : ""}
+${r.skills.length ? sec("Skills", skills) : ""}
+</div></body></html>`;
+}
 
-    // ---- experience ----
-    section("Experience");
-    r.roles.forEach((role, i) => {
-      const y = doc.y;
-      const date = `${role.start} – ${role.end}`;
-      doc.font("Helvetica").fontSize(F.date).fillColor(FAINT);
-      const dw = doc.widthOfString(date) + 6;
-      doc.text(date, M.left + W - dw, y + (F.role - F.date) * 0.6, { width: dw, align: "right", lineBreak: false });
-      doc.font("Helvetica-Bold").fontSize(F.role).fillColor(INK)
-        .text(role.title, M.left, y, { width: W - dw - 8, continued: true })
-        .font("Helvetica").fillColor(MID).text(`  ·  ${role.company}`, { continued: false });
-      doc.moveDown(0.35);
-      role.bullets.forEach(bullet);
-      if (i < r.roles.length - 1) gap(0.55);
-    });
+/**
+ * HTML → PDF. Auto-fits: scales type/spacing (CSS --s) so content fills exactly
+ * `pages` A4 pages (default: same as the original résumé).
+ */
+export async function resumePdf(r: Rewrite, o: ResumeProfile): Promise<Buffer> {
+  return htmlToPdf(resumeHtml(r, o), Math.max(1, o.pages || 1));
+}
 
-    // ---- skills ----
-    if (r.skills.length) {
-      section("Skills");
-      doc.font("Helvetica").fontSize(F.body).fillColor(INK).text(r.skills.join("\u00A0 ·   "), M.left, doc.y, { width: W, lineGap });
-    }
-
-    // ---- education ----
-    if (r.education.length) {
-      section("Education");
-      for (const e of r.education) {
-        const y = doc.y;
-        if (e.year) {
-          doc.font("Helvetica").fontSize(F.date).fillColor(FAINT);
-          const dw = doc.widthOfString(e.year) + 6;
-          doc.text(e.year, M.left + W - dw, y + (F.body - F.date) * 0.6, { width: dw, align: "right", lineBreak: false });
-        }
-        doc.font("Helvetica-Bold").fontSize(F.body).fillColor(INK).text(e.degree, M.left, y, { width: W - 70, continued: true })
-          .font("Helvetica").fillColor(MID).text(`  ·  ${e.school}`, { continued: false });
-        doc.moveDown(0.2);
+export async function htmlToPdf(html: string, pages = 1): Promise<Buffer> {
+  const b = await browser();
+  const page = await b.newPage();
+  try {
+    await page.setContent(html, { waitUntil: "load" });
+    // passed as a string: tsx/esbuild inject helpers into function bodies that don't exist in the page
+    await page.evaluate(`(() => {
+      const target = 1122.5 * ${pages};            // 297mm in CSS px, times pages
+      const pg = document.querySelector(".page"); pg.style.minHeight = "0";
+      const h = () => pg.getBoundingClientRect().height;
+      const set = (s) => document.documentElement.style.setProperty("--s", String(s));
+      let lo = 0.8, hi = 1.75;
+      for (let i = 0; i < 18; i++) { const mid = (lo + hi) / 2; set(mid); if (h() <= target) lo = mid; else hi = mid; }
+      set(lo);
+      const slack = target - h();
+      const secs = document.querySelectorAll("section");
+      if (slack > 0 && secs.length) {
+        const per = Math.min(slack / secs.length, 28);
+        secs.forEach((s) => { s.style.marginTop = "calc(" + getComputedStyle(s).marginTop + " + " + per + "px)"; });
       }
-    }
-
-    pageCount = doc.bufferedPageRange().count; endY = doc.y;
-    doc.end();
-  });
+      pg.style.minHeight = "0"; pg.style.height = target + "px";
+    })()`);
+    const pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true, margin: { top: 0, bottom: 0, left: 0, right: 0 } });
+    return Buffer.from(pdf);
+  } finally {
+    await page.close();
+  }
 }
