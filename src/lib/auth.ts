@@ -11,19 +11,21 @@ export const PHONE_RE = /^\+91\d{10}$/;
 export async function sendOtp(phone: string) {
   // rate limit: max 3 codes per phone per 10 minutes
   const since = new Date(Date.now() - 10 * 60e3).toISOString();
-  const { count } = await db
+  const { count, error: cerr } = await db
     .from("otp_codes")
     .select("id", { count: "exact", head: true })
     .eq("phone", phone)
     .gt("created_at", since);
+  if (cerr) throw new Error(`db: ${cerr.message}`);
   if ((count ?? 0) >= 3) throw Object.assign(new Error("Too many codes. Wait ten minutes."), { status: 429 });
 
   const code = env.otpProvider === "dev" && process.env.OTP_DEV_CODE ? process.env.OTP_DEV_CODE : String(randomInt(100000, 999999));
-  await db.from("otp_codes").insert({
+  const { error } = await db.from("otp_codes").insert({
     phone,
     code_hash: sha(phone + code),
     expires_at: new Date(Date.now() + 5 * 60e3).toISOString(),
   });
+  if (error) throw new Error(`db: ${error.message}`);
   await deliverOtp(phone, code);
 }
 
