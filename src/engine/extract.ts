@@ -21,8 +21,19 @@ function clean(s: string) {
 
 /** Fetch a posting URL and reduce it to readable text. Pasted text goes straight through. */
 export async function fetchPosting(url: string): Promise<string> {
+  // LinkedIn: the guest endpoint returns the posting without a login wall and rarely rate-limits
+  const li = url.match(/linkedin\.com\/jobs\/view\/(?:[^/?]*-)?(\d{6,})/i);
+  if (li) {
+    try {
+      const g = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${li[1]}`, {
+        headers: { "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "accept-language": "en-IN,en;q=0.9" },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (g.ok) { const t = htmlToText(await g.text()); if (t.length > 200) return t; }
+    } catch { /* fall through */ }
+  }
   const r = await fetch(url, {
-    headers: { "user-agent": "Mozilla/5.0 (compatible; notaghost/0.1; +https://notaghost.jobs)" },
+    headers: { "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "accept-language": "en-IN,en;q=0.9" },
     redirect: "follow",
     signal: AbortSignal.timeout(15000),
   });
