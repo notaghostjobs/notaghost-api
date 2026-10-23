@@ -91,7 +91,7 @@ export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, ma
 3c. extra_sections: keep the résumé's own extra blocks (ventures, certifications, languages) tightened to what serves this role; drop personal details.
 3d. Length: ${resume.pages} page(s) in, ${resume.pages} page(s) out — full pages, not half.
 4. Bullets: start with a verb, one line each, concrete, numbers kept exactly as the original had them.
-5. summary: 2-3 lines for this posting, no adjectives like "passionate" or "results-driven".
+5. headline: the single target title, at most 6 words, no pipes or lists (e.g. "Director, FMCG and Grocery"). summary: 2-3 lines for this posting, no adjectives like "passionate" or "results-driven".
 6. referral_note: ~60 words, first person, to someone at the company — names the role, gives one specific reason the candidate fits, asks for a referral. No flattery.
 7. fit_line: one honest sentence to the candidate about their odds here (e.g. "Strong on the core stack; two of five must-haves are missing — apply, but expect questions on X").
 8. changes: every meaningful edit with a one-line why, so the candidate can see exactly what moved.`,

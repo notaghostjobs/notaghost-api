@@ -13,7 +13,7 @@
       {
         "company": "Ninjacart",
         "title": "Director, FMCG and Grocery",
-        "start": "Aug’24",
+        "start": "Aug\u201924",
         "end": "Present",
         "bullets": [
           "Business Side: End-to-end category management, product selection, market intelligence, pricing strategies, inventory optimization, P&L management, vendor negotiations, and retail strategy implementation.",
@@ -23,8 +23,8 @@
       {
         "company": "Unacademy",
         "title": "Associate Director, Growth & Revenue",
-        "start": "Feb’22",
-        "end": "Jan’24",
+        "start": "Feb\u201922",
+        "end": "Jan\u201924",
         "bullets": [
           "Managed a portfolio of $5M with an EBITDA of 20%.",
           "Enhancing engagement, retention, and user stickiness through the optimization of Customer Lifecycle Management (CLM) campaigns.",
@@ -39,8 +39,8 @@
       {
         "company": "Fashinza (Tirupur)",
         "title": "Senior Manager, Category Management and Operations",
-        "start": "Mar’21",
-        "end": "Feb’22",
+        "start": "Mar\u201921",
+        "end": "Feb\u201922",
         "bullets": [
           "Established a network of 500+ suppliers and managed the entire base for sourcing.",
           "Scaled monthly GMV to $100K within a year, setting up core backend functions from scratch.",
@@ -52,8 +52,8 @@
       {
         "company": "Ninjacart (Chennai)",
         "title": "Senior Manager, Category Management",
-        "start": "Apr’18",
-        "end": "Mar’21",
+        "start": "Apr\u201918",
+        "end": "Mar\u201921",
         "bullets": [
           "Managed P&L for key categories contributing 60% of revenue, driving 5x growth in daily volumes within 100 days.",
           "Led P&L optimization and market intelligence for 30+ cities, conducting daily price benchmarking across 75+ SKUs."
@@ -62,8 +62,8 @@
       {
         "company": "Accenture (Chennai)",
         "title": "Software Engineer",
-        "start": "Sep’14",
-        "end": "Aug’17",
+        "start": "Sep\u201914",
+        "end": "Aug\u201917",
         "bullets": [
           "Led end-to-end software development lifecycle, including design and implementation of business-critical applications while analyzing key performance drivers.",
           "Managed incident resolution through multiple channels and integrated new technologies/automation solutions to enhance existing systems."
@@ -203,7 +203,7 @@
         "items": [
           "Possess extensive experience in leading business strategies, optimizing P&L, and guiding cross-functional teams with over 10 years of experience, contributing to organizational success.",
           "Currently heading the FMCG and Grocery business vertical at Ninjacart, India's leading Agri-commerce company.",
-          "Prior to Ninjacart, led revenue and growth at Unacademy, India’s leading Ed-tech platform. Attained a 30% YoY growth in revenue with a 20% EBITDA, delivering positive cash flow in the challenging Ed-Tech landscape.",
+          "Prior to Ninjacart, led revenue and growth at Unacademy, India\u2019s leading Ed-tech platform. Attained a 30% YoY growth in revenue with a 20% EBITDA, delivering positive cash flow in the challenging Ed-Tech landscape.",
           "Proficient in utilizing tools like Microsoft Office Suite, Figma, Tableau, AppsFlyer, Google Analytics, Google Ads, Amplitude, SQL, Jira, Salesforce, and GPT engines.",
           "Deep understanding of Cost Reduction, Performance Marketing, Product Management, UI/UX, Program Management, Lead Generation, Customer Lifecycle Management, and driving Growth.",
           "Cultivated strong relationships with key brands and sellers to ensure sustainable business growth across geographies.",
@@ -233,7 +233,7 @@
   },
   "posting": {
     "company": "Zepto",
-    "title": "Head of Category – Grocery & FMCG",
+    "title": "Head of Category \u2013 Grocery & FMCG",
     "location": "Bengaluru (South region: Bengaluru, Chennai, Hyderabad); full-time; relocation acceptable",
     "years_required": "8-12 years",
     "must_have": [
@@ -286,7 +286,7 @@
       "kind": "must",
       "bucket": "said",
       "evidence": "Managed P&L for key categories contributing 60% of revenue, driving 5x growth in daily volumes within 100 days.",
-      "suggestion": "Say 'Owned category P&L for categories contributing 60% of revenue.' Add the current Ninjacart FMCG & Grocery P&L size if you can share it, since the résumé gives no figure."
+      "suggestion": "Say 'Owned category P&L for categories contributing 60% of revenue.' Add the current Ninjacart FMCG & Grocery P&L size if you can share it, since the r\u00e9sum\u00e9 gives no figure."
     },
     {
       "requirement": "Comfort with margin, pricing and inventory math",
@@ -349,7 +349,7 @@
       "kind": "nice",
       "bucket": "have_not_said",
       "evidence": "Led P&L optimization and market intelligence for 30+ cities, conducting daily price benchmarking across 75+ SKUs.",
-      "suggestion": "The résumé shows multi-city operations but not a launch. If you launched or scaled cities at Ninjacart Chennai, say so explicitly. Otherwise describe it as 'scaled across 30+ cities'."
+      "suggestion": "The r\u00e9sum\u00e9 shows multi-city operations but not a launch. If you launched or scaled cities at Ninjacart Chennai, say so explicitly. Otherwise describe it as 'scaled across 30+ cities'."
     },
     {
       "requirement": "Engineering background",
@@ -360,7 +360,7 @@
     }
   ],
   "rewrite": {
-    "headline": "Director, FMCG and Grocery | Category P&L, Pricing and Inventory, Product and Engineering Partnership",
+    "headline": "Director, FMCG and Grocery",
     "summary": "Director, FMCG and Grocery at Ninjacart, based in Bengaluru. Over 10 years across category management, growth and operations, including category P&L ownership (60% of revenue), daily price benchmarking across 30+ cities, and product-managing buyer and seller apps with engineering. B.E. Computer Science, ex-Accenture software engineer, and have led cross-functional teams of 250+.",
     "relevant": [
       "Category P&L: Owned P&L for categories contributing 60% of revenue at Ninjacart, with 5x growth in daily volumes within 100 days; now heading the FMCG and Grocery vertical",
@@ -372,7 +372,7 @@
       {
         "company": "Ninjacart",
         "title": "Director, FMCG and Grocery",
-        "start": "Aug’24",
+        "start": "Aug\u201924",
         "end": "Present",
         "bullets": [
           "Head the FMCG and Grocery business vertical at Ninjacart, India's leading Agri-commerce company",
@@ -385,8 +385,8 @@
       {
         "company": "Unacademy",
         "title": "Associate Director, Growth & Revenue",
-        "start": "Feb’22",
-        "end": "Jan’24",
+        "start": "Feb\u201922",
+        "end": "Jan\u201924",
         "bullets": [
           "Managed a portfolio of $5M with an EBITDA of 20%, attaining 30% YoY revenue growth and positive cash flow",
           "Drove online revenue market share from 8% to 55% in 18 months",
@@ -398,8 +398,8 @@
       {
         "company": "Fashinza (Tirupur)",
         "title": "Senior Manager, Category Management and Operations",
-        "start": "Mar’21",
-        "end": "Feb’22",
+        "start": "Mar\u201921",
+        "end": "Feb\u201922",
         "bullets": [
           "Established a network of 500+ suppliers and managed the entire base for sourcing",
           "Scaled monthly GMV to $100K within a year, setting up core backend functions from scratch",
@@ -411,8 +411,8 @@
       {
         "company": "Ninjacart (Chennai)",
         "title": "Senior Manager, Category Management",
-        "start": "Apr’18",
-        "end": "Mar’21",
+        "start": "Apr\u201918",
+        "end": "Mar\u201921",
         "bullets": [
           "Owned P&L for key categories contributing 60% of revenue",
           "Drove 5x growth in daily volumes within 100 days",
@@ -423,8 +423,8 @@
       {
         "company": "Accenture (Chennai)",
         "title": "Software Engineer",
-        "start": "Sep’14",
-        "end": "Aug’17",
+        "start": "Sep\u201914",
+        "end": "Aug\u201917",
         "bullets": [
           "Led the end-to-end software development lifecycle, including design and implementation of business-critical applications, while analyzing key performance drivers",
           "Managed incident resolution across multiple channels and integrated new technologies and automation into existing systems"
@@ -480,7 +480,7 @@
       },
       {
         "what": "Replaced the Ninjacart current-role paragraph bullets with 5 specific bullets",
-        "why": "Unpacked the compressed Business Side line into category management, pricing, inventory, P&L, market intelligence and vendor negotiation, using only facts already in the résumé"
+        "why": "Unpacked the compressed Business Side line into category management, pricing, inventory, P&L, market intelligence and vendor negotiation, using only facts already in the r\u00e9sum\u00e9"
       },
       {
         "what": "Added 'Head the FMCG and Grocery vertical at India's leading Agri-commerce company' as a bullet",
@@ -523,7 +523,7 @@
         "why": "English, Hindi, Tamil, Kannada and Telugu are useful for a South region role covering Bengaluru, Chennai and Hyderabad"
       }
     ],
-    "referral_note": "Hi [Name], I'm applying for Head of Category – Grocery & FMCG at Zepto. I currently run the FMCG and Grocery vertical at Ninjacart and previously owned P&L for categories contributing 60% of revenue, with daily price benchmarking across 30+ cities. I'm Bengaluru-based and have a software engineering background. Would you be willing to refer me or point me to the right person?",
+    "referral_note": "Hi [Name], I'm applying for Head of Category \u2013 Grocery & FMCG at Zepto. I currently run the FMCG and Grocery vertical at Ninjacart and previously owned P&L for categories contributing 60% of revenue, with daily price benchmarking across 30+ cities. I'm Bengaluru-based and have a software engineering background. Would you be willing to refer me or point me to the right person?",
     "fit_line": "Strong on category P&L, pricing, data and product/engineering partnership; the gaps are about 6 years of category roles against the 8-12 asked, no quick-commerce or dark-store experience, and no named national FMCG brand negotiations or stated team size of 10+ direct reports. Apply, and expect questions on those three."
   },
   "verification": {

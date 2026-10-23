@@ -65,11 +65,11 @@ export function resumeHtml(r: Rewrite, o: ResumeProfile) {
 ${fontCss}
 :root{ --s:1; --ink:#15171a; --mid:#4a4f57; --faint:#7d838c; --accent:#6b5d4a; --rule:#2a2d31; --chip:#f1efeb; }
 *{box-sizing:border-box;margin:0;padding:0}
-@page{ size:A4; margin:0 }
+@page{ size:A4; margin:16mm 0 15mm }
 html,body{ width:210mm; }
 body{ font-family:Inter,system-ui,sans-serif; color:var(--ink); -webkit-font-smoothing:antialiased;
       font-size:calc(10pt * var(--s)); line-height:1.42; }
-.page{ padding:calc(16mm * var(--s)) 17mm calc(14mm * var(--s)); min-height:297mm; }
+.page{ padding:0 17mm; }
 header .name{ font-size:calc(27pt * var(--s)); font-weight:800; letter-spacing:-0.02em; line-height:1.05; }
 header .head{ font-size:calc(11.5pt * var(--s)); color:var(--mid); margin-top:calc(3pt * var(--s)); font-weight:500; }
 header .bar{ height:1.6pt; background:var(--accent); margin:calc(8pt * var(--s)) 0 calc(7pt * var(--s)); }
@@ -80,12 +80,12 @@ header .contact i svg{ width:100%; height:100%; }
 section{ margin-top:calc(13pt * var(--s)); }
 h2{ break-after:avoid; }
 .role, .role-h, li{ break-inside:avoid; }
-h2{ font-size:calc(9.6pt * var(--s)); font-weight:700; letter-spacing:0.12em; text-transform:uppercase;
+h2{ font-size:calc(8.2pt * var(--s)); font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:var(--mid);
     padding-bottom:calc(3pt * var(--s)); border-bottom:0.9pt solid var(--rule); margin-bottom:calc(7pt * var(--s)); }
 p.sum{ color:var(--ink); }
 .role + .role{ margin-top:calc(9pt * var(--s)); }
 .role-h{ display:flex; justify-content:space-between; align-items:baseline; gap:12pt; }
-.role-h .t{ font-weight:700; font-size:calc(11pt * var(--s)); letter-spacing:-0.005em; }
+.role-h .t{ font-weight:700; font-size:calc(11.6pt * var(--s)); letter-spacing:-0.005em; }
 .role-h .c{ color:var(--accent); font-weight:500; font-size:calc(9.6pt * var(--s)); margin-top:1pt; }
 .role-h .d{ color:var(--faint); font-size:calc(9pt * var(--s)); white-space:nowrap; font-variant-numeric:tabular-nums; }
 ul{ list-style:none; margin-top:calc(4pt * var(--s)); }
@@ -125,7 +125,7 @@ export async function htmlToPdf(html: string, pages = 1): Promise<Buffer> {
     await page.setContent(html, { waitUntil: "load" });
     // passed as a string: tsx/esbuild inject helpers into function bodies that don't exist in the page
     await page.evaluate(`(() => {
-      const target = 1122.5 * ${pages};            // 297mm in CSS px, times pages
+      const target = (1122.5 - 117.2) * ${pages} * (${pages} > 1 ? 0.94 : 0.985);   // printable height × pages, minus slack lost to page breaks
       const pg = document.querySelector(".page"); pg.style.minHeight = "0";
       const h = () => pg.getBoundingClientRect().height;
       const set = (s) => document.documentElement.style.setProperty("--s", String(s));
@@ -138,9 +138,8 @@ export async function htmlToPdf(html: string, pages = 1): Promise<Buffer> {
         const per = Math.min(slack / secs.length, 28);
         secs.forEach((s) => { s.style.marginTop = "calc(" + getComputedStyle(s).marginTop + " + " + per + "px)"; });
       }
-      pg.style.minHeight = "0"; pg.style.height = target + "px";
     })()`);
-    const pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true, margin: { top: 0, bottom: 0, left: 0, right: 0 } });
+    const pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true });
     return Buffer.from(pdf);
   } finally {
     await page.close();
