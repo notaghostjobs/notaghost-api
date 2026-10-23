@@ -130,6 +130,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   let broken = checkRules(rewrite, resume, posting);
   timing.verify = Date.now() - t0;
 
+  const first_pass = { problems: verification.problems, broken };
   if (!verification.ok || broken.length) {
     // one repair pass on the fast model: feed back problems + broken rules
     t0 = t("Fixing a few things");
@@ -152,5 +153,5 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     timing.regen = Date.now() - t0;
   }
   const needs_review = !verification.ok || broken.length > 0;
-  return { posting, matches, rewrite, verification, broken, needs_review, timing };
+  return { posting, matches, rewrite, verification, broken, needs_review, timing, first_pass };
 }

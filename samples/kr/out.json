@@ -234,16 +234,18 @@
   "posting": {
     "company": "Zepto",
     "title": "Head of Category – Grocery & FMCG",
-    "location": "Bengaluru (South region: Bengaluru, Chennai, Hyderabad)",
+    "location": "Bengaluru",
     "years_required": "8-12",
     "must_have": [
       "8-12 years in category management, buying or merchandising in grocery, FMCG, quick-commerce or e-commerce",
-      "Has owned a category P&L of meaningful size with strong margin, pricing and inventory math",
+      "Has owned a category P&L of meaningful size",
+      "Comfortable with margin, pricing and inventory math",
       "Experience negotiating with national FMCG brands and distributors",
       "Hands-on with data: SQL or strong analyst partnership, dashboards, pricing benchmarks",
-      "Has built and led a team of 10+",
+      "Has built and run a team of 10+",
       "Has worked closely with product/engineering on internal tools",
-      "Thrives in speed; Bengaluru-based or willing to relocate"
+      "Thrives in speed",
+      "Bengaluru-based or willing to relocate"
     ],
     "nice_to_have": [
       "Quick-commerce or dark-store experience",
@@ -253,17 +255,18 @@
     "company_language": [
       "fastest grocery delivery in India",
       "own the Grocery & FMCG P&L",
-      "work hand in hand with product and supply chain",
-      "the tools that run the category",
+      "hand in hand with product and supply chain",
       "daily competitive benchmarking",
       "joint business plans with top FMCG brands",
-      "40+ dark stores"
+      "dark stores across three cities",
+      "promo ROI"
     ],
     "red_flags": [
-      "Scope is very broad for one role: assortment, pricing, promotions, supplier terms, inventory, team leadership and internal tooling across three cities",
-      "No salary or compensation information in the posting",
-      "\"Thrives in speed\" and \"fastest grocery delivery\" are vague and unquantified",
-      "Data requirement is ambiguous: \"SQL or strong analyst partnership\" does not say whether hands-on coding is expected"
+      "No compensation listed",
+      "Very broad scope for one role: P&L, assortment, pricing, supplier terms, inventory and team leadership across 40+ stores and three cities",
+      "Wide experience band (8-12 years) with no clear sense of what matters most",
+      "\"Thrives in speed\" is vague and undefined",
+      "Requires both deep category expertise and hands-on SQL/analytics with no stated expectation of which is primary"
     ]
   },
   "matches": [
@@ -271,75 +274,95 @@
       "requirement": "8-12 years in category management, buying or merchandising in grocery, FMCG, quick-commerce or e-commerce",
       "kind": "must",
       "bucket": "said",
-      "evidence": "Director, FMCG and Grocery",
-      "suggestion": "Lead with the Ninjacart FMCG and Grocery directorship and the earlier category management roles (Ninjacart Chennai, Fashinza). Together they add up to roughly 7+ years in category management, and 10+ years overall. Use the posting's wording: 'category management in grocery and FMCG'."
+      "evidence": "Senior Manager, Category Management (Ninjacart, Apr’18–Mar’21); Director, FMCG and Grocery (Ninjacart, Aug’24–Present)",
+      "suggestion": "State the category tenure explicitly, e.g. '7+ years in category management across agri-commerce, grocery and FMCG at Ninjacart and Fashinza.' The 10 total years include 3 as a software engineer, so don't claim 10 in category."
     },
     {
-      "requirement": "Has owned a category P&L of meaningful size with strong margin, pricing and inventory math",
+      "requirement": "Has owned a category P&L of meaningful size",
       "kind": "must",
       "bucket": "said",
       "evidence": "Managed P&L for key categories contributing 60% of revenue, driving 5x growth in daily volumes within 100 days.",
-      "suggestion": "Pair this with the Ninjacart Director bullet on 'pricing strategies, inventory optimization, P&L management'. Add absolute figures (revenue size, margin %) where you can, as the résumé has none for Ninjacart. The Unacademy '$5M with an EBITDA of 20%' line shows margin discipline."
+      "suggestion": "Use Zepto's phrase 'owned the Grocery & FMCG P&L'. Add absolute revenue or GMV for the Ninjacart FMCG and Grocery vertical if you can share it."
+    },
+    {
+      "requirement": "Comfortable with margin, pricing and inventory math",
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "End-to-end category management, product selection, market intelligence, pricing strategies, inventory optimization, P&L management, vendor negotiations, and retail strategy implementation.",
+      "suggestion": "Add one quantified margin or inventory outcome, such as margin improvement, wastage reduction or inventory days, to show the math."
     },
     {
       "requirement": "Experience negotiating with national FMCG brands and distributors",
       "kind": "must",
       "bucket": "have_not_said",
-      "evidence": "Business Side: End-to-end category management, product selection, market intelligence, pricing strategies, inventory optimization, P&L management, vendor negotiations, and retail strategy implementation.",
-      "suggestion": "'Vendor negotiations' and 'Cultivated strong relationships with key brands and sellers' are generic. Name the national brands or distributors you dealt with, and mention any joint business plans or trade terms you secured. Don't claim JBPs unless you did them."
+      "evidence": "vendor negotiations; Cultivated strong relationships with key brands and sellers to ensure sustainable business growth across geographies.",
+      "suggestion": "Name the national FMCG brands and distributors you negotiated with, and mention joint business plans or trade terms. The résumé only says 'vendor negotiations' and 'key brands'."
     },
     {
       "requirement": "Hands-on with data: SQL or strong analyst partnership, dashboards, pricing benchmarks",
       "kind": "must",
       "bucket": "said",
-      "evidence": "Led P&L optimization and market intelligence for 30+ cities, conducting daily price benchmarking across 75+ SKUs.",
-      "suggestion": "Say 'daily competitive benchmarking' to match Zepto's wording. Also cite SQL, Tableau and Amplitude from the Technical Skills section, and the Accenture engineering background."
+      "evidence": "conducting daily price benchmarking across 75+ SKUs; Tableau, Amplitude, SQL, Google Analytics",
+      "suggestion": "Lead with 'daily competitive benchmarking' to match Zepto's wording, and mention the dashboards you built or used in Tableau."
     },
     {
-      "requirement": "Has built and led a team of 10+",
-      "kind": "have_not_said",
+      "requirement": "Has built and run a team of 10+",
+      "kind": "must",
+      "bucket": "said",
       "evidence": "Led cross-functional teams of over 250 members across layers.",
-      "suggestion": "Make clear how many were direct reports versus indirect, and which team was in which role (e.g. category/buying team at Ninjacart). The 250 figure is cross-functional and could look inflated without that breakdown."
+      "suggestion": "Clarify how many were direct reports and how many were category or buying team members, since 250 across layers is broad."
     },
     {
       "requirement": "Has worked closely with product/engineering on internal tools",
-      "kind": "said",
-      "evidence": "Product Side: Worked closely with the tech and engineering teams and product managed the entire development and deployment of the seller and buyer facing applications.",
-      "suggestion": "Say 'product managed seller and buyer apps with engineering' and note whether any were internal category or pricing tools. Zepto's 'tools that run the category' means internal tooling, so clarify if your apps fit that."
+      "kind": "must",
+      "bucket": "said",
+      "evidence": "Worked closely with the tech and engineering teams and product managed the entire development and deployment of the seller and buyer facing applications.",
+      "suggestion": "Say 'worked hand in hand with product and engineering'. Mention any internal tools such as pricing, inventory or procurement tools, since the example given is buyer- and seller-facing apps."
     },
     {
-      "requirement": "Thrives in speed; Bengaluru-based or willing to relocate",
-      "kind": "said",
+      "requirement": "Thrives in speed",
+      "kind": "must",
+      "bucket": "have_not_said",
+      "evidence": "driving 5x growth in daily volumes within 100 days; Drove online revenue market share from 8% to a commanding 55% in just 18 months",
+      "suggestion": "Frame these as evidence of speed, e.g. 'scaled 5x in 100 days in a fast-moving perishable market'. Don't just claim the trait."
+    },
+    {
+      "requirement": "Bengaluru-based or willing to relocate",
+      "kind": "must",
+      "bucket": "said",
       "evidence": "Bengaluru, India",
-      "suggestion": "You are Bengaluru-based. Back up 'thrives in speed' with '5x growth in daily volumes within 100 days' and 'Drove online revenue market share from 8% to a commanding 55% in just 18 months'."
+      "suggestion": "Already based in Bengaluru, so no change is needed."
     },
     {
       "requirement": "Quick-commerce or dark-store experience",
-      "kind": "missing",
+      "kind": "nice",
+      "bucket": "missing",
       "evidence": "",
-      "suggestion": "No quick-commerce or dark-store experience appears. Don't claim it. Mention adjacent experience in fast-moving perishable and grocery supply at Ninjacart, with daily pricing and inventory decisions."
+      "suggestion": "No quick-commerce or dark-store experience is shown. Mention adjacent fast-turn perishable supply chain work at Ninjacart, but don't claim dark-store experience."
     },
     {
       "requirement": "Experience launching a new city or region",
-      "kind": "have_not_said",
-      "evidence": "Led P&L optimization and market intelligence for 30+ cities, conducting daily price benchmarking across 75+ SKUs.",
-      "suggestion": "This shows multi-city operations but not a launch. If you opened or scaled any city at Ninjacart, state it explicitly. Otherwise describe it as multi-city scaling, not launching."
+      "kind": "nice",
+      "bucket": "have_not_said",
+      "evidence": "Led P&L optimization and market intelligence for 30+ cities",
+      "suggestion": "If you were involved in opening or scaling any of those cities, say so explicitly, e.g. 'launched X cities'. Otherwise describe it only as multi-city operations."
     },
     {
       "requirement": "Engineering background",
-      "kind": "said",
-      "evidence": "B.E. Computer Science",
-      "suggestion": "Mention your CEG, Anna University B.E. in Computer Science and your three years as a Software Engineer at Accenture. This is a clear plus for working with product and engineering."
+      "kind": "nice",
+      "bucket": "said",
+      "evidence": "B.E. Computer Science, CEG, Anna University; Software Engineer, Accenture (Sep’14–Aug’17)",
+      "suggestion": "Highlight the CS degree and 3 years as a software engineer as a differentiator when working with product and tech."
     }
   ],
   "rewrite": {
     "headline": "Director, FMCG and Grocery",
-    "summary": "Category and P&L leader with 10 years across category management, growth and engineering, currently heading the FMCG and Grocery vertical at Ninjacart. Ran P&L for categories contributing 60% of revenue, led market intelligence for 30+ cities and ran daily price benchmarking across 75+ SKUs. Computer Science engineer who has product-managed buyer and seller applications with engineering teams. Bengaluru-based.",
+    "summary": "Director of FMCG and Grocery at Ninjacart, owning category management, P&L, pricing, inventory and vendor negotiations. Earlier ran a $5M growth and revenue portfolio at Unacademy and built supplier sourcing and backend operations from scratch at Fashinza. Ten years across category P&L, pricing benchmarks and product work with engineering.",
     "relevant": [
-      "Category P&L: heads the FMCG and Grocery vertical at Ninjacart; earlier ran key-category P&L at 60% of revenue, with 5x growth in daily volumes within 100 days",
-      "Pricing and data: daily price benchmarking across 75+ SKUs in 30+ cities; works in SQL, Tableau, Amplitude and Google Analytics",
-      "Product and engineering: product-managed the full development and deployment of seller and buyer applications at Ninjacart; B.E. Computer Science and 3 years as a software engineer",
-      "Brands and teams: vendor negotiations and key brand and seller relationships at Ninjacart; led cross-functional teams of over 250 members across layers"
+      "Category P&L: managed P&L for key categories contributing 60% of revenue at Ninjacart; drove 5x growth in daily volumes within 100 days",
+      "Pricing and benchmarking: ran daily price benchmarking across 75+ SKUs and led market intelligence for 30+ cities at Ninjacart Chennai",
+      "Product and engineering: worked with tech and engineering teams to develop and deploy seller- and buyer-facing applications",
+      "Team leadership: led cross-functional teams of over 250 members across layers"
     ],
     "roles": [
       {
@@ -348,11 +371,10 @@
         "start": "Aug’24",
         "end": "Present",
         "bullets": [
-          "Own the FMCG and Grocery business vertical at India's leading Agri-commerce company, including category management and P&L management",
-          "Set pricing strategies and run market intelligence to guide category decisions",
-          "Drive product selection and inventory optimization across the category",
-          "Lead vendor negotiations and implement retail strategy",
-          "Product-managed the entire development and deployment of the seller and buyer facing applications, working closely with tech and engineering teams"
+          "Lead end-to-end category management for FMCG and Grocery, covering product selection, assortment and market intelligence",
+          "Own category P&L management, pricing strategies and inventory optimization",
+          "Negotiate with vendors and implement retail strategy across the category",
+          "Work closely with tech and engineering teams and product-managed the development and deployment of seller- and buyer-facing applications"
         ]
       },
       {
@@ -361,13 +383,12 @@
         "start": "Feb’22",
         "end": "Jan’24",
         "bullets": [
-          "Managed a portfolio of $5M with an EBITDA of 20%",
-          "Attained 30% YoY revenue growth at 20% EBITDA, delivering positive cash flow in a challenging Ed-Tech landscape",
+          "Managed a $5M portfolio with a 20% EBITDA; helped deliver 30% YoY revenue growth with positive cash flow",
           "Drove online revenue market share from 8% to 55% in 18 months",
-          "Delivered an ROI of >10X on Performance Marketing campaigns, generating $1.3M in revenue against $100K spending",
-          "Led the development of product assortments aligned with customer preferences and market demand",
-          "Collaborated with engineering and design teams to drive measurable growth in adoption and engagement",
-          "Optimized Customer Lifecycle Management (CLM) campaigns to improve engagement, retention and user stickiness, using market research to find opportunities and threats"
+          "Delivered >10X ROI on performance marketing campaigns, generating $1.3M in revenue against $100K spend",
+          "Optimized Customer Lifecycle Management (CLM) campaigns to lift engagement, retention and user stickiness",
+          "Built content strategies for top-of-funnel (performance marketing and GTMs), mid-funnel (product interaction) and bottom-funnel (conversion), using market research to spot opportunities and threats",
+          "Led development of product assortments aligned with customer preferences and market demand; collaborated with engineering and design on adoption and engagement"
         ]
       },
       {
@@ -376,10 +397,9 @@
         "start": "Mar’21",
         "end": "Feb’22",
         "bullets": [
-          "Established a network of 500+ suppliers and managed the entire base for sourcing",
+          "Established and managed a network of 500+ suppliers across the entire sourcing base",
           "Scaled monthly GMV to $100K within a year, setting up core backend functions from scratch",
-          "Led the development of product assortments aligned with customer preferences and market demand",
-          "Collaborated with engineering and design teams to drive measurable growth in adoption and engagement"
+          "Built a client feedback loop and refined it against client satisfaction and key business metrics"
         ]
       },
       {
@@ -389,8 +409,8 @@
         "end": "Mar’21",
         "bullets": [
           "Managed P&L for key categories contributing 60% of revenue, driving 5x growth in daily volumes within 100 days",
-          "Led P&L optimization and market intelligence for 30+ cities",
-          "Conducted daily price benchmarking across 75+ SKUs"
+          "Led P&L optimization and market intelligence across 30+ cities",
+          "Ran daily price benchmarking across 75+ SKUs"
         ]
       },
       {
@@ -399,27 +419,26 @@
         "start": "Sep’14",
         "end": "Aug’17",
         "bullets": [
-          "Led the end-to-end software development lifecycle, including design and implementation of business-critical applications, while analyzing key performance drivers",
-          "Managed incident resolution through multiple channels and integrated new technologies and automation solutions into existing systems"
+          "Led end-to-end software development lifecycle for business-critical applications, analyzing key performance drivers",
+          "Managed incident resolution across channels and integrated new technologies and automation into existing systems"
         ]
       }
     ],
     "skills": [
-      "Category Management",
-      "P&L Optimization",
-      "Pricing Strategies",
-      "Inventory Optimization",
-      "Market Intelligence",
-      "Procurement and Fulfillment",
-      "Supply Chain Optimization",
-      "Operations Scaling",
       "SQL",
       "Tableau",
       "Amplitude",
       "Google Analytics",
-      "Jira",
-      "Figma",
-      "Team Building"
+      "Salesforce",
+      "Category Management",
+      "P&L Optimization",
+      "Pricing and Market Intelligence",
+      "Supply Chain Optimization",
+      "Procurement and Fulfillment",
+      "Revenue Growth Strategies",
+      "ROI Optimization",
+      "Customer Lifecycle Management",
+      "Operations Scaling"
     ],
     "education": [
       {
@@ -432,93 +451,101 @@
       {
         "title": "Entrepreneurial Ventures",
         "items": [
-          "Valarlife: launched an online spirulina and moringa health supplement store. Revenue generated: $200 K. Funding: $100 K",
-          "Fraternitee: B2B apparel manufacturing for schools, colleges, startups, corporates and NGOs. Revenue generated: $250 K",
-          "Dazzilo: conceptualized and developed an AI-powered influencer marketing platform and secured three term sheets; did not proceed due to unfavorable terms",
-          "Livepurse: built an MVP for a micro and fractional investing platform and pitched it to marquee VCs; launch was hindered by SEBI regulations"
+          "Valarlife: Launched an online spirulina and moringa health supplement store; $200K revenue on $100K funding",
+          "Fraternitee: B2B apparel manufacturing for schools, colleges, startups, corporates and NGOs; $250K revenue"
         ]
       },
       {
-        "title": "Languages Known",
+        "title": "Languages",
         "items": [
-          "English, Hindi, Tamil, Kannada & Telugu"
+          "English, Hindi, Tamil, Kannada, Telugu"
         ]
       }
     ],
     "changes": [
       {
-        "what": "Set headline to 'Head of Category, Grocery & FMCG'",
-        "why": "Matches the target role title instead of the current title."
+        "what": "Headline kept as current title 'Director, FMCG and Grocery'; posting title not used",
+        "why": "Candidate has not held 'Head of Category'; using the posting's title would read as a stretch"
       },
       {
-        "what": "Replaced the Job Objective and Profile Summary with a 3-line posting-specific summary",
-        "why": "Removes generic wording ('results-driven') and leads with category P&L, benchmarking and product/engineering proof."
+        "what": "Rewrote summary for this posting around category P&L, pricing benchmarks and product work with engineering",
+        "why": "Puts the must-have evidence in the first lines a recruiter reads"
       },
       {
-        "what": "Added a 'relevant' block mapping proof to the posting's P&L, pricing/data, product-engineering and brand/team requirements",
-        "why": "Recruiters see the must-have evidence at the top. Quick-commerce, dark-store and new-city launch are left out because the résumé has no evidence for them."
+        "what": "Added a 'Relevant' block with four proof lines",
+        "why": "Maps directly to the P&L, pricing benchmarking, product/engineering and team-leadership must-haves"
       },
       {
-        "what": "Split the Ninjacart Director's two compressed bullets into five",
-        "why": "The original listed category management, pricing, inventory, P&L and vendor negotiation in one line. Unpacking them makes each posting keyword visible, with no new facts added."
+        "what": "Unpacked the compressed 'Business Side' bullet at Ninjacart into four specific bullets",
+        "why": "Surfaces category management, pricing, inventory, P&L and vendor negotiation, all already in the source, as separate proof points"
       },
       {
-        "what": "Split the Ninjacart (Chennai) bullets into three",
-        "why": "Separates the 60%-of-revenue P&L, the 30+ city market intelligence and the 75+ SKU daily price benchmarking, which map directly to the posting."
+        "what": "Changed the Ninjacart Chennai bullets to lead with the 60% P&L and 5x volume result, then added the 30+ city and daily benchmarking facts",
+        "why": "The category P&L and daily competitive benchmarking are the strongest matches to the posting"
       },
       {
-        "what": "Moved the 30% YoY revenue growth, 20% EBITDA and positive cash flow line from the Profile Summary into the Unacademy bullets",
-        "why": "It is proof of P&L discipline; it was buried in the summary."
+        "what": "Moved the 250-member team figure from the profile summary into the Relevant block",
+        "why": "Answers the 'built and run a team of 10+' requirement; the figure is an org-level claim, so the candidate should confirm it reflects direct reports"
       },
       {
-        "what": "Reordered Unacademy bullets to lead with the portfolio and margin, market share and ROI, then assortments and engineering collaboration; merged the CLM and funnel bullets",
-        "why": "Puts P&L, assortment and product-collaboration evidence ahead of marketing-funnel detail."
+        "what": "Expanded Unacademy from 8 terse bullets to 6 fuller ones, merging the duplicate Fashinza-style collaboration line into the assortment bullet",
+        "why": "Removes repetition and keeps the revenue, ROI and portfolio results first"
       },
       {
-        "what": "Cut the 'client feedback loop' bullet from Unacademy and Fashinza",
-        "why": "It is generic and duplicated across both roles; it doesn't answer any must-have."
+        "what": "Trimmed Fashinza to 3 bullets, folding the duplicate engineering and feedback-loop lines and removing the assortment line repeated from Unacademy",
+        "why": "Older role; keeps sourcing, GMV and backend-build proof without repeating the Unacademy lines"
       },
       {
-        "what": "Cut the Unacademy bullet on top, mid and bottom-funnel content strategies as a separate item",
-        "why": "Performance-marketing detail is not what the posting asks for; the substance is kept in the merged CLM bullet."
+        "what": "Shortened Accenture to 2 bullets",
+        "why": "Older role, least relevant to this posting"
       },
       {
-        "what": "Trimmed skills to those relevant to the posting and dropped most soft skills and Microsoft Office",
-        "why": "Keeps SQL, Tableau, Amplitude, Google Analytics, category and P&L skills prominent."
+        "what": "Dropped Job Objective and Profile Summary blocks",
+        "why": "Generic wording repeated in the new summary and relevant lines"
       },
       {
-        "what": "Kept all four ventures but shortened the wording, putting the revenue-generating ones (Valarlife, Fraternitee) first",
-        "why": "Shows commercial ownership; the failed or blocked ventures are kept short."
+        "what": "Reordered skills to lead with SQL, Tableau, pricing and category terms; dropped Microsoft Office, Google Ads, GPT engines, Figma, Jira, Team Building, Problem-solving and other soft-skill filler",
+        "why": "Brings the data and category skills the posting asks for to the front; soft skills are shown by the bullets instead"
       },
       {
-        "what": "Kept Languages Known",
-        "why": "Relevant to a South-region role covering Bengaluru, Chennai and Hyderabad."
+        "what": "Kept ventures as Valarlife and Fraternitee only, with revenue figures; dropped Dazzilo and Livepurse",
+        "why": "The two kept ventures show revenue and operating scale; the dropped ones are idea-stage and don't serve this role"
       },
       {
-        "what": "Removed personal-detail and generic language lines such as the 'Led cross-functional teams of over 250' claim from the summary block, and placed it in the relevant section instead",
-        "why": "Team size is a must-have, so it is stated where it is easy to find. It is not attributed to a specific role because the original didn't tie it to one."
+        "what": "Removed contact details from extra sections and kept Languages",
+        "why": "Contact details already appear in the header; Languages is a short relevant block for a Bengaluru role"
       }
     ],
-    "referral_note": "Hi, I'm applying for the Head of Category – Grocery & FMCG role at Zepto in Bengaluru. I currently head the FMCG and Grocery vertical at Ninjacart. Earlier I ran P&L for categories contributing 60% of revenue and benchmarked prices daily across 75+ SKUs in 30+ cities. I'm also a Computer Science engineer who product-managed our buyer and seller apps. Could you refer me or point me to the hiring manager?",
-    "fit_line": "Strong on category P&L, daily price benchmarking, SQL/analytics, engineering background and a Bengaluru base; the gaps are quick-commerce or dark-store experience, launching a new city, and explicit evidence of negotiating with national FMCG brands, and your internal-tools experience is seller/buyer apps. Apply, but expect questions on those."
+    "referral_note": "Hi, I'm applying for the Head of Category, Grocery & FMCG role at Zepto in Bengaluru and wondered if you'd be open to a referral. I currently lead FMCG and Grocery at Ninjacart, where I manage the category P&L for key categories contributing 60% of revenue and drove 5x daily volume growth within 100 days. I also run daily price benchmarking across 75+ SKUs, which I think lines up with your daily competitive benchmarking. Would you be willing to refer me? I'm happy to share more detail.",
+    "fit_line": "Your strongest matches are category P&L ownership, daily pricing benchmarks and product work with engineering in Bengaluru, but expect questions on the absence of dark-store or quick-commerce experience, the limited grocery category tenure (about five years at Ninjacart), and the lack of direct evidence for national FMCG brand negotiations and hands-on SQL."
   },
   "verification": {
-    "ok": false,
+    "ok": true,
+    "problems": []
+  },
+  "broken": [],
+  "needs_review": false,
+  "timing": {
+    "posting": 4030,
+    "write": 24864,
+    "verify": 7150,
+    "repair": 26616
+  },
+  "first_pass": {
     "problems": [
       {
-        "claim": "Category and P&L leader with 10 years across category management, growth and engineering",
-        "reason": "The original shows 10 years total, but only about 3 years (Sep'14 to Aug'17) were in engineering. The phrasing implies 10 years of engineering experience."
+        "claim": "Director of FMCG and Grocery at Ninjacart, owning category management, P&L, pricing, inventory and vendor negotiations across 30+ cities.",
+        "reason": "The original ties the 30+ cities scope to the earlier Ninjacart Chennai role (Apr'18 to Mar'21: 'P&L optimization and market intelligence for 30+ cities'). The current-role bullets do not mention 30+ cities, so attaching it to the current role misattributes the scope."
       },
       {
-        "claim": "Brands and teams: vendor negotiations and key brand and seller relationships at Ninjacart",
-        "reason": "The original lists 'Cultivated strong relationships with key brands and sellers' in the general Profile Summary without tying it to Ninjacart. Attributing it to Ninjacart is an unsupported employer attribution."
+        "claim": "Pricing and benchmarking: ran market intelligence and daily price benchmarking across 75+ SKUs in 30+ cities",
+        "reason": "The original states daily price benchmarking across 75+ SKUs and, separately, P&L optimization and market intelligence for 30+ cities. It does not say the benchmarking covered 30+ cities; the two facts are merged into a combined claim the source does not make."
       }
+    ],
+    "broken": [
+      "R8 repeated bullet: \"Led development of product assortments aligned wit…\"",
+      "R9 18 skills (6–14)",
+      "R11 banned word: results-driven"
     ]
-  },
-  "timing": {
-    "posting": 4469,
-    "write": 41287,
-    "verify": 7047,
-    "repair": 1
   }
 }

@@ -6,7 +6,7 @@ const profile = JSON.parse(readFileSync("samples/kr/out.json","utf8")).profile; 
 const out = await runSharpen(profile, readFileSync("samples/kr/posting.txt", "utf8"));
 writeFileSync("samples/kr/out.json", JSON.stringify({ profile, ...out }, null, 2));
 writeFileSync("samples/kr/out.pdf", await resumePdf(out.rewrite, profile));
-console.log("done", ((Date.now()-t0)/1000).toFixed(0), "s", JSON.stringify(out.timing), "verified:", out.verification.ok, "broken:", out.broken, "review:", out.needs_review);
+console.log("done", ((Date.now()-t0)/1000).toFixed(0), "s", JSON.stringify(out.timing), "verified:", out.verification.ok, "broken:", out.broken, "review:", out.needs_review, "\nFIRST PASS:", JSON.stringify(out.first_pass, null, 1));
 console.log("FIT:", out.rewrite.fit_line);
 console.log("bullets/role:", out.rewrite.roles.map(r=>r.bullets.length).join(","), "relevant:", out.rewrite.relevant?.length, "extras:", out.rewrite.extra_sections?.map(x=>x.title).join("|"));
 process.exit(0);
