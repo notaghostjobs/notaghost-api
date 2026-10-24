@@ -56,7 +56,7 @@ let renderLock: Promise<void> = Promise.resolve();
 async function getBrowser() {
   if (!browserP) {
     const { chromium } = await import("playwright-core");
-    browserP = chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] });
+    browserP = chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process", "--no-zygote", "--renderer-process-limit=1", "--js-flags=--max-old-space-size=128", "--disable-extensions", "--mute-audio"] });
     browserP.then((b) => b.on("disconnected", () => { browserP = null; })).catch(() => { browserP = null; });
   }
   return browserP;

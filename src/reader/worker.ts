@@ -16,7 +16,8 @@ async function setControl(key: string, value: unknown) { await db.from("reader_c
 async function getControl<T = any>(key: string): Promise<T | null> { const { data } = await db.from("reader_control").select("value").eq("key", key).maybeSingle(); return (data?.value as T) ?? null; }
 
 let busy: string | null = null;
-async function status(doing: string, extra: Record<string, unknown> = {}) { busy = doing === "idle" ? null : doing; await setControl("status", { doing, ...extra, at: new Date().toISOString() }); }
+const boot = new Date().toISOString();
+async function status(doing: string, extra: Record<string, unknown> = {}) { busy = doing === "idle" ? null : doing; const mb = Math.round(process.memoryUsage().rss / 1048576); await setControl("status", { doing, ...extra, at: new Date().toISOString(), boot, rss_mb: mb }); }
 
 /** Prove each reader against an employer we know uses that system. Stored for the admin page. */
 async function selfTest() {
@@ -97,19 +98,30 @@ let lastDaily = "";
 let batches = 0;
 
 const BIG = ["IT services and outsourcing", "global capability centres (GCCs) of foreign companies", "US tech companies with Bengaluru engineering centres", "European and Japanese companies with Bengaluru centres", "large Indian conglomerates with Bengaluru operations", "banks and NBFCs", "consulting and professional services (big four, strategy)", "semiconductor and chip design", "networking, telecom and 5G", "unicorns and large startups", "e-commerce and marketplaces", "fintech and payments"];
+/** One-time migrations of queue state, keyed in reader_control so a restart never repeats them. */
+async function onceOnly(key: string, fn: () => Promise<void>) {
+  const done = await getControl<{ at: string }>(`once:${key}`);
+  if (done?.at) return;
+  await fn();
+  await setControl(`once:${key}`, { at: new Date().toISOString() });
+}
 async function setPriorities() {
-  const { error } = await db.from("employers").update({ priority: 1 }).in("source", BIG.map((b) => `sector:${b.slice(0, 40)}`)).eq("priority", 5);
-  if (error) log("priority column missing? run 0007_priority.sql —", error.message);
-  // Workday employers: read again with the fixed reader. "page" employers: resolve again now that hosts are probed for Phenom/Eightfold.
-  await db.from("employers").update({ read_at: null }).eq("ats", "workday");
-  await db.from("employers").update({ resolved_at: null, ats: null, ats_ref: null }).eq("ats", "page");
+  await onceOnly("priorities-v1", async () => {
+    const { error } = await db.from("employers").update({ priority: 1 }).in("source", BIG.map((b) => `sector:${b.slice(0, 40)}`)).eq("priority", 5);
+    if (error) log("priority column missing? run 0007_priority.sql —", error.message);
+  });
+  // Workday employers read with the old crawl; "page" employers before the Phenom/Eightfold probe existed — each re-queued exactly once.
+  await onceOnly("workday-facet-reread-v1", async () => { await db.from("employers").update({ read_at: null }).eq("ats", "workday"); });
+  await onceOnly("page-reresolve-v1", async () => { await db.from("employers").update({ resolved_at: null, ats: null, ats_ref: null }).eq("ats", "page"); });
 }
 
 async function main() {
   log("worker up");
+  // these three already ran earlier tonight; mark them done so this boot does not repeat them
+  for (const k of ["workday-facet-reread-v1", "page-reresolve-v1", "tier1-first-run-v1"]) { const d = await getControl<{ at: string }>(`once:${k}`); if (!d?.at) await setControl(`once:${k}`, { at: "2026-10-24T17:30:00.000Z", note: "already done before onceOnly existed" }); }
   await setPriorities();
   await selfTest();
-  await runTier1().catch((e) => log("tier1", (e as Error).message));
+  await onceOnly("tier1-first-run-v1", async () => { await runTier1().catch((e) => log("tier1", (e as Error).message)); });
   await status("idle");
   for (;;) {
     try {
