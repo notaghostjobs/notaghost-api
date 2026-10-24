@@ -3,6 +3,7 @@ import { db } from "../lib/db.js";
 import { resolveBatch } from "./resolve.js";
 import { readDue, recordFeed } from "./read.js";
 import { harvestNaukri } from "./harvest/naukri.js";
+import { harvestSectors } from "./harvest/sectors.js";
 import { byId } from "./systems/index.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), "[reader]", ...a);
@@ -38,12 +39,19 @@ async function runHarvest(maxPages: number) {
   log("harvest naukri", JSON.stringify(r)); return r;
 }
 
+async function runSectors(n: number) {
+  await status("sectors", { of: n || "all" });
+  const r = await harvestSectors({ limit: n || undefined, onSector: (done, total, added) => void status("sectors", { done, total, employers_new: added }) });
+  log("sectors", JSON.stringify(r)); return r;
+}
+
 /** One command from the admin page: {step, n}. */
 async function runCommand(cmd: { step: string; n?: number }) {
   const n = cmd.n ?? 0;
   if (cmd.step === "resolve") return runResolve(n || 20);
   if (cmd.step === "read") return runRead(n || 200);
   if (cmd.step === "harvest") return runHarvest(n || 50);
+  if (cmd.step === "sectors") return runSectors(n);
   if (cmd.step === "selftest") return selfTest();
   return { error: `unknown step ${cmd.step}` };
 }
