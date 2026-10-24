@@ -117,32 +117,78 @@ export function score(f: PostingFacts): Scored {
   return { score: total, verdict, signals, ...copy, checked: evaluated, coverage: `${evaluated} of 22 checks ran` };
 }
 
+/** Copy is built from the signals that fired — never a template that could contradict the list. */
 const COPY: Record<Verdict, (s: number, f: FiredSignal[], p: PostingFacts) => Pick<Scored, "headline" | "body" | "adviceLabel" | "advice">> = {
   Ghost: (s, f) => ({
     headline: "Your chance of hearing back: close to nil.",
-    body: `Not because of you. ${f.filter((x) => x.pts === 15).map((x) => `${x.text} ${x.strong ?? ""}`.trim()).slice(0, 2).join(". ")}. Nobody is reading applications here.`,
+    body: `Not because of you. ${sentence(f.filter((x) => x.pts >= 8).slice(0, 3))} Nobody is reading applications here.`,
     adviceLabel: "Our advice:", advice: "don’t spend a shot on the apply button. Check another listing — or, if you must, find one person on the team and use the message we’ve written.",
   }),
-  Caution: () => ({
+  Caution: (s, f) => ({
     headline: "Something’s off.",
-    body: "Nothing here proves it’s fake — but the signals below are the ones we see on postings that never reply.",
+    body: `${sentence(f.filter((x) => x.pts > 0).slice(0, 3))} Nothing here proves it’s fake — but these are the things we see on postings that never reply.`,
     adviceLabel: "Our advice:", advice: "apply only with a referral, or sharpen first so you’re not one of the pile.",
   }),
-  Real: () => ({
+  Real: (s, f, p) => ({
     headline: "Worth your shot.",
-    body: "Fresh, specific, on the company’s own system, and nothing we checked points the wrong way.",
+    body: `${positives(p)}${f.length ? ` ${sentence(f)}` : ""} Nothing we checked says it’s fake.`,
     adviceLabel: "Next move:", advice: "make sure they can see you. Let’s check your résumé against this posting — free.",
   }),
-  "Can’t verify": () => ({
+  "Can’t verify": (s, f, p) => ({
     headline: "First time we’ve seen this one.",
-    body: "We can’t find the company’s hiring system and the posting sits on one board. Here’s what we can tell today; we’ll know more as we watch it.",
+    body: `${p.ats?.system === "unknown" || p.ats?.system === "none" ? "We can’t find the company’s hiring system" : "We could only read part of this posting"}${f.length ? `, and ${sentence(f).replace(/^\w/, (c) => c.toLowerCase())}` : "."} Here’s what we can tell today; we’ll know more as we watch it.`,
     adviceLabel: "What we’d do:", advice: "go ahead, but make sure they can see you — check your résumé against this posting first.",
   }),
   Scam: (s, f) => ({
     headline: "Don’t apply. Don’t pay.",
-    body: `This posting ${f.find((x) => x.n === 20)?.strong ?? "asks for money or moves you off the company’s own channels"}. Real employers never do that.`,
+    body: `This posting ${f.find((x) => x.n === 20)?.strong ? `shows a scam tell — ${f.find((x) => x.n === 20)!.strong}` : "asks for money or moves you off the company’s own channels"}. Real employers never do that.`,
     adviceLabel: "Our advice:", advice: "close it. If it came from a message, report the sender.",
   }),
 };
+
+/** "No pay band shown, not on the company’s careers page yet, and open for 48 days." */
+function sentence(sig: FiredSignal[]) {
+  const parts = sig.map((x) => phrase(x)).filter(Boolean);
+  if (!parts.length) return "";
+  const joined = parts.length === 1 ? parts[0] : parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1];
+  return joined.charAt(0).toUpperCase() + joined.slice(1) + ".";
+}
+function phrase(x: FiredSignal) {
+  switch (x.n) {
+    case 1: return "no pay band shown";
+    case 2: return "the description is boilerplate";
+    case 3: return `it’s open in ${x.strong?.split(" ")[0] ?? "several"} cities at once`;
+    case 4: return "it reads like a talent-pool posting";
+    case 5: return "the requirements list is a kitchen sink";
+    case 6: return "it asks you to apply outside the company’s system";
+    case 7: return "the same text appears under other employers";
+    case 8: return `it was created ${x.strong ?? "much earlier"} in the company’s system`;
+    case 9: return "we couldn’t find it on the company’s own careers page";
+    case 10: return `there are ${x.strong?.split(" ")[0] ?? "many"} open copies of this title`;
+    case 11: return "it hasn’t been touched in their system for two months";
+    case 12: return "the same requisition was closed and reopened";
+    case 13: return "it’s been reposted with new dates";
+    case 14: return `it’s been open for ${x.strong ?? "a long time"}`;
+    case 15: return "it’s posted by an agency, not the employer";
+    case 16: return "it has hundreds of applicants and is still open";
+    case 17: return "people report never hearing back from this company";
+    case 18: return "the company announced layoffs or a freeze recently";
+    case 19: return "the company has far more openings than its size suggests";
+    case 21: return "it disappeared and came back with a fresh date";
+    case 22: return `only ${x.strong ?? "few"} of our members who applied here heard back`;
+    default: return "";
+  }
+}
+function positives(p: PostingFacts) {
+  const bits: string[] = [];
+  if (p.posted_days != null && p.posted_days <= 21) bits.push(`posted ${p.posted_text?.toLowerCase() ?? `${p.posted_days} days ago`}`);
+  if (!p.templated) bits.push("describes a specific team");
+  if (p.pay_stated) bits.push("pay stated");
+  if (p.ats?.found) bits.push(`on ${p.company || "the company"}’s own careers page`);
+  if (p.company_news && !p.company_news.layoffs_90d && !p.company_news.freeze_90d) bits.push("no layoffs in the news");
+  if (!bits.length) return "";
+  const j = bits.length === 1 ? bits[0] : bits.slice(0, -1).join(", ") + " and " + bits[bits.length - 1];
+  return j.charAt(0).toUpperCase() + j.slice(1) + ".";
+}
 
 export function daysAgo(iso: string) { return Math.floor((Date.now() - new Date(iso).getTime()) / 86400e3); }
