@@ -21,6 +21,6 @@ export const env = {
 };
 
 export const PRICES = {
-  sharpen: { paise: 49900, shots: 25, days: 30 },
-  build: { paise: 99900, shots: 25, days: 30 },
+  sharpen: { paise: 49900, shots: 10, days: 30 },
+  build: { paise: 99900, shots: 10, days: 30 },
 } as const;
