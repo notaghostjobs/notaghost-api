@@ -18,8 +18,11 @@ export function scores(matches: Match[]) {
     else if (m.bucket === "have_not_said") { before += w * 0.25; after += w; }
   }
   if (!tot) return { before: 0, after: 0 };
-  // "after" assumes every hidden strength gets said; a missing requirement stays missing. Never promise 100 unless nothing is missing.
-  return { before: Math.round((before / tot) * 100), after: Math.min(Math.round((after / tot) * 100), 96 + (matches.some((m) => m.bucket === "missing") ? 0 : 4)) };
+  // "after" assumes every hidden strength gets said; a missing requirement stays missing.
+  // Conservative: count only 80% of the hidden lift (not every hidden item survives the verifier), never promise 100 unless nothing is missing.
+  const b = before / tot, a = after / tot;
+  const promised = b + (a - b) * 0.8;
+  return { before: Math.round(b * 100), after: Math.min(Math.round(promised * 100), 96 + (matches.some((m) => m.bucket === "missing") ? 0 : 4)) };
 }
 
 /** Free step: read the posting, match against the current résumé. No shot spent. */

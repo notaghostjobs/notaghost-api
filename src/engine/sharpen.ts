@@ -74,8 +74,8 @@ export function matchResume(resume: ResumeProfile, posting: PostingProfile) {
   return json<{ matches: Match[] }>(
     `You compare a candidate against a posting, requirement by requirement. For each requirement pick ONE bucket:
 - "said": the résumé clearly states it.
-- "have_not_said": the résumé shows the candidate has done it, but under a different name or buried — quote the evidence.
-- "missing": no evidence. Do not stretch. A missing must-have is useful information, not a failure.
+- "have_not_said": the résumé contains a VERBATIM line that demonstrates this requirement (same kind of work, different words). Quote that line. If you would need to infer, generalise, or stretch ("built dashboards" → "category management"), it is NOT have_not_said.
+- "missing": no evidence. Do not stretch. A missing must-have is useful information, not a failure. When in doubt between have_not_said and missing, choose missing — a false promise costs more than a missed one.
 Evidence must be a verbatim quote from the résumé. suggestion: for said/have_not_said, how to phrase it in the employer's words; for missing, one honest line (adjacent experience to mention, or "don't claim this").`,
     `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nReturn: {matches:[{requirement, kind:"must"|"nice", bucket, evidence, suggestion}]}`,
     6000
