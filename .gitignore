@@ -11,3 +11,7 @@ samples/batch/profiles.json
 samples/batch/v*/
 samples/batch/png/
 samples/batch/my_scores.json
+samples/batch/deliver/
+samples/batch/*.zip
+samples/batch/*.png
+samples/batch/sheet.md
