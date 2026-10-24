@@ -4,24 +4,52 @@ import { db } from "../../lib/db.js";
 import { getJson } from "../http.js";
 import { companyKey } from "../../engine/ghost/canon.js";
 
-// the headers naukri.com's own front-end sends to this API; without them it answers 406
-const HEADER_SETS: Record<string, string>[] = [
-  { appid: "109", systemid: "Naukri", gid: "LOCATION,INDUSTRY,EDUCATION,FAREA_ROLE", clientid: "d3skt0p", accept: "application/json", referer: "https://www.naukri.com/jobs-in-bangalore" },
-  { appid: "121", systemid: "Naukri", accept: "application/json", "content-type": "application/json", referer: "https://www.naukri.com/jobs-in-bangalore" },
-];
-let headerSet = 0;
+const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+const SEARCH = "jobapi/v3/search";
 
+/** Open naukri.com in a browser, watch the request its own front-end makes to the search API, and keep those exact headers + cookies.
+ *  Also returns the first page's data straight from the intercepted response, so page 1 never needs a replay. */
+async function captureFromBrowser(): Promise<{ headers: Record<string, string>; firstPage: any | null; url: string | null }> {
+  const { chromium } = await import("playwright-core");
+  const b = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  try {
+    const ctx = await b.newContext({ userAgent: UA, locale: "en-IN" });
+    const page = await ctx.newPage();
+    let headers: Record<string, string> = {}; let url: string | null = null; let firstPage: any | null = null;
+    const got = new Promise<void>((resolve) => {
+      page.on("request", (req) => { if (req.url().includes(SEARCH) && !url) { url = req.url(); headers = req.headers(); } });
+      page.on("response", async (res) => { if (res.url().includes(SEARCH) && !firstPage) { try { firstPage = await res.json(); } catch { /* not json */ } resolve(); } });
+    });
+    await page.goto("https://www.naukri.com/jobs-in-bangalore", { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
+    await Promise.race([got, new Promise((r) => setTimeout(r, 30000))]);
+    const cookies = await ctx.cookies("https://www.naukri.com");
+    const clean: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) if (!k.startsWith(":") && !["content-length", "host", "accept-encoding"].includes(k.toLowerCase())) clean[k] = v;
+    if (cookies.length) clean["cookie"] = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+    clean["user-agent"] ??= UA;
+    return { headers: clean, firstPage, url };
+  } finally { await b.close(); }
+}
+
+let captured: { headers: Record<string, string> } | null = null;
 export interface NaukriStats { pages: number; jobs: number; employers_new: number; stopped: string }
 
 /** Walk the Bengaluru search, page by page. `maxPages` caps a run; the daily run only needs the first few hundred. */
 export async function harvestNaukri(opts: { maxPages?: number; startPage?: number; onPage?: (s: NaukriStats) => void } = {}): Promise<NaukriStats> {
   const stats: NaukriStats = { pages: 0, jobs: 0, employers_new: 0, stopped: "end" };
   const seenEmployers = new Set<string>();
+  // learn the real headers from the site itself (once per process)
+  let first: any | null = null;
+  if (!captured) {
+    try { const c = await captureFromBrowser(); if (!c.url) { stats.stopped = "browser loaded naukri.com but saw no search request"; return stats; } captured = { headers: c.headers }; first = c.firstPage; }
+    catch (e) { stats.stopped = `browser capture failed: ${(e as Error).message}`; return stats; }
+  }
   for (let page = opts.startPage ?? 1; page <= (opts.maxPages ?? 1000); page++) {
     const url = `https://www.naukri.com/jobapi/v3/search?noOfResults=100&urlType=search_by_location&searchType=adv&location=bangalore&pageNo=${page}&seoKey=jobs-in-bangalore&src=jobsearchDesk`;
-    let r = await getJson<any>(url, { headers: HEADER_SETS[headerSet], gapMs: 1500, retries: 3 });
-    if ((r.status === 406 || r.status === 403) && headerSet === 0) { headerSet = 1; r = await getJson<any>(url, { headers: HEADER_SETS[headerSet], gapMs: 1500, retries: 3 }); }
-    if (!r.ok || !r.data) { stats.stopped = `HTTP ${r.status} at page ${page} (headers set ${headerSet})`; break; }
+    let r: { ok: boolean; status: number; data: any } = { ok: false, status: 0, data: null };
+    if (page === 1 && first?.jobDetails?.length) r = { ok: true, status: 200, data: first };
+    else r = await getJson<any>(url, { headers: captured!.headers, gapMs: 1500, retries: 3 });
+    if (!r.ok || !r.data) { stats.stopped = `HTTP ${r.status} at page ${page} (replaying captured headers: ${Object.keys(captured!.headers).join(",")})`; break; }
     const jobs: any[] = r.data.jobDetails ?? [];
     if (!jobs.length) { stats.stopped = `empty page ${page}`; break; }
     stats.pages++;
