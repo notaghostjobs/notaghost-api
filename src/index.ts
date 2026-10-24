@@ -44,10 +44,6 @@ app.onError((err, c) => {
 
 serve({ fetch: app.fetch, port: env.port }, () => console.log(`notaghost-api on :${env.port}`));
 
-// the reader: reads stale company feeds and scores new postings as it goes. Runs 90s after boot
-// (so a redeploy mid-read simply resumes — only stale companies are re-read) and then every 6h.
-import { readAllInBackground } from "./jobs/reader.js";
-setTimeout(() => console.log("[reader] boot", JSON.stringify(readAllInBackground())), 90e3);
-setInterval(() => console.log("[reader] tick", JSON.stringify(readAllInBackground())), 6 * 3600e3);
+// the reader runs in its own worker process (src/reader/worker.ts); this process only serves.
 // daily snapshot of every posting we know (signal 21); runs every 6h, re-checks what is due
 setInterval(() => snapshotDue(200).then((n) => n && console.log(`[snapshot] rechecked ${n}`)).catch((e) => console.error("[snapshot]", e)), 6 * 3600e3);
