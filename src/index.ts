@@ -16,7 +16,7 @@ import { snapshotDue } from "./engine/ghost/index.js";
 const app = new Hono();
 app.use("*", logger());
 const origins = [...env.appOrigin.split(",").map((o) => o.trim()).filter(Boolean), "http://localhost:5173"];
-app.use("/admin/*", cors({ origin: (o) => (o && /claude\.ai$|claude\.site$|localhost/.test(new URL(o).hostname) ? o : null), allowHeaders: ["x-admin", "content-type"] }));
+app.use("/admin/*", cors({ origin: "*", allowHeaders: ["x-admin", "content-type"], allowMethods: ["GET", "POST", "OPTIONS"] }));  // secret header is the gate
 app.use("*", cors({ origin: origins, allowHeaders: ["authorization", "content-type", "x-admin"] }));
 
 app.get("/health", async (c) => {
