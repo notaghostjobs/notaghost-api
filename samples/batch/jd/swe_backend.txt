@@ -1,0 +1,4 @@
+Senior Software Engineer, Backend — Razorpay · Bengaluru · Full-time
+About the role: Build and scale the payment orchestration services that process millions of transactions a day.
+What you'll do: Design and own backend services in Go/Java with high availability; partner with product on new payment flows; improve latency and reliability of core APIs; mentor 2–3 engineers; drive code quality through reviews and testing; on-call ownership for your services.
+Requirements: 4–8 years building production backend systems; strong in Go, Java or Python; distributed systems, microservices, PostgreSQL/MySQL; experience with AWS or GCP; designed systems for scale (p99 latency, throughput); strong fundamentals in data structures and algorithms. Nice to have: fintech or payments experience; Kafka; Kubernetes.

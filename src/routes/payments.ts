@@ -83,8 +83,9 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
     receipt_no: receipt, paid_at: new Date().toISOString(),
   }).eq("id", pay.id);
 
+  const { data: cur } = await db.from("resumes").select("parsed").eq("user_id", pay.user_id).eq("is_current", true).maybeSingle();
   const { data: plan } = await db.from("plans").insert({
-    user_id: pay.user_id, product: pay.product, shots_total: price.shots,
+    user_id: pay.user_id, product: pay.product, shots_total: price.shots, resume_name: (cur?.parsed as any)?.name ?? null,
     expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id,
   }).select("*").single();
   // TODO: receipt PDF in company name -> storage receipts/<id>.pdf; email it

@@ -1,0 +1,4 @@
+Senior Application Support Engineer — Infosys (client: global bank) · Bengaluru
+Provide L2 support for trading and banking applications in a 24x7 environment.
+Responsibilities: Incident and problem management; monitor batch jobs and application health; troubleshoot using SQL, Unix and logs; coordinate with development for fixes; change management; shift rotation.
+Requirements: 4–8 years in application support/production support; SQL, Unix/Linux, scripting; ITIL processes; experience with monitoring tools; banking or capital markets domain preferred; strong communication.

@@ -1,0 +1,4 @@
+Software Engineer II, Full Stack — Swiggy · Bengaluru
+You will build consumer-facing features across the Swiggy app and partner web, end to end.
+Responsibilities: Ship features across React/Node services; own APIs and data models for your area; write tests and monitor production; collaborate with design and product on experiments; participate in design reviews.
+Requirements: 2–5 years in software engineering; JavaScript/TypeScript with React and Node; REST APIs; SQL; experience shipping consumer products at scale; strong problem solving (data structures, algorithms). Good to have: Python, GCP, experience with A/B testing frameworks.
