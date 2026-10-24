@@ -4,7 +4,7 @@ import { snapshotDue } from "../engine/ghost/index.js";
 import { companyKey } from "../engine/ghost/canon.js";
 
 export const admin = new Hono();
-admin.use("*", async (c, next) => { if (c.req.header("x-admin") !== process.env.ADMIN_SECRET) return c.json({ error: "no" }, 403); await next(); });
+admin.use("*", async (c, next) => { const k = c.req.header("x-admin") ?? c.req.query("key"); if (!process.env.ADMIN_SECRET || k !== process.env.ADMIN_SECRET) return c.json({ error: "no" }, 403); await next(); });
 
 admin.post("/snapshot", async (c) => c.json({ rechecked: await snapshotDue(Number(c.req.query("limit") ?? 200)) }));
 
