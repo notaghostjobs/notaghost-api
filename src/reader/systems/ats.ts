@@ -69,8 +69,26 @@ export const smartrecruiters: System = {
 };
 
 /** Workday: ref is "tenant/wdN/site", always taken from a real URL — tenant names are not guessable.
- *  Bengaluru-direct: Workday's own text search, for both spellings, union. Paged responses report a bogus total of 0,
- *  so we only stop on a short page. We never crawl the global board. */
+ *  Bengaluru-direct, exact: Workday's own location facet ("Bengaluru, India" has an id; facets are nested one level under
+ *  groups like locationMainGroup). Query by that id, so even tenants that hide per-job location text (Accenture) count correctly.
+ *  Fallback when no facet matches: text search for both spellings. Never the global board. */
+const WD_BLR = /bengaluru|bangalore|karnataka/i;
+function blrFacets(facets: any[]): { param: string; ids: string[] } | null {
+  const found = new Map<string, string[]>();
+  const walk = (node: any, param: string | null) => {
+    if (!node || typeof node !== "object") return;
+    const p = typeof node.facetParameter === "string" ? node.facetParameter : param;
+    if (Array.isArray(node.values)) for (const v of node.values) {
+      if (v && typeof v.descriptor === "string" && v.id && WD_BLR.test(v.descriptor) && p) found.set(p, [...(found.get(p) ?? []), String(v.id)]);
+      walk(v, p);
+    }
+  };
+  for (const f of facets ?? []) walk(f, null);
+  if (!found.size) return null;
+  // prefer a city-level facet over country/region ones
+  const pick = [...found.entries()].sort((x, y) => (/location(s)?$/i.test(y[0]) ? 1 : 0) - (/location(s)?$/i.test(x[0]) ? 1 : 0))[0];
+  return { param: pick[0], ids: [...new Set(pick[1])] };
+}
 export const workday: System = {
   id: "workday",
   detect: (u) => { const m = u.match(/https?:\/\/([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com\/(?:[a-z]{2}-[a-z]{2}\/)?([^/?#]+)/i); return m ? `${m[1]}/${m[2]}/${m[3]}` : null; },
@@ -81,29 +99,48 @@ export const workday: System = {
     const diag: string[] = [];
     const post = (body: unknown) => getJson<any>(api, { method: "POST", body, gapMs: 500, headers: { accept: "application/json", referer: `${base}/${site}` } });
     const jobs: FeedJob[] = []; const seen = new Set<string>();
-    let first = true;
-    for (const term of ["Bengaluru", "Bangalore"]) {
-      let maxTotal = 0; let got = 0;
-      for (let offset = 0; offset < 4000; offset += 20) {
-        const r = await post({ appliedFacets: {}, limit: 20, offset, searchText: term });
-        if (first) { first = false; if (r.status === 404) return null; if (!r.ok || !r.data) throw new Error(`workday ${ref}: HTTP ${r.status}`); }
-        if (!r.ok || !r.data) { diag.push(`${term}@${offset} HTTP ${r.status}`); break; }
+    const take = (page: any[], viaFacet: boolean) => {
+      for (const x of page) {
+        const id = String(x.bulletFields?.[0] ?? x.externalPath); if (seen.has(id)) continue; seen.add(id);
+        const loc = String(x.locationsText ?? "").trim();
+        const location = viaFacet && (!loc || /^\d+ locations?$/i.test(loc)) ? `${loc || "Bengaluru"} (Bengaluru facet)` : (/^\d+ locations?$/i.test(loc) ? `${loc} (incl. Bengaluru)` : loc);
+        jobs.push({ id, title: x.title ?? "", location, url: `${base}/${site}${x.externalPath}`, posted_at: null, updated_at: null, posted_text: x.postedOn ?? null });
+      }
+    };
+    // 1. probe: learn the facets (an empty search returns the full facet tree)
+    const probe = await post({ appliedFacets: {}, limit: 20, offset: 0, searchText: "" });
+    if (probe.status === 404) return null;
+    if (!probe.ok || !probe.data) throw new Error(`workday ${ref}: HTTP ${probe.status}`);
+    const fac = blrFacets(probe.data.facets ?? []);
+    diag.push(`board total ${probe.data.total ?? "?"}`, fac ? `facet ${fac.param} → ${fac.ids.length} Bengaluru value(s)` : "no Bengaluru facet");
+    // 2. exact: by facet
+    if (fac) {
+      let maxTotal = 0;
+      for (let offset = 0; offset < 6000; offset += 20) {
+        const r = await post({ appliedFacets: { [fac.param]: fac.ids }, limit: 20, offset, searchText: "" });
+        if (!r.ok || !r.data) { diag.push(`facet@${offset} HTTP ${r.status}`); break; }
         const t = Number(r.data.total ?? 0); if (t > maxTotal) maxTotal = t;
-        const page: any[] = r.data.jobPostings ?? [];
-        for (const x of page) {
-          const id = String(x.bulletFields?.[0] ?? x.externalPath); got++;
-          if (seen.has(id)) continue; seen.add(id);
-          const loc = String(x.locationsText ?? "");
-          // under a Bengaluru-scoped search, "N Locations" means Bengaluru is one of them
-          jobs.push({ id, title: x.title ?? "", location: /^\d+ locations?$/i.test(loc) ? `${loc} (incl. Bengaluru)` : loc, url: `${base}/${site}${x.externalPath}`, posted_at: null, updated_at: null, posted_text: x.postedOn ?? null });
-        }
+        const page: any[] = r.data.jobPostings ?? []; take(page, true);
         if (page.length < 20) break;
         if (maxTotal > 0 && offset + 20 >= maxTotal) break;
       }
-      diag.push(`${term}: total ${maxTotal}, read ${got}`);
+      diag.push(`facet total ${maxTotal}, read ${jobs.length}`);
+    } else {
+      // 3. fallback: text search, both spellings
+      for (const term of ["Bengaluru", "Bangalore"]) {
+        let maxTotal = 0, got = 0;
+        for (let offset = 0; offset < 4000; offset += 20) {
+          const r = await post({ appliedFacets: {}, limit: 20, offset, searchText: term });
+          if (!r.ok || !r.data) { diag.push(`${term}@${offset} HTTP ${r.status}`); break; }
+          const t = Number(r.data.total ?? 0); if (t > maxTotal) maxTotal = t;
+          const page: any[] = r.data.jobPostings ?? []; got += page.length; take(page, false);
+          if (page.length < 20) break;
+          if (maxTotal > 0 && offset + 20 >= maxTotal) break;
+        }
+        diag.push(`${term}: total ${maxTotal}, read ${got}`);
+      }
     }
-    const locs = [...new Set(jobs.map((j) => j.location))].slice(0, 6).join(" | ");
-    diag.push(`locations e.g. ${locs}`);
+    diag.push(`locations e.g. ${[...new Set(jobs.map((j) => j.location))].slice(0, 5).join(" | ")}`);
     return { system: "workday", ref, board_url: `${base}/${site}`, company_name: null, jobs, debug: diag.join("; ") };
   },
 };
