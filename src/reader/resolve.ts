@@ -6,7 +6,7 @@ import { research } from "../engine/ghost/research.js";
 import { getText } from "./http.js";
 import { detect, byId, SYSTEMS, type Feed } from "./systems/index.js";
 import { atsLinksIn, jsonLdJobs, harvestLinks } from "./systems/page.js";
-import { detectBigFromHtml } from "./systems/big.js";
+import { detectBigFromHtml, probeBig } from "./systems/big.js";
 
 export interface Resolution { ats: string; ats_ref: string | null; careers_url: string | null; website: string | null; confidence: "link" | "page" | "search" | "guess" | "none"; evidence: string; feed?: Feed | null }
 
@@ -38,7 +38,7 @@ async function fromUrl(name: string, url: string): Promise<Resolution | null> {
 }
 
 /** Read a careers page: links to a system inside it, else JSON-LD jobs, else harvested job links. */
-async function fromCareersPage(name: string, url: string): Promise<Resolution | null> {
+async function fromCareersPage(name: string, url: string, website: string | null = null): Promise<Resolution | null> {
   const r = await getText(url);
   let html = r.ok ? r.text : "";
   let harvested = null as null | { jobs: any[]; html: string };
@@ -53,6 +53,12 @@ async function fromCareersPage(name: string, url: string): Promise<Resolution | 
   // 1b. a big-company system recognised from the page itself (Phenom, Eightfold, Oracle)
   const big = detectBigFromHtml(html, url);
   if (big) { const f = await tryRef(name, big.system, big.ref); if (f) return { ats: big.system, ats_ref: big.ref, careers_url: url, website: null, confidence: "page", evidence: `careers page runs on ${big.system} (${big.ref})`, feed: f }; }
+  // 1c. ask the host itself: Phenom? Eightfold? (two cheap requests; most large Indian employers are one of these)
+  try {
+    const host = new URL(url).host;
+    const pf = await probeBig(host, website);
+    if (pf) return { ats: pf.system, ats_ref: pf.ref, careers_url: url, website: null, confidence: "page", evidence: `${host} answered as ${pf.system} (${pf.jobs.length} Bengaluru jobs)`, feed: pf };
+  } catch { /* bad url */ }
   // 2. structured job list on the page itself
   const ld = jsonLdJobs(html, url);
   if (ld.length) return { ats: "page", ats_ref: url, careers_url: url, website: null, confidence: "page", evidence: `JSON-LD list of ${ld.length} jobs`, feed: { system: "page", ref: url, board_url: url, company_name: null, jobs: ld } };
@@ -97,14 +103,14 @@ async function fromSlugGuess(name: string): Promise<Resolution | null> {
 export async function resolveEmployer(e: { key: string; name: string; website: string | null; careers_url: string | null; ats_ref: string | null; ats: string | null }): Promise<Resolution> {
   // 0. hints we hold (seed "greenhouse:slug", or a careers URL)
   if (e.ats && e.ats_ref && e.ats !== "none" && e.ats !== "page") { const f = await tryRef(e.name, e.ats, e.ats_ref); if (f) return { ats: e.ats, ats_ref: e.ats_ref, careers_url: f.board_url, website: e.website, confidence: "link", evidence: "known ref re-read", feed: f }; }
-  if (e.careers_url) { const r = (await fromUrl(e.name, e.careers_url)) ?? (await fromCareersPage(e.name, e.careers_url)); if (r) return { ...r, website: e.website }; }
+  if (e.careers_url) { const r = (await fromUrl(e.name, e.careers_url)) ?? (await fromCareersPage(e.name, e.careers_url, e.website)); if (r) return { ...r, website: e.website }; }
   // 1. cheap: exact slug on the name-keyed systems (1 second, name-checked)
   const g = await fromSlugGuess(e.name); if (g) return { ...g, website: e.website };
   // 2. find the careers page by web search, then read it
   const found = await research.careersPage(e.name, e.website).catch(() => null);
   const website = found?.domain ?? e.website ?? null;
   if (found?.url) {
-    const r = (await fromUrl(e.name, found.url)) ?? (await fromCareersPage(e.name, found.url));
+    const r = (await fromUrl(e.name, found.url)) ?? (await fromCareersPage(e.name, found.url, website));
     if (r) return { ...r, website, confidence: r.confidence === "link" ? "search" : r.confidence, evidence: `search → ${found.url}; ${r.evidence}` };
   }
   return { ats: "none", ats_ref: null, careers_url: found?.url ?? e.careers_url ?? null, website, confidence: "none", evidence: found?.url ? `careers page ${found.url} has no readable list` : "no careers page found" };

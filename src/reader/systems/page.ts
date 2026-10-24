@@ -78,13 +78,19 @@ export function harvestLinks(url: string): Promise<{ jobs: FeedJob[]; html: stri
       await p.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
       await p.waitForTimeout(2000);
       const html = await p.content();
-      const links: { t: string; h: string }[] = await p.$$eval("a[href]", (as) => as.map((a) => ({ t: (a.textContent || "").replace(/\s+/g, " ").trim(), h: (a as HTMLAnchorElement).href })));
+      const links: { t: string; h: string; c: string }[] = await p.$$eval("a[href]", (as) => as.map((a) => {
+        const card = a.closest("li, article, tr, [class*='card'], [class*='job'], [class*='result'], [class*='tile'], div");
+        const c = card ? (card.textContent || "").replace(/\s+/g, " ").trim().slice(0, 400) : "";
+        return { t: (a.textContent || "").replace(/\s+/g, " ").trim(), h: (a as HTMLAnchorElement).href, c };
+      }));
       const seen = new Set<string>(); const jobs: FeedJob[] = [];
       for (const l of links) {
         if (l.t.length < 6 || l.t.length > 90 || seen.has(l.h)) continue;
         if (!/\/(job|jobs|career|careers|position|positions|opening|openings|requisition|vacanc|opportunit)[a-z]*\/[^/]+/i.test(l.h) && !/[?&](job|jobid|req|requisition|id|gh_jid)=/i.test(l.h)) continue;
         if (/^(view all|see all|all jobs|careers|jobs|apply now|apply|learn more|read more|search|home)$/i.test(l.t)) continue;
-        seen.add(l.h); jobs.push({ id: l.h, title: l.t, location: "", url: l.h, posted_at: null, updated_at: null, posted_text: null });
+        // the card's text is the best location we have without opening the job; keep the Bengaluru-bearing phrase if there is one
+        const m = l.c.match(/[^.;|·]{0,40}(Bengaluru|Bangalore|Karnataka)[^.;|·]{0,40}/i);
+        seen.add(l.h); jobs.push({ id: l.h, title: l.t, location: m ? m[0].trim() : "", url: l.h, posted_at: null, updated_at: null, posted_text: null });
       }
       return { jobs: jobs.slice(0, 500), html };
     } finally { await ctx.close().catch(() => {}); }

@@ -73,7 +73,8 @@ export const eightfold: System = {
     for (const loc of ["Bengaluru", "Bangalore"]) {
       for (let start = 0; start < 3000; start += 100) {
         const r = await getJson<any>(`https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&location=${encodeURIComponent(loc)}&start=${start}&num=100&sort_by=timestamp`, { headers: BROWSERISH, gapMs: 600 });
-        if (!r.ok || !r.data) { diag.push(`${loc}@${start} HTTP ${r.status}`); break; }
+        if (!r.ok || !r.data) { if (start === 0 && loc === "Bengaluru") return null; diag.push(`${loc}@${start} HTTP ${r.status}`); break; }
+        if (start === 0 && loc === "Bengaluru" && !Array.isArray(r.data.positions)) return null;
         count = r.data.count ?? count; const list: any[] = r.data.positions ?? [];
         for (const x of list) jobs.push({ id: String(x.id ?? x.ats_job_id), title: x.name ?? x.title ?? "", location: x.location ?? (x.locations ?? []).join(" · "), url: x.canonicalPositionUrl ?? `https://${host}/careers?pid=${x.id}&domain=${domain}`, posted_at: iso(x.t_create ?? x.t_update), updated_at: iso(x.t_update), posted_text: null });
         if (list.length < 100 || start + 100 >= count) break;
@@ -94,8 +95,8 @@ export const phenom: System = {
     const body = (from: number, city: string[]) => ({ lang: "en_us", deviceType: "desktop", country: "in", pageName: "search-results", ddoKey: "refineSearch", sortBy: "Most recent", subsearch: "", from, jobs: true, counts: true, all_fields: ["category", "country", "state", "city", "type"], size: 100, clearAll: false, jdsource: "facets", isSliderEnable: false, pageId: "page1", siteType: "external", keywords: "", global: true, selected_fields: { city }, locationData: {} });
     for (let from = 0; from < 3000; from += 100) {
       const r = await getJson<any>(`https://${host}/widgets`, { method: "POST", body: body(from, ["Bengaluru", "Bangalore", "Bengaluru, Karnataka", "Bangalore, Karnataka"]), headers: { ...BROWSERISH, origin: `https://${host}`, referer: `https://${host}/` }, gapMs: 700 });
-      if (!r.ok || !r.data) { diag.push(`@${from} HTTP ${r.status}`); break; }
-      const rs = r.data.refineSearch ?? {}; total = rs.totalHits ?? total; const list: any[] = rs.data?.jobs ?? [];
+      if (!r.ok || !r.data) { if (from === 0) return null; diag.push(`@${from} HTTP ${r.status}`); break; }
+      const rs = r.data.refineSearch ?? {}; if (from === 0 && !rs.data) return null; total = rs.totalHits ?? total; const list: any[] = rs.data?.jobs ?? [];
       for (const x of list) jobs.push({ id: String(x.jobId ?? x.reqId ?? x.jobSeqNo), title: x.title ?? "", location: [x.city, x.state, x.country].filter(Boolean).join(", "), url: x.applyUrl ?? `https://${host}/job/${x.jobSeqNo ?? x.jobId}`, posted_at: iso(x.postedDate), updated_at: iso(x.dateCreated), posted_text: null });
       if (list.length < 100 || jobs.length >= total) break;
     }
@@ -136,6 +137,14 @@ export function detectBigFromHtml(html: string, pageUrl: string): { system: stri
   if (/phenom(people)?\.com|phenom-|ddoKey|\/widgets["']/i.test(html)) return { system: "phenom", ref: host };
   const orc = html.match(/https?:\/\/([a-z0-9.-]+\.oraclecloud\.com)\/hcmUI\/CandidateExperience\/[a-z-]+\/sites\/(CX_\d+)/i);
   if (orc) return { system: "oracle", ref: `${orc[1]}/${orc[2]}` };
+  return null;
+}
+
+/** Ask a careers host directly whether it is Phenom or Eightfold (two cheap requests). Returns the feed when one answers with jobs. */
+export async function probeBig(host: string, website: string | null): Promise<Feed | null> {
+  const domain = (website ? new URL(website).host : host).replace(/^(www|careers|jobs)\./, "");
+  try { const f = await phenom.read(host); if (f && f.jobs.length) return f; } catch { /* not phenom */ }
+  try { const f = await eightfold.read(`${host}|${domain}`); if (f && f.jobs.length) return f; } catch { /* not eightfold */ }
   return null;
 }
 

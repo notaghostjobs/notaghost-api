@@ -92,8 +92,9 @@ const BIG = ["IT services and outsourcing", "global capability centres (GCCs) of
 async function setPriorities() {
   const { error } = await db.from("employers").update({ priority: 1 }).in("source", BIG.map((b) => `sector:${b.slice(0, 40)}`)).eq("priority", 5);
   if (error) log("priority column missing? run 0007_priority.sql —", error.message);
-  // Workday employers already resolved were read with the old global crawl: read them again, Bengaluru-direct
+  // Workday employers: read again with the fixed reader. "page" employers: resolve again now that hosts are probed for Phenom/Eightfold.
   await db.from("employers").update({ read_at: null }).eq("ats", "workday");
+  await db.from("employers").update({ resolved_at: null, ats: null, ats_ref: null }).eq("ats", "page");
 }
 
 async function main() {
