@@ -21,12 +21,19 @@ admin.post("/reader/seed", async (c) => {
 });
 
 /** Ask the worker to run a step now: resolve | read | harvest | selftest, with n. */
-admin.post("/reader/run", async (c) => {
+const runHandler = async (c: any) => {
   const step = c.req.query("step"); const n = Number(c.req.query("n") ?? 0) || undefined; const url = c.req.query("url") || undefined;
   if (!step) return c.json({ error: "step?" }, 400);
   await db.from("reader_control").upsert({ key: "command", value: { step, n, url }, updated_at: new Date().toISOString() });
   return c.json({ queued: { step, n, url } });
-});
+};
+admin.post("/reader/run", runHandler);
+admin.get("/reader/run", runHandler);   // so a read-only fetch tool can queue a probe
+
+/** The last probe result on its own. */
+admin.get("/reader/probe", async (c) => { const { data } = await db.from("reader_control").select("value").eq("key", "probe").maybeSingle(); return c.json(data?.value ?? null); });
+/** Current status + last run on their own (small). */
+admin.get("/reader/status", async (c) => { const { data } = await db.from("reader_control").select("key, value").in("key", ["status", "last_run", "command"]); const o: Record<string, unknown> = {}; for (const r of data ?? []) o[r.key] = r.value; return c.json(o); });
 
 /** The truth, in numbers. */
 admin.get("/reader/stats", async (c) => {
