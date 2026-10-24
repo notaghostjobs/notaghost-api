@@ -20,7 +20,7 @@ export async function findAts(company: string, applyUrl: string | null, hintDoma
 
   // 1. probe public ATS APIs in parallel (cheap, no auth)
   const probes = slugs.flatMap((s) => [greenhouse(s), lever(s), ashby(s), smartrecruiters(s), workday(s, "External"), workday(s, "Careers"), workday(s, `${s}careers`)]);
-  const hits = (await Promise.allSettled(probes)).filter((p): p is PromiseFulfilledResult<AtsResult | null> => p.status === "fulfilled").map((p) => p.value).filter(Boolean) as AtsResult[];
+  const hits = ((await Promise.allSettled(probes)).filter((p): p is PromiseFulfilledResult<AtsResult | null> => p.status === "fulfilled").map((p) => p.value).filter(Boolean) as AtsResult[]).filter((h) => h.jobs.length > 0);
   if (hits.length) return hits.sort((a, b) => b.jobs.length - a.jobs.length)[0];
 
   // 2. search for the careers page, then read it (JSON-LD list, or an ATS link on it)
@@ -77,7 +77,7 @@ async function smartrecruiters(slug: string): Promise<AtsResult | null> {
   try {
     const r = await get(`https://api.smartrecruiters.com/v1/companies/${slug}/postings?limit=100`);
     if (!r.ok) return null;
-    const j: any = await r.json(); if (!j.content) return null;
+    const j: any = await r.json(); if (!Array.isArray(j.content) || !j.content.length) return null;
     const jobs: AtsJob[] = j.content.map((x: any) => ({ id: x.id, title: x.name, location: x.location?.city ?? "", created_at: x.releasedDate ?? null, updated_at: null, url: `https://jobs.smartrecruiters.com/${slug}/${x.id}` }));
     return { system: "smartrecruiters", slug, careers_url: `https://careers.smartrecruiters.com/${slug}`, jobs };
   } catch { return null; }
