@@ -159,6 +159,14 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     timing.repair = Date.now() - t0;
     // repair made it worse? keep the first draft
     if (verification.problems.length + broken.length > draft0.verification.problems.length + draft0.broken.length) ({ rewrite, verification, broken } = draft0);
+    // a single leftover: cut the exact words and re-verify once
+    if (!verification.ok && verification.problems.length === 1) {
+      rewrite = tidy(await json<Rewrite>(
+        `One unsupported phrase remains in a résumé rewrite. DELETE the unsupported words from the sentence they appear in (do not reword, do not add), leaving a grammatical sentence. Change nothing else. Same JSON shape.`,
+        `REWRITE:\n${JSON.stringify(rewrite)}\n\nUNSUPPORTED:\n${JSON.stringify(verification.problems[0])}`, 16000, FAST));
+      verification = await verifyRewrite(resume, rewrite);
+      broken = checkRules(rewrite, resume, posting);
+    }
   }
   if (!verification.ok && verification.problems.length > 1) {
     // still has more than one unsupported claim: one full regeneration on the stronger model, then accept what we have and flag for review
@@ -174,8 +182,9 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   const { matches: rescored } = await rescore(matches, rewrite);
   const rank = { missing: 0, have_not_said: 1, said: 2 } as const;
   const after_matches = matches.map((m) => {
-    const r = rescored.find((x) => x.requirement === m.requirement) ?? m;
-    return rank[r.bucket] >= rank[m.bucket] ? r : m;   // never lower than before
+    const r = rescored.find((x) => x.requirement === m.requirement);
+    if (!r || !(r.bucket in rank)) return m;
+    return rank[r.bucket] >= rank[m.bucket] ? { ...m, bucket: r.bucket, evidence: r.evidence || m.evidence } : m;   // never lower than before
   });
   timing.rescore = Date.now() - t0;
   return { posting, matches, after_matches, rewrite, verification, broken, needs_review, timing, first_pass };
