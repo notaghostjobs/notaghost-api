@@ -29,6 +29,7 @@ create table if not exists companies (
   news          jsonb,                       -- {layoffs_90d, freeze_90d, funding_90d, items[], checked_at}
   headcount     int,
   openings      int,
+  size_checked  timestamptz,
   research      jsonb,                       -- board research cache keyed by title
   reply_stats   jsonb,                       -- {applied, replied, rate, updated_at}
   updated_at    timestamptz default now()
@@ -49,6 +50,7 @@ create table if not exists observations (
 create index if not exists obs_posting_idx on observations (posting_id, seen_at desc);
 alter table observations enable row level security;
 grant all on observations to service_role;
+grant usage, select on sequence observations_id_seq to service_role;
 
 -- application outcomes (signal 22): filled by the tracker
 create table if not exists outcomes (
