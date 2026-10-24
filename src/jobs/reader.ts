@@ -91,14 +91,18 @@ export function readAllInBackground() {
   running = true;
   (async () => {
     try {
-      let total = { companies: 0, postings: 0, new: 0 };
-      for (let i = 0; i < 10; i++) {
+      let total = { companies: 0, postings: 0, new: 0, scored: 0 };
+      for (let i = 0; i < 40; i++) {
         const r = await readCity({ limit: 25, onlyStale: true });
-        total = { companies: total.companies + r.companies, postings: total.postings + r.postings, new: total.new + r.new };
+        // score what this chunk found before moving on, so a restart never loses the scoring
+        const n = await scoreUnscored(40);
+        total = { companies: total.companies + r.companies, postings: total.postings + r.postings, new: total.new + r.new, scored: total.scored + n };
+        console.log("[reader] chunk", JSON.stringify({ ...r, scored: n }));
         if (r.companies < 25) break;
       }
+      // anything still unscored (e.g. from before a restart)
+      for (let i = 0; i < 20; i++) { const n = await scoreUnscored(40); total.scored += n; if (n < 40) break; }
       console.log("[reader] full read", JSON.stringify(total));
-      const n = await scoreUnscored(200); console.log("[score]", n);
     } catch (e) { console.error("[reader] background", e); }
     finally { running = false; }
   })();
