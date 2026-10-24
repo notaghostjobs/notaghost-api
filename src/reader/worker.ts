@@ -80,6 +80,27 @@ async function runCommand(cmd: { step: string; n?: number; url?: string }) {
   return { error: `unknown step ${cmd.step}` };
 }
 
+/** Ops channel: commands.json on the public `ops` branch (no deploy involved). Each command runs once; results land in reader_control. */
+const OPS_URL = "https://raw.githubusercontent.com/notaghostjobs/notaghost-api/ops/commands.json";
+async function pollOps() {
+  try {
+    const r = await fetch(`${OPS_URL}?t=${Date.now()}`, { signal: AbortSignal.timeout(10000), headers: { "cache-control": "no-cache" } });
+    if (!r.ok) return;
+    const j = await r.json() as { commands?: { id: string; step: string; n?: number; url?: string }[] };
+    const seen = (await getControl<{ ids: string[] }>("ops_seen"))?.ids ?? [];
+    for (const cmd of j.commands ?? []) {
+      if (!cmd?.id || seen.includes(cmd.id)) continue;
+      seen.push(cmd.id); await setControl("ops_seen", { ids: seen.slice(-200) });
+      log("ops", cmd.id, cmd.step, cmd.url ?? cmd.n ?? "");
+      const res = await runCommand(cmd).catch((e) => ({ error: (e as Error).message }));
+      await setControl(`ops:${cmd.id}`, { cmd, result: res, at: new Date().toISOString() });
+      const recent = (await getControl<{ ids: string[] }>("ops_recent"))?.ids ?? [];
+      await setControl("ops_recent", { ids: [...recent, cmd.id].slice(-8) });
+      await status("idle");
+    }
+  } catch { /* offline or no file yet */ }
+}
+
 /** The daily pass, 06:00 IST: harvest the board (new employers + listings), resolve everything new, re-read every feed. */
 async function daily() {
   const t0 = Date.now();
@@ -125,6 +146,8 @@ async function main() {
   await status("idle");
   for (;;) {
     try {
+      // 0. ops channel (GitHub)
+      await pollOps();
       // 1. an explicit command from the admin page
       const cmd = await getControl<{ step: string; n?: number; url?: string }>("command");
       if (cmd?.step) { await setControl("command", {}); const r = await runCommand(cmd); await setControl("last_run", { cmd, result: r, at: new Date().toISOString() }); await status("idle"); continue; }
