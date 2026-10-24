@@ -27,9 +27,12 @@ async function selfTest() {
   log("selftest", out.map((o) => `${o.system}:${o.ok ? o.jobs : "FAIL"}`).join(" "));
 }
 
+let resolvedThisRun = 0;
 async function runResolve(n: number) {
-  await status("resolve", { batch: n });
-  const r = await resolveBatch(n, 4, async (key, res) => { if (res.feed && res.ats !== "none") { const { data: e } = await db.from("employers").select("key, name, ats, ats_ref").eq("key", key).single(); if (e) await recordFeed(e, res.feed).catch((err) => log("record", key, err.message)); } });
+  await status("resolve", { batch: n, done_since_boot: resolvedThisRun });
+  const r = await resolveBatch(n, 6,
+    async (key, res) => { if (res.feed && res.ats !== "none") { const { data: e } = await db.from("employers").select("key, name, ats, ats_ref").eq("key", key).single(); if (e) await recordFeed(e, res.feed).catch((err) => log("record", key, err.message)); } },
+    (name, res, err) => { resolvedThisRun++; const last = err ? `${name} → error: ${err.slice(0, 80)}` : `${name} → ${res!.ats}${res!.feed ? ` (${res!.feed.jobs.length} jobs)` : ""}`; log("resolved", last); void status("resolve", { batch: n, done_since_boot: resolvedThisRun, last }); });
   log("resolve", JSON.stringify(r)); return r;
 }
 async function runRead(n: number) { await status("read", { batch: n }); const r = await readDue(n); log("read", JSON.stringify(r)); return r; }

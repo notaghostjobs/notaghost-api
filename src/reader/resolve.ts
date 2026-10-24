@@ -105,19 +105,22 @@ export async function resolveEmployer(e: { key: string; name: string; website: s
 }
 
 /** Resolve a batch of unresolved employers, `concurrency` at a time. Returns counts. */
-export async function resolveBatch(limit = 20, concurrency = 6, onDone?: (key: string, r: Resolution) => Promise<void>) {
+const withTimeout = <T>(p: Promise<T>, ms: number, what: string) => Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`timeout after ${ms / 1000}s: ${what}`)), ms))]);
+
+export async function resolveBatch(limit = 20, concurrency = 6, onDone?: (key: string, r: Resolution) => Promise<void>, onProgress?: (name: string, r: Resolution | null, err?: string) => void) {
   const { data } = await db.from("employers").select("key, name, website, careers_url, ats, ats_ref").is("resolved_at", null).order("created_at").limit(limit);
   const q = [...(data ?? [])]; const stats = { done: 0, found: 0, none: 0, errors: 0 };
   async function worker() {
     for (;;) {
       const e = q.shift(); if (!e) return;
       try {
-        const r = await resolveEmployer(e);
+        const r = await withTimeout(resolveEmployer(e), 120000, e.name);
         await db.from("employers").update({ ats: r.ats, ats_ref: r.ats_ref, careers_url: r.careers_url, website: r.website, confidence: r.confidence, evidence: r.evidence, resolved_at: new Date().toISOString(), resolve_error: null }).eq("key", e.key);
         stats.done++; if (r.ats === "none") stats.none++; else stats.found++;
-        if (onDone) await onDone(e.key, r);
+        if (onDone) await withTimeout(onDone(e.key, r), 180000, `record ${e.name}`).catch((err) => console.error("[record]", e.name, (err as Error).message));
+        onProgress?.(e.name, r);
       } catch (err) {
-        stats.errors++;
+        stats.errors++; onProgress?.(e.name, null, (err as Error).message);
         await db.from("employers").update({ resolved_at: new Date().toISOString(), ats: "none", confidence: "none", resolve_error: (err as Error).message.slice(0, 300) }).eq("key", e.key);
       }
     }
