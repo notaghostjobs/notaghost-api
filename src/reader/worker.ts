@@ -7,6 +7,7 @@ import { harvestSectors } from "./harvest/sectors.js";
 import { byId } from "./systems/index.js";
 import { isBlr } from "./blr.js";
 import { seedTier1, checkTier1, type Tier1Row } from "./tier1.js";
+import { probeUrl } from "./probe.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), "[reader]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -61,8 +62,9 @@ async function runTier1() {
   return { companies: r.length, with_feed: r.filter((x) => x.ats && x.ats !== "none").length, blr: r.reduce((a, x) => a + x.blr, 0) };
 }
 
-/** One command from the admin page: {step, n}. */
-async function runCommand(cmd: { step: string; n?: number }) {
+/** One command from the admin page: {step, n, url}. */
+async function runCommand(cmd: { step: string; n?: number; url?: string }) {
+  if (cmd.step === "probe" && cmd.url) { await status("probe", { url: cmd.url }); const r = await probeUrl(cmd.url).catch((e) => ({ error: (e as Error).message })); await setControl("probe", r); return r; }
   const n = cmd.n ?? 0;
   if (cmd.step === "resolve") return runResolve(n || 20);
   if (cmd.step === "read") return runRead(n || 200);
@@ -106,7 +108,7 @@ async function main() {
   for (;;) {
     try {
       // 1. an explicit command from the admin page
-      const cmd = await getControl<{ step: string; n?: number }>("command");
+      const cmd = await getControl<{ step: string; n?: number; url?: string }>("command");
       if (cmd?.step) { await setControl("command", {}); const r = await runCommand(cmd); await setControl("last_run", { cmd, result: r, at: new Date().toISOString() }); await status("idle"); continue; }
       // 2. the daily pass
       const today = new Date().toISOString().slice(0, 10);

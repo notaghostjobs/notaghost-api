@@ -102,6 +102,8 @@ export const workday: System = {
       }
       diag.push(`${term}: total ${maxTotal}, read ${got}`);
     }
+    const locs = [...new Set(jobs.map((j) => j.location))].slice(0, 6).join(" | ");
+    diag.push(`locations e.g. ${locs}`);
     return { system: "workday", ref, board_url: `${base}/${site}`, company_name: null, jobs, debug: diag.join("; ") };
   },
 };

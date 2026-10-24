@@ -22,10 +22,10 @@ admin.post("/reader/seed", async (c) => {
 
 /** Ask the worker to run a step now: resolve | read | harvest | selftest, with n. */
 admin.post("/reader/run", async (c) => {
-  const step = c.req.query("step"); const n = Number(c.req.query("n") ?? 0) || undefined;
+  const step = c.req.query("step"); const n = Number(c.req.query("n") ?? 0) || undefined; const url = c.req.query("url") || undefined;
   if (!step) return c.json({ error: "step?" }, 400);
-  await db.from("reader_control").upsert({ key: "command", value: { step, n }, updated_at: new Date().toISOString() });
-  return c.json({ queued: { step, n } });
+  await db.from("reader_control").upsert({ key: "command", value: { step, n, url }, updated_at: new Date().toISOString() });
+  return c.json({ queued: { step, n, url } });
 });
 
 /** The truth, in numbers. */
