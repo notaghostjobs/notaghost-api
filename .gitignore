@@ -2,3 +2,8 @@ node_modules
 dist
 .env
 samples/out*
+samples/batch/*.pdf
+samples/batch/out/
+samples/batch/results.json
+samples/batch/run.log
+samples/kr/
