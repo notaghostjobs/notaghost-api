@@ -47,25 +47,45 @@ export function jsonLdJobs(html: string, pageUrl: string): FeedJob[] {
   return jobs;
 }
 
+// One shared browser for the whole process, and one render at a time: a 512 MB box cannot hold several Chromes.
+let browserP: Promise<import("playwright-core").Browser> | null = null;
+let renderLock: Promise<void> = Promise.resolve();
+async function getBrowser() {
+  if (!browserP) {
+    const { chromium } = await import("playwright-core");
+    browserP = chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] });
+    browserP.then((b) => b.on("disconnected", () => { browserP = null; })).catch(() => { browserP = null; });
+  }
+  return browserP;
+}
+function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const run = renderLock.then(fn, fn);
+  renderLock = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 /** Render with a browser and collect links that look like individual jobs. Conservative: titles 6–90 chars, job-ish path. */
-export async function harvestLinks(url: string): Promise<{ jobs: FeedJob[]; html: string }> {
-  const { chromium } = await import("playwright-core");
-  const b = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
-  try {
-    const p = await b.newPage({ userAgent: UA });
-    await p.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
-    await p.waitForTimeout(2500);
-    const html = await p.content();
-    const links: { t: string; h: string }[] = await p.$$eval("a[href]", (as) => as.map((a) => ({ t: (a.textContent || "").replace(/\s+/g, " ").trim(), h: (a as HTMLAnchorElement).href })));
-    const seen = new Set<string>(); const jobs: FeedJob[] = [];
-    for (const l of links) {
-      if (l.t.length < 6 || l.t.length > 90 || seen.has(l.h)) continue;
-      if (!/\/(job|jobs|career|careers|position|positions|opening|openings|requisition|vacanc|opportunit)[a-z]*\/[^/]+/i.test(l.h) && !/[?&](job|jobid|req|requisition|id|gh_jid)=/i.test(l.h)) continue;
-      if (/^(view all|see all|all jobs|careers|jobs|apply now|apply|learn more|read more|search|home)$/i.test(l.t)) continue;
-      seen.add(l.h); jobs.push({ id: l.h, title: l.t, location: "", url: l.h, posted_at: null, updated_at: null, posted_text: null });
-    }
-    return { jobs: jobs.slice(0, 500), html };
-  } finally { await b.close(); }
+export function harvestLinks(url: string): Promise<{ jobs: FeedJob[]; html: string }> {
+  return serial(async () => {
+    const b = await getBrowser();
+    const ctx = await b.newContext({ userAgent: UA });
+    try {
+      const p = await ctx.newPage();
+      await p.route("**/*", (route) => (/\.(png|jpe?g|gif|webp|svg|woff2?|ttf|mp4|css)(\?|$)/i.test(route.request().url()) ? route.abort() : route.continue()));
+      await p.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
+      await p.waitForTimeout(2000);
+      const html = await p.content();
+      const links: { t: string; h: string }[] = await p.$$eval("a[href]", (as) => as.map((a) => ({ t: (a.textContent || "").replace(/\s+/g, " ").trim(), h: (a as HTMLAnchorElement).href })));
+      const seen = new Set<string>(); const jobs: FeedJob[] = [];
+      for (const l of links) {
+        if (l.t.length < 6 || l.t.length > 90 || seen.has(l.h)) continue;
+        if (!/\/(job|jobs|career|careers|position|positions|opening|openings|requisition|vacanc|opportunit)[a-z]*\/[^/]+/i.test(l.h) && !/[?&](job|jobid|req|requisition|id|gh_jid)=/i.test(l.h)) continue;
+        if (/^(view all|see all|all jobs|careers|jobs|apply now|apply|learn more|read more|search|home)$/i.test(l.t)) continue;
+        seen.add(l.h); jobs.push({ id: l.h, title: l.t, location: "", url: l.h, posted_at: null, updated_at: null, posted_text: null });
+      }
+      return { jobs: jobs.slice(0, 500), html };
+    } finally { await ctx.close().catch(() => {}); }
+  });
 }
 
 /** A plain careers page as a "system": ref is the page URL. */

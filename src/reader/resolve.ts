@@ -41,7 +41,7 @@ async function fromCareersPage(name: string, url: string): Promise<Resolution | 
   const r = await getText(url);
   let html = r.ok ? r.text : "";
   let harvested = null as null | { jobs: any[]; html: string };
-  if (!html || html.length < 2000) { try { harvested = await harvestLinks(url); html = harvested.html; } catch { /* unreachable */ } }
+  if (!html) { try { harvested = await harvestLinks(url); html = harvested.html; } catch { /* unreachable */ } }
   if (!html) return null;
   // 1. a hiring system embedded or linked
   for (const link of atsLinksIn(html)) {
