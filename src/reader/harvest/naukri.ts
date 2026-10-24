@@ -4,7 +4,12 @@ import { db } from "../../lib/db.js";
 import { getJson } from "../http.js";
 import { companyKey } from "../../engine/ghost/canon.js";
 
-const HEADERS = { appid: "109", systemid: "Naukri", referer: "https://www.naukri.com/jobs-in-bangalore", "accept": "application/json" };
+// the headers naukri.com's own front-end sends to this API; without them it answers 406
+const HEADER_SETS: Record<string, string>[] = [
+  { appid: "109", systemid: "Naukri", gid: "LOCATION,INDUSTRY,EDUCATION,FAREA_ROLE", clientid: "d3skt0p", accept: "application/json", referer: "https://www.naukri.com/jobs-in-bangalore" },
+  { appid: "121", systemid: "Naukri", accept: "application/json", "content-type": "application/json", referer: "https://www.naukri.com/jobs-in-bangalore" },
+];
+let headerSet = 0;
 
 export interface NaukriStats { pages: number; jobs: number; employers_new: number; stopped: string }
 
@@ -14,8 +19,9 @@ export async function harvestNaukri(opts: { maxPages?: number; startPage?: numbe
   const seenEmployers = new Set<string>();
   for (let page = opts.startPage ?? 1; page <= (opts.maxPages ?? 1000); page++) {
     const url = `https://www.naukri.com/jobapi/v3/search?noOfResults=100&urlType=search_by_location&searchType=adv&location=bangalore&pageNo=${page}&seoKey=jobs-in-bangalore&src=jobsearchDesk`;
-    const r = await getJson<any>(url, { headers: HEADERS, gapMs: 1500, retries: 3 });
-    if (!r.ok || !r.data) { stats.stopped = `HTTP ${r.status} at page ${page}`; break; }
+    let r = await getJson<any>(url, { headers: HEADER_SETS[headerSet], gapMs: 1500, retries: 3 });
+    if ((r.status === 406 || r.status === 403) && headerSet === 0) { headerSet = 1; r = await getJson<any>(url, { headers: HEADER_SETS[headerSet], gapMs: 1500, retries: 3 }); }
+    if (!r.ok || !r.data) { stats.stopped = `HTTP ${r.status} at page ${page} (headers set ${headerSet})`; break; }
     const jobs: any[] = r.data.jobDetails ?? [];
     if (!jobs.length) { stats.stopped = `empty page ${page}`; break; }
     stats.pages++;
