@@ -73,9 +73,10 @@ export function parsePosting(text: string) {
 export function matchResume(resume: ResumeProfile, posting: PostingProfile) {
   return json<{ matches: Match[] }>(
     `You compare a candidate against a posting, requirement by requirement. For each requirement pick ONE bucket:
-- "said": the résumé clearly states it.
-- "have_not_said": the résumé contains a VERBATIM line that demonstrates this requirement (same kind of work, different words). Quote that line. If you would need to infer, generalise, or stretch ("built dashboards" → "category management"), it is NOT have_not_said.
-- "missing": no evidence. Do not stretch. A missing must-have is useful information, not a failure. When in doubt between have_not_said and missing, choose missing — a false promise costs more than a missed one.
+- "said": the résumé states it with specifics — a bullet or line that shows the work (what, where, with what result).
+- "have_not_said": the résumé NAMES it but does not show it — a competency or skills entry ("Vendor Negotiations & Contracting"), a summary phrase ("team building"), or a line of the SAME KIND of work in different words. Quote that line verbatim. This bucket means "has it, under-written", so the rewrite can state it properly.
+- "missing": nothing in the résumé points to it — no mention anywhere, no same-kind work. Test: if asked "where does your résumé mention this?", the candidate could not point to a line.
+Do not stretch across kinds of work ("built dashboards" → "category management" is a stretch, so missing). But do not demand proof either: a named competency or skill IS a mention, so it is have_not_said, never missing. A missing must-have is useful information, not a failure.
 Evidence must be a verbatim quote from the résumé. suggestion: for said/have_not_said, how to phrase it in the employer's words; for missing, one honest line (adjacent experience to mention, or "don't claim this").`,
     `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nReturn: {matches:[{requirement, kind:"must"|"nice", bucket, evidence, suggestion}]}`,
     6000

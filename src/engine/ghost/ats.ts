@@ -78,6 +78,9 @@ async function smartrecruiters(slug: string): Promise<AtsResult | null> {
     const r = await get(`https://api.smartrecruiters.com/v1/companies/${slug}/postings?limit=100`);
     if (!r.ok) return null;
     const j: any = await r.json(); if (!Array.isArray(j.content) || !j.content.length) return null;
+    // the API answers for the company it THINKS we meant; make sure it is ours
+    const ident = String(j.content[0]?.company?.identifier ?? "").toLowerCase();
+    if (ident && ident !== slug.toLowerCase()) return null;
     const jobs: AtsJob[] = j.content.map((x: any) => ({ id: x.id, title: x.name, location: x.location?.city ?? "", created_at: x.releasedDate ?? null, updated_at: null, url: `https://jobs.smartrecruiters.com/${slug}/${x.id}` }));
     return { system: "smartrecruiters", slug, careers_url: `https://careers.smartrecruiters.com/${slug}`, jobs };
   } catch { return null; }
