@@ -10,6 +10,7 @@ import { shots } from "./routes/shots.js";
 import { payments } from "./routes/payments.js";
 import { preview } from "./routes/preview.js";
 import { check } from "./routes/check.js";
+import { snapshotDue } from "./engine/ghost/index.js";
 
 const app = new Hono();
 app.use("*", logger());
@@ -39,3 +40,6 @@ app.onError((err, c) => {
 });
 
 serve({ fetch: app.fetch, port: env.port }, () => console.log(`notaghost-api on :${env.port}`));
+
+// daily snapshot of every posting we know (signal 21); runs every 6h, re-checks what is due
+setInterval(() => snapshotDue(200).then((n) => n && console.log(`[snapshot] rechecked ${n}`)).catch((e) => console.error("[snapshot]", e)), 6 * 3600e3);
