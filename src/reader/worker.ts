@@ -22,7 +22,7 @@ async function status(doing: string, extra: Record<string, unknown> = {}) { busy
 /** Prove each reader against an employer we know uses that system. Stored for the admin page. */
 async function selfTest() {
   const probes: [string, string][] = [["greenhouse", "razorpaysoftwareprivatelimited"], ["lever", "spotify"], ["ashby", "ashby"], ["smartrecruiters", "BoschGroup"],
-    ["workday", "adobe/wd5/external_experienced"], ["workday", "walmart/wd5/WalmartExternal"], ["workday", "infosys/wd103/InfosysCareers"], ["workday", "wipro/wd3/Wipro_Careers"], ["workday", "nvidia/wd5/NVIDIAExternalCareerSite"], ["workday", "salesforce/wd12/External_Career_Site"]];
+    ["successfactors", "https://jobs.sap.com"], ["successfactors", "https://jobs.siemens.com"], ["workday", "adobe/wd5/external_experienced"], ["workday", "walmart/wd5/WalmartExternal"], ["workday", "infosys/wd103/InfosysCareers"], ["workday", "wipro/wd3/Wipro_Careers"], ["workday", "nvidia/wd5/NVIDIAExternalCareerSite"], ["workday", "salesforce/wd12/External_Career_Site"]];
   const out: Record<string, unknown>[] = [];
   for (const [sys, ref] of probes) {
     const t0 = Date.now();

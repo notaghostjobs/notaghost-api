@@ -113,18 +113,31 @@ export const workday: System = {
     if (!probe.ok || !probe.data) throw new Error(`workday ${ref}: HTTP ${probe.status}`);
     const fac = blrFacets(probe.data.facets ?? []);
     diag.push(`board total ${probe.data.total ?? "?"}`, fac ? `facet ${fac.param} → ${fac.ids.length} Bengaluru value(s)` : "no Bengaluru facet");
-    // 2. exact: by facet
+    // 2. exact: by facet. Workday caps any query at 2000; past that, slice by every other facet's values and union.
     if (fac) {
-      let maxTotal = 0;
-      for (let offset = 0; offset < 6000; offset += 20) {
-        const r = await post({ appliedFacets: { [fac.param]: fac.ids }, limit: 20, offset, searchText: "" });
-        if (!r.ok || !r.data) { diag.push(`facet@${offset} HTTP ${r.status}`); break; }
-        const t = Number(r.data.total ?? 0); if (t > maxTotal) maxTotal = t;
-        const page: any[] = r.data.jobPostings ?? []; take(page, true);
-        if (page.length < 20) break;
-        if (maxTotal > 0 && offset + 20 >= maxTotal) break;
+      const page = async (applied: Record<string, string[]>) => {
+        let maxTotal = 0, got = 0;
+        for (let offset = 0; offset < 2000; offset += 20) {
+          const r = await post({ appliedFacets: applied, limit: 20, offset, searchText: "" });
+          if (!r.ok || !r.data) { diag.push(`@${offset} HTTP ${r.status}`); break; }
+          const t = Number(r.data.total ?? 0); if (t > maxTotal) maxTotal = t;
+          const pg: any[] = r.data.jobPostings ?? []; got += pg.length; take(pg, true);
+          if (pg.length < 20) break;
+          if (maxTotal > 0 && offset + 20 >= maxTotal) break;
+        }
+        return maxTotal;
+      };
+      const total = await page({ [fac.param]: fac.ids });
+      diag.push(`facet total ${total}, read ${jobs.length}`);
+      if (total >= 2000) {
+        // slice: every other facet parameter, value by value, still within the Bengaluru facet
+        const others: { param: string; ids: string[] }[] = [];
+        const walk = (node: any, param: string | null) => { if (!node || typeof node !== "object") return; const p = typeof node.facetParameter === "string" ? node.facetParameter : param; if (Array.isArray(node.values) && p && p !== fac.param) { const ids = node.values.map((v: any) => v?.id).filter(Boolean).map(String); if (ids.length > 1 && ids.length < 80) others.push({ param: p, ids }); } if (Array.isArray(node.values)) for (const v of node.values) walk(v, p); };
+        for (const f of probe.data.facets ?? []) walk(f, null);
+        const sliceBy = others.sort((a, b) => b.ids.length - a.ids.length)[0];
+        if (sliceBy) { let n = 0; for (const id of sliceBy.ids) { await page({ [fac.param]: fac.ids, [sliceBy.param]: [id] }); n++; } diag.push(`sliced by ${sliceBy.param} (${n} values) → ${jobs.length}`); }
+        else diag.push("capped at 2000, no facet to slice by");
       }
-      diag.push(`facet total ${maxTotal}, read ${jobs.length}`);
     } else {
       // 3. fallback: text search, both spellings
       for (const term of ["Bengaluru", "Bangalore"]) {
