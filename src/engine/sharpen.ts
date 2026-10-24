@@ -119,7 +119,7 @@ export function verifyRewrite(original: ResumeProfile, rewrite: Rewrite) {
 /** Re-bucket the matches against the REWRITE: which requirements does the sharpened text now say? */
 export function rescore(matches: Match[], rewrite: Rewrite) {
   return json<{ matches: Match[] }>(
-    `You re-check a list of requirement matches against a REWRITTEN résumé. For each requirement keep kind and requirement; set bucket to "said" if the rewrite now clearly states it, "have_not_said" if the evidence is in the rewrite but not framed to the requirement, "missing" if absent. Do not invent evidence. Keep evidence/suggestion short.`,
+    `You grade a REWRITTEN résumé against a list of requirements, the way a screener would. For each requirement: "said" if the rewrite states it or a plain equivalent anywhere (summary, "relevant to this role" block, or a bullet) — e.g. "lead a team through 1:1s" satisfies "mentor engineers", "cryptocurrency transactions" satisfies "fintech experience", "cut turnaround 50%" satisfies "improve latency/reliability". "have_not_said" only if the underlying fact is present but a screener searching for the requirement would not connect it. "missing" if absent. Be fair: this grades what is written, not what could be stretched. Quote the line as evidence.`,
     `REWRITE:\n${JSON.stringify({ headline: rewrite.headline, summary: rewrite.summary, relevant: rewrite.relevant, roles: rewrite.roles, skills: rewrite.skills, extra_sections: rewrite.extra_sections })}\n\nREQUIREMENTS:\n${JSON.stringify(matches.map((m) => ({ requirement: m.requirement, kind: m.kind, bucket_before: m.bucket })))}\n\nReturn: {matches:[{requirement, kind, bucket, evidence, suggestion}]}`,
     4000, FAST
   );
