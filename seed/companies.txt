@@ -1,0 +1,198 @@
+# Bengaluru-hiring employers, one per line: name | optional ATS hint (slug or careers URL)
+Razorpay | greenhouse:razorpaysoftwareprivatelimited
+Swiggy | swiggy
+Zepto | zepto
+Flipkart | flipkart
+Myntra | myntra
+PhonePe | phonepe
+CRED | cred
+Meesho | meesho
+Groww | groww
+Zerodha | zerodha
+Ninjacart | ninjacart
+Unacademy | unacademy
+BYJU'S | byjus
+upGrad | upgrad
+Cult.fit | cultfit
+Udaan | udaan
+Dunzo | dunzo
+Licious | licious
+BigBasket | bigbasket
+Ola | ola
+Rapido | rapido
+Namma Yatri | nammayatri
+Postman | postman
+Freshworks | freshworks
+Chargebee | chargebee
+Zoho | zoho
+BrowserStack | browserstack
+Hasura | hasura
+Atlan | atlan
+Slice | slice
+Juspay | juspay
+Setu | setu
+Khatabook | khatabook
+Jar | jar
+Navi | navi
+Smallcase | smallcase
+Cleartax | cleartax
+Razorpay Capital | razorpay
+Moglix | moglix
+Zetwerk | zetwerk
+Infra.Market | inframarket
+Vedantu | vedantu
+Scaler | scaler
+Simplilearn | simplilearn
+Great Learning | greatlearning
+PharmEasy | pharmeasy
+Practo | practo
+HealthifyMe | healthifyme
+Curefit | curefit
+Mfine | mfine
+Porter | porter
+Delhivery | delhivery
+Shadowfax | shadowfax
+Locus | locus
+Rivigo | rivigo
+Yulu | yulu
+Bounce | bounce
+Ather Energy | ather
+Ola Electric | olaelectric
+Bluestone | bluestone
+CaratLane | caratlane
+Nykaa | nykaa
+Purplle | purplle
+Mamaearth | mamaearth
+boAt | boat
+Lenskart | lenskart
+Urban Company | urbancompany
+NoBroker | nobroker
+Housing.com | housing
+Nestaway | nestaway
+Stanza Living | stanzaliving
+Zolo | zolo
+Dream11 | dream11
+MPL | mpl
+Games24x7 | games24x7
+ShareChat | sharechat
+Dailyhunt | dailyhunt
+InMobi | inmobi
+Glance | glance
+Moengage | moengage
+CleverTap | clevertap
+WebEngage | webengage
+Leadsquared | leadsquared
+Darwinbox | darwinbox
+Keka | keka
+Zluri | zluri
+Spendflo | spendflo
+Rippling | rippling
+Whatfix | whatfix
+Mindtickle | mindtickle
+Yellow.ai | yellowai
+Haptik | haptik
+Gupshup | gupshup
+Exotel | exotel
+Kaleyra | kaleyra
+Pine Labs | pinelabs
+Paytm | paytm
+Mobikwik | mobikwik
+Fi Money | fi
+Jupiter | jupiter
+Open Financial | open
+Lendingkart | lendingkart
+Capital Float | capitalfloat
+Kreditbee | kreditbee
+Moneyview | moneyview
+Cashfree | cashfree
+Zoho | zohocorp
+ThoughtWorks | thoughtworks
+Mu Sigma | musigma
+Fractal | fractal
+Tredence | tredence
+LatentView | latentview
+Sigmoid | sigmoid
+Tiger Analytics | tigeranalytics
+Quantiphi | quantiphi
+Walmart Global Tech | walmart
+Amazon | amazon
+Google | google
+Microsoft | microsoft
+Uber | uber
+Intuit | intuit
+Adobe | adobe
+Salesforce | salesforce
+Atlassian | atlassian
+Twilio | twilio
+Stripe | stripe
+Netflix | netflix
+LinkedIn | linkedin
+Goldman Sachs | goldmansachs
+JPMorgan | jpmorgan
+Morgan Stanley | morganstanley
+Target | target
+Lowe's | lowes
+Tesco | tesco
+Sony | sony
+Samsung | samsung
+Qualcomm | qualcomm
+Nvidia | nvidia
+Intel | intel
+AMD | amd
+Texas Instruments | ti
+Cisco | cisco
+VMware | vmware
+Dell | dell
+HP | hp
+IBM | ibm
+SAP | sap
+Oracle | oracle
+Infosys | infosys
+Wipro | wipro
+TCS | tcs
+HCL | hcl
+Tech Mahindra | techmahindra
+Mindtree | mindtree
+Mphasis | mphasis
+Sonata | sonata
+Happiest Minds | happiestminds
+Persistent | persistent
+Cognizant | cognizant
+Accenture | accenture
+Capgemini | capgemini
+Deloitte | deloitte
+EY | ey
+KPMG | kpmg
+PwC | pwc
+McKinsey | mckinsey
+BCG | bcg
+Bain | bain
+Elevation Capital | elevation
+Sequoia / Peak XV | peakxv
+Accel | accel
+Nexus Venture | nexus
+Lightspeed | lightspeed
+Blume | blume
+Matrix / Z47 | z47
+Stellaris | stellaris
+Titan Capital | titancapital
+Zomato | zomato
+Blinkit | blinkit
+Instamart | swiggy
+Country Delight | countrydelight
+Milk Basket | milkbasket
+FreshToHome | freshtohome
+Wakefit | wakefit
+Pepperfry | pepperfry
+Sleepy Owl | sleepyowl
+Bira 91 | bira91
+Sugar Cosmetics | sugar
+Minimalist | minimalist
+The Whole Truth | thewholetruth
+Atomberg | atomberg
+Noise | noise
+Zivame | zivame
+Clovia | clovia
+Bewakoof | bewakoof
+Snitch | snitch
+Zepto | zeptonow

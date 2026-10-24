@@ -10,6 +10,7 @@ import { shots } from "./routes/shots.js";
 import { payments } from "./routes/payments.js";
 import { preview } from "./routes/preview.js";
 import { check } from "./routes/check.js";
+import { admin } from "./routes/admin.js";
 import { snapshotDue } from "./engine/ghost/index.js";
 
 const app = new Hono();
@@ -32,6 +33,7 @@ app.route("/shots", shots);
 app.route("/payments", payments);
 app.route("/preview", preview);
 app.route("/check", check);
+app.route("/admin", admin);
 
 app.onError((err, c) => {
   const status = (err as { status?: number }).status ?? 500;
@@ -41,5 +43,11 @@ app.onError((err, c) => {
 
 serve({ fetch: app.fetch, port: env.port }, () => console.log(`notaghost-api on :${env.port}`));
 
+// the reader: every 6h read stale company feeds, score new postings, re-check due ones
+import { readCity, scoreUnscored } from "./jobs/reader.js";
+setInterval(async () => {
+  try { const r = await readCity({ limit: 150, onlyStale: true }); console.log("[reader]", JSON.stringify(r)); const n = await scoreUnscored(60); console.log("[score]", n); }
+  catch (e) { console.error("[reader]", e); }
+}, 6 * 3600e3);
 // daily snapshot of every posting we know (signal 21); runs every 6h, re-checks what is due
 setInterval(() => snapshotDue(200).then((n) => n && console.log(`[snapshot] rechecked ${n}`)).catch((e) => console.error("[snapshot]", e)), 6 * 3600e3);
