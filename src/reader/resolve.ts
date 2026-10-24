@@ -108,7 +108,8 @@ export async function resolveEmployer(e: { key: string; name: string; website: s
 const withTimeout = <T>(p: Promise<T>, ms: number, what: string) => Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`timeout after ${ms / 1000}s: ${what}`)), ms))]);
 
 export async function resolveBatch(limit = 20, concurrency = 6, onDone?: (key: string, r: Resolution) => Promise<void>, onProgress?: (name: string, r: Resolution | null, err?: string) => void) {
-  const { data } = await db.from("employers").select("key, name, website, careers_url, ats, ats_ref").is("resolved_at", null).order("created_at").limit(limit);
+  let { data } = await db.from("employers").select("key, name, website, careers_url, ats, ats_ref").is("resolved_at", null).order("priority").order("created_at").limit(limit);
+  if (!data) ({ data } = await db.from("employers").select("key, name, website, careers_url, ats, ats_ref").is("resolved_at", null).order("created_at").limit(limit)); // priority column not there yet
   const q = [...(data ?? [])]; const stats = { done: 0, found: 0, none: 0, errors: 0 };
   async function worker() {
     for (;;) {

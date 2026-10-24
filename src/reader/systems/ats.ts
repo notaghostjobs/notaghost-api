@@ -68,24 +68,48 @@ export const smartrecruiters: System = {
   },
 };
 
-/** Workday: ref is "tenant/wdN/site", always taken from a real URL — tenant names are not guessable. */
+/** Workday: ref is "tenant/wdN/site", always taken from a real URL — tenant names are not guessable.
+ *  Bengaluru-direct: the first call asks Workday for "Bengaluru" and reads its location facets; if a Bengaluru/India facet exists we
+ *  query by that facet (exact), else we fall back to the text search. We never crawl the global board. */
+const WD_BLR = /bengaluru|bangalore|karnataka/i;
 export const workday: System = {
   id: "workday",
   detect: (u) => { const m = u.match(/https?:\/\/([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com\/(?:[a-z]{2}-[a-z]{2}\/)?([^/?#]+)/i); return m ? `${m[1]}/${m[2]}/${m[3]}` : null; },
   async read(ref) {
     const [tenant, wd, site] = ref.split("/");
     const base = `https://${tenant}.${wd}.myworkdayjobs.com`;
-    const jobs: FeedJob[] = []; let total = 0;
-    for (let offset = 0; offset < 10000; offset += 20) {
-      const r = await getJson<any>(`${base}/wday/cxs/${tenant}/${site}/jobs`, { method: "POST", body: { appliedFacets: {}, limit: 20, offset, searchText: "" }, gapMs: 600 });
-      if (r.status === 404 || r.status === 400) return offset === 0 ? null : finish();
-      if (!r.ok || !r.data) throw new Error(`workday ${ref}: HTTP ${r.status}`);
-      total = r.data.total ?? total;
-      for (const x of r.data.jobPostings ?? []) jobs.push({ id: x.bulletFields?.[0] ?? x.externalPath, title: x.title ?? "", location: x.locationsText ?? "", url: `${base}/${site}${x.externalPath}`, posted_at: null, updated_at: null, posted_text: x.postedOn ?? null });
-      if ((r.data.jobPostings ?? []).length < 20 || jobs.length >= total) break;
+    const api = `${base}/wday/cxs/${tenant}/${site}/jobs`;
+    const diag: string[] = [];
+    const post = (body: unknown) => getJson<any>(api, { method: "POST", body, gapMs: 500, headers: { accept: "application/json", referer: `${base}/${site}` } });
+
+    // 1. probe with the text search; learn the location facets
+    const probe = await post({ appliedFacets: {}, limit: 20, offset: 0, searchText: "Bengaluru" });
+    if (probe.status === 404) return null;
+    if (!probe.ok || !probe.data) { diag.push(`probe HTTP ${probe.status}`); throw new Error(`workday ${ref}: HTTP ${probe.status}`); }
+    const facets: any[] = probe.data.facets ?? [];
+    let facetParam: string | null = null; const facetIds: string[] = [];
+    for (const f of facets) for (const v of (f.values ?? [])) {
+      const d = String(v.descriptor ?? ""); if (WD_BLR.test(d) && v.id) { facetParam ??= f.facetParameter; if (f.facetParameter === facetParam) facetIds.push(String(v.id)); }
     }
-    function finish(): Feed { return { system: "workday", ref, board_url: `${base}/${site}`, company_name: null, jobs }; }
-    return finish();
+    diag.push(`text-search total ${probe.data.total ?? "?"}`, facetParam ? `facet ${facetParam}: ${facetIds.length} Bengaluru values` : "no Bengaluru facet");
+
+    // 2. page through the exact facet query, or the text search if there is no facet
+    const body = (offset: number) => facetParam ? { appliedFacets: { [facetParam]: facetIds }, limit: 20, offset, searchText: "" } : { appliedFacets: {}, limit: 20, offset, searchText: "Bengaluru" };
+    const jobs: FeedJob[] = []; const seen = new Set<string>(); let total = 0;
+    for (let offset = 0; offset < 4000; offset += 20) {
+      const r = offset === 0 && !facetParam ? probe : await post(body(offset));
+      if (!r.ok || !r.data) { diag.push(`page@${offset} HTTP ${r.status}`); break; }
+      total = r.data.total ?? total;
+      const page: any[] = r.data.jobPostings ?? [];
+      for (const x of page) {
+        const id = String(x.bulletFields?.[0] ?? x.externalPath); if (seen.has(id)) continue; seen.add(id);
+        const loc = String(x.locationsText ?? "");
+        // under a Bengaluru-scoped query, "N Locations" means Bengaluru is one of them
+        jobs.push({ id, title: x.title ?? "", location: /^\d+ locations?$/i.test(loc) ? `${loc} (incl. Bengaluru)` : loc, url: `${base}/${site}${x.externalPath}`, posted_at: null, updated_at: null, posted_text: x.postedOn ?? null });
+      }
+      if (page.length < 20 || jobs.length >= total) { diag.push(`stopped@${offset + page.length} total ${total}`); break; }
+    }
+    return { system: "workday", ref, board_url: `${base}/${site}`, company_name: null, jobs, debug: diag.join("; ") };
   },
 };
 

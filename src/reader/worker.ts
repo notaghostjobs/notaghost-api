@@ -5,6 +5,7 @@ import { readDue, recordFeed } from "./read.js";
 import { harvestNaukri } from "./harvest/naukri.js";
 import { harvestSectors } from "./harvest/sectors.js";
 import { byId } from "./systems/index.js";
+import { isBlr } from "./blr.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), "[reader]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -16,11 +17,12 @@ async function status(doing: string, extra: Record<string, unknown> = {}) { busy
 
 /** Prove each reader against an employer we know uses that system. Stored for the admin page. */
 async function selfTest() {
-  const probes: [string, string][] = [["greenhouse", "razorpaysoftwareprivatelimited"], ["lever", "spotify"], ["lever", "netflix"], ["ashby", "ashby"], ["smartrecruiters", "BoschGroup"], ["workday", "walmart/wd5/WalmartExternal"], ["workday", "adobe/wd5/external_experienced"]];
+  const probes: [string, string][] = [["greenhouse", "razorpaysoftwareprivatelimited"], ["lever", "spotify"], ["ashby", "ashby"], ["smartrecruiters", "BoschGroup"],
+    ["workday", "adobe/wd5/external_experienced"], ["workday", "walmart/wd5/WalmartExternal"], ["workday", "infosys/wd103/InfosysCareers"], ["workday", "wipro/wd3/Wipro_Careers"], ["workday", "nvidia/wd5/NVIDIAExternalCareerSite"], ["workday", "salesforce/wd12/External_Career_Site"]];
   const out: Record<string, unknown>[] = [];
   for (const [sys, ref] of probes) {
     const t0 = Date.now();
-    try { const f = await byId(sys)!.read(ref); out.push({ system: sys, ref, ok: !!f && f.jobs.length > 0, jobs: f?.jobs.length ?? 0, company: f?.company_name ?? null, sample: f?.jobs[0] ? `${f.jobs[0].title} — ${f.jobs[0].location}` : null, ms: Date.now() - t0 }); }
+    try { const f = await byId(sys)!.read(ref); const blr = f ? f.jobs.filter((j) => isBlr(j.location)).length : 0; out.push({ system: sys, ref, ok: !!f && f.jobs.length > 0, jobs: f?.jobs.length ?? 0, blr, company: f?.company_name ?? null, sample: f?.jobs[0] ? `${f.jobs[0].title} — ${f.jobs[0].location}` : null, debug: f?.debug ?? null, ms: Date.now() - t0 }); }
     catch (e) { out.push({ system: sys, ref, ok: false, error: (e as Error).message, ms: Date.now() - t0 }); }
   }
   await setControl("selftest", { at: new Date().toISOString(), results: out });
@@ -72,9 +74,19 @@ async function daily() {
 
 const istHour = () => (new Date().getUTCHours() + 5.5) % 24;
 let lastDaily = "";
+let batches = 0;
+
+const BIG = ["IT services and outsourcing", "global capability centres (GCCs) of foreign companies", "US tech companies with Bengaluru engineering centres", "European and Japanese companies with Bengaluru centres", "large Indian conglomerates with Bengaluru operations", "banks and NBFCs", "consulting and professional services (big four, strategy)", "semiconductor and chip design", "networking, telecom and 5G", "unicorns and large startups", "e-commerce and marketplaces", "fintech and payments"];
+async function setPriorities() {
+  const { error } = await db.from("employers").update({ priority: 1 }).in("source", BIG.map((b) => `sector:${b.slice(0, 40)}`)).eq("priority", 5);
+  if (error) log("priority column missing? run 0007_priority.sql —", error.message);
+  // Workday employers already resolved were read with the old global crawl: read them again, Bengaluru-direct
+  await db.from("employers").update({ read_at: null }).eq("ats", "workday");
+}
 
 async function main() {
   log("worker up");
+  await setPriorities();
   await selfTest();
   await status("idle");
   for (;;) {
@@ -87,7 +99,7 @@ async function main() {
       if (istHour() >= 6 && istHour() < 7 && lastDaily !== today) { lastDaily = today; await daily(); await status("idle"); continue; }
       // 3. otherwise keep resolving whatever is unresolved, then keep feeds fresh
       const { count } = await db.from("employers").select("key", { count: "exact", head: true }).is("resolved_at", null);
-      if ((count ?? 0) > 0) { await runResolve(20); await status("idle", { unresolved: (count ?? 0) - 20 }); continue; }
+      if ((count ?? 0) > 0) { await runResolve(20); if (++batches % 3 === 0) await runRead(20); await status("idle", { unresolved: (count ?? 0) - 20 }); continue; }
       const r = await runRead(50); await status("idle");
       if (!r.employers) await sleep(30000);
     } catch (e) { log("loop error", (e as Error).message); await status("idle", { error: (e as Error).message }); await sleep(10000); }

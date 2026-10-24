@@ -16,6 +16,7 @@ export interface Feed {
   board_url: string;          // human page
   company_name: string | null;// the system's own name for the employer, when it tells us (used to catch wrong matches)
   jobs: FeedJob[];
+  debug?: string;             // how the read went (pages, totals) — shown in the self-test
 }
 
 export interface System {
