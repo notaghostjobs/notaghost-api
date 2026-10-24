@@ -76,8 +76,8 @@ export function matchResume(resume: ResumeProfile, posting: PostingProfile) {
     `You compare a candidate against a posting, requirement by requirement. For each requirement pick ONE bucket:
 - "said": the résumé states it with specifics — a bullet or line that shows the work (what, where, with what result).
 - "have_not_said": the résumé NAMES it but does not show it. Two kinds, and you must say which in evidence_kind:
-  "line" — a line describing the SAME activity in different words ("Negotiated annual terms with 40 suppliers" for "vendor negotiation"). Quote it verbatim.
-  "keyword" — only a competency or skills entry that names the SAME specific activity or tool ("Vendor Negotiations & Contracting", "Mixpanel"). Quote it.
+  "line" — a line a screener would accept as this requirement MET once it is reworded: same activity, same object, same scale class ("Negotiated annual terms with 40 suppliers" for "vendor negotiation"; "led a team of 25 across ops" is NOT "led 5+ category managers"). Quote it verbatim.
+  "keyword" — a competency or skills entry naming the SAME specific activity or tool ("Vendor Negotiations & Contracting", "Mixpanel"), or a line that is only ADJACENT or PARTIAL (right activity, different object or scale). Quote it. If you hesitate between line and keyword, it is keyword.
   Generic words are NOT a mention of a specific requirement: "Communication" is not "writes PRDs", "Data-Driven Decision Making" is not "runs experiments", "Leadership" is not "built a team of 5". Those are missing.
 - "missing": nothing in the résumé points to this specific requirement — no same-activity line, no same-activity keyword. Test: if asked "where does your résumé mention this?", the candidate could not point to a line that a screener would accept.
 Do not stretch across kinds of work: SAP enhancement delivery is not product management; building a dashboard is not category management. A missing must-have is useful information, not a failure.
@@ -121,13 +121,28 @@ export function verifyRewrite(original: ResumeProfile, rewrite: Rewrite) {
 }
 
 // ---------- orchestration ----------
-/** Re-bucket the matches against the REWRITE: which requirements does the sharpened text now say? */
-export function rescore(matches: Match[], rewrite: Rewrite) {
+/** Grade a résumé (original profile or rewrite) against the requirements the way a fair screener would. Same rubric for before and after. */
+export function grade(matches: Match[], doc: unknown, label: "ORIGINAL RÉSUMÉ" | "REWRITE") {
   return json<{ matches: Match[] }>(
-    `You grade a REWRITTEN résumé against a list of requirements, the way a screener would. For each requirement: "said" if the rewrite states it or a plain equivalent anywhere (summary, "relevant to this role" block, or a bullet) — e.g. "lead a team through 1:1s" satisfies "mentor engineers", "cryptocurrency transactions" satisfies "fintech experience", "cut turnaround 50%" satisfies "improve latency/reliability". "have_not_said" only if the underlying fact is present but a screener searching for the requirement would not connect it. "missing" if absent. Be fair: this grades what is written, not what could be stretched. Quote the line as evidence.`,
-    `REWRITE:\n${JSON.stringify({ headline: rewrite.headline, summary: rewrite.summary, relevant: rewrite.relevant, roles: rewrite.roles, skills: rewrite.skills, extra_sections: rewrite.extra_sections })}\n\nREQUIREMENTS:\n${JSON.stringify(matches.map((m) => ({ requirement: m.requirement, kind: m.kind, bucket_before: m.bucket })))}\n\nReturn: {matches:[{requirement, kind, bucket, evidence, suggestion}]}`,
+    `You grade a résumé against a list of requirements, the way a screener would. For each requirement: "said" if the text states it or a plain equivalent anywhere (headline, summary, a "relevant" block, a bullet, a skills entry) — e.g. "lead a team through 1:1s" satisfies "mentor engineers", "cryptocurrency transactions" satisfies "fintech experience", "cut turnaround 50%" satisfies "improve latency/reliability", "directly accountable for category P&L" satisfies "owned a category P&L". "have_not_said" only if the underlying fact is present but a screener searching for the requirement would not connect it. "missing" if absent. Be fair: this grades what is written, not what could be stretched. Quote the line as evidence.`,
+    `${label}:\n${JSON.stringify(doc)}\n\nREQUIREMENTS:\n${JSON.stringify(matches.map((m) => ({ requirement: m.requirement, kind: m.kind })))}\n\nReturn: {matches:[{requirement, kind, bucket, evidence, suggestion}]}`,
     4000, FAST
   );
+}
+/** Re-bucket the matches against the REWRITE: which requirements does the sharpened text now say? */
+export function rescore(matches: Match[], rewrite: Rewrite) {
+  return grade(matches, { headline: rewrite.headline, summary: rewrite.summary, relevant: rewrite.relevant, roles: rewrite.roles, skills: rewrite.skills, extra_sections: rewrite.extra_sections }, "REWRITE");
+}
+/** The before-picture: the matcher's requirements + evidence, with "said" decided by the same fair screener that grades the rewrite. */
+export async function matchAndGrade(resume: ResumeProfile, posting: PostingProfile) {
+  const { matches, fits } = await matchResume(resume, posting);
+  const { matches: graded } = await grade(matches, { headline: resume.headline, roles: resume.roles, skills: resume.skills, extra_sections: resume.extra_sections }, "ORIGINAL RÉSUMÉ");
+  const merged = matches.map((m) => {
+    const g = graded.find((x) => x.requirement === m.requirement);
+    if (g?.bucket === "said") return { ...m, bucket: "said" as const, evidence: g.evidence || m.evidence };
+    return m;
+  });
+  return { matches: merged, fits };
 }
 
 export async function runSharpen(resume: ResumeProfile, postingText: string, onStage?: (s: string) => void, pre?: { posting: PostingProfile; matches: Match[] }) {
@@ -138,7 +153,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   timing.posting = Date.now() - t0;
 
   t0 = t("Matching and writing");
-  const { matches } = pre ? { matches: pre.matches } : await matchResume(resume, posting);
+  const { matches } = pre ? { matches: pre.matches } : await matchAndGrade(resume, posting);
   const firstDraft = await rewriteResume(resume, posting, MODEL, matches);
   timing.write = Date.now() - t0;
   let rewrite = tidy(firstDraft);
