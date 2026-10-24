@@ -6,6 +6,7 @@ import { harvestNaukri } from "./harvest/naukri.js";
 import { harvestSectors } from "./harvest/sectors.js";
 import { byId } from "./systems/index.js";
 import { isBlr } from "./blr.js";
+import { seedTier1, checkTier1, type Tier1Row } from "./tier1.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), "[reader]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -50,6 +51,16 @@ async function runSectors(n: number) {
   log("sectors", JSON.stringify(r)); return r;
 }
 
+/** The twenty largest employers, one row each: system, Bengaluru openings, how. Stored as it goes so the page updates live. */
+async function runTier1() {
+  await status("tier1", { of: 20 });
+  await seedTier1();
+  const rows: Tier1Row[] = [];
+  const r = await checkTier1(async (row) => { rows.push(row); log("tier1", `${row.name} → ${row.ats ?? "?"} blr ${row.blr}/${row.jobs}${row.error ? " ERR " + row.error : ""}`); await setControl("tier1", { at: new Date().toISOString(), done: rows.length, rows }); void status("tier1", { done: rows.length, of: 20, last: `${row.name} → ${row.ats ?? "?"} (${row.blr} BLR)` }); });
+  await setControl("tier1", { at: new Date().toISOString(), done: r.length, rows: r });
+  return { companies: r.length, with_feed: r.filter((x) => x.ats && x.ats !== "none").length, blr: r.reduce((a, x) => a + x.blr, 0) };
+}
+
 /** One command from the admin page: {step, n}. */
 async function runCommand(cmd: { step: string; n?: number }) {
   const n = cmd.n ?? 0;
@@ -58,6 +69,7 @@ async function runCommand(cmd: { step: string; n?: number }) {
   if (cmd.step === "harvest") return runHarvest(n || 50);
   if (cmd.step === "sectors") return runSectors(n);
   if (cmd.step === "selftest") return selfTest();
+  if (cmd.step === "tier1") return runTier1();
   return { error: `unknown step ${cmd.step}` };
 }
 
@@ -88,6 +100,7 @@ async function main() {
   log("worker up");
   await setPriorities();
   await selfTest();
+  await runTier1().catch((e) => log("tier1", (e as Error).message));
   await status("idle");
   for (;;) {
     try {

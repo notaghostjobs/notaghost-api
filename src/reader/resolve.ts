@@ -6,6 +6,7 @@ import { research } from "../engine/ghost/research.js";
 import { getText } from "./http.js";
 import { detect, byId, SYSTEMS, type Feed } from "./systems/index.js";
 import { atsLinksIn, jsonLdJobs, harvestLinks } from "./systems/page.js";
+import { detectBigFromHtml } from "./systems/big.js";
 
 export interface Resolution { ats: string; ats_ref: string | null; careers_url: string | null; website: string | null; confidence: "link" | "page" | "search" | "guess" | "none"; evidence: string; feed?: Feed | null }
 
@@ -49,6 +50,9 @@ async function fromCareersPage(name: string, url: string): Promise<Resolution | 
     const f = await tryRef(name, d.system, d.ref);
     if (f) return { ats: d.system, ats_ref: d.ref, careers_url: url, website: null, confidence: "page", evidence: `careers page links to ${link}`, feed: f };
   }
+  // 1b. a big-company system recognised from the page itself (Phenom, Eightfold, Oracle)
+  const big = detectBigFromHtml(html, url);
+  if (big) { const f = await tryRef(name, big.system, big.ref); if (f) return { ats: big.system, ats_ref: big.ref, careers_url: url, website: null, confidence: "page", evidence: `careers page runs on ${big.system} (${big.ref})`, feed: f }; }
   // 2. structured job list on the page itself
   const ld = jsonLdJobs(html, url);
   if (ld.length) return { ats: "page", ats_ref: url, careers_url: url, website: null, confidence: "page", evidence: `JSON-LD list of ${ld.length} jobs`, feed: { system: "page", ref: url, board_url: url, company_name: null, jobs: ld } };
@@ -60,6 +64,8 @@ async function fromCareersPage(name: string, url: string): Promise<Resolution | 
       const f = await tryRef(name, d.system, d.ref);
       if (f) return { ats: d.system, ats_ref: d.ref, careers_url: url, website: null, confidence: "page", evidence: `rendered careers page links to ${link}`, feed: f };
     }
+    const big2 = detectBigFromHtml(harvested.html, url);
+    if (big2) { const f = await tryRef(name, big2.system, big2.ref); if (f) return { ats: big2.system, ats_ref: big2.ref, careers_url: url, website: null, confidence: "page", evidence: `rendered careers page runs on ${big2.system} (${big2.ref})`, feed: f }; }
     for (const j of harvested.jobs.slice(0, 5)) { const viaJob = await fromUrl(name, j.url); if (viaJob) return { ...viaJob, careers_url: url, evidence: `job link on careers page → ${viaJob.evidence}` }; }
     if (harvested.jobs.length >= 3) return { ats: "page", ats_ref: url, careers_url: url, website: null, confidence: "page", evidence: `${harvested.jobs.length} job links on the rendered page`, feed: { system: "page", ref: url, board_url: url, company_name: null, jobs: harvested.jobs } };
   } catch { /* browser failed */ }
