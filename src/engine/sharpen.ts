@@ -30,6 +30,7 @@ export interface Match {
   kind: "must" | "nice";
   bucket: "said" | "have_not_said" | "missing";
   evidence: string;               // quote from résumé, or "" if missing
+  evidence_kind?: "line" | "keyword"; // have_not_said only: a line of the same work, or just a skill/competency word
   suggestion: string;             // how to surface it, or what to do about the gap
 }
 
@@ -74,11 +75,14 @@ export function matchResume(resume: ResumeProfile, posting: PostingProfile) {
   return json<{ matches: Match[]; fits: string }>(
     `You compare a candidate against a posting, requirement by requirement. For each requirement pick ONE bucket:
 - "said": the résumé states it with specifics — a bullet or line that shows the work (what, where, with what result).
-- "have_not_said": the résumé NAMES it but does not show it — a competency or skills entry ("Vendor Negotiations & Contracting"), a summary phrase ("team building"), or a line of the SAME KIND of work in different words. Quote that line verbatim. This bucket means "has it, under-written", so the rewrite can state it properly.
-- "missing": nothing in the résumé points to it — no mention anywhere, no same-kind work. Test: if asked "where does your résumé mention this?", the candidate could not point to a line.
-Do not stretch across kinds of work ("built dashboards" → "category management" is a stretch, so missing). But do not demand proof either: a named competency or skill IS a mention, so it is have_not_said, never missing. A missing must-have is useful information, not a failure.
+- "have_not_said": the résumé NAMES it but does not show it. Two kinds, and you must say which in evidence_kind:
+  "line" — a line describing the SAME activity in different words ("Negotiated annual terms with 40 suppliers" for "vendor negotiation"). Quote it verbatim.
+  "keyword" — only a competency or skills entry that names the SAME specific activity or tool ("Vendor Negotiations & Contracting", "Mixpanel"). Quote it.
+  Generic words are NOT a mention of a specific requirement: "Communication" is not "writes PRDs", "Data-Driven Decision Making" is not "runs experiments", "Leadership" is not "built a team of 5". Those are missing.
+- "missing": nothing in the résumé points to this specific requirement — no same-activity line, no same-activity keyword. Test: if asked "where does your résumé mention this?", the candidate could not point to a line that a screener would accept.
+Do not stretch across kinds of work: SAP enhancement delivery is not product management; building a dashboard is not category management. A missing must-have is useful information, not a failure.
 Evidence must be a verbatim quote from the résumé. suggestion: for said/have_not_said, how to phrase it in the employer's words; for missing, one honest line (adjacent experience to mention, or "don't claim this").`,
-    `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nReturn: {matches:[{requirement, kind:"must"|"nice", bucket, evidence, suggestion}], fits}. fits = one plain sentence, under 18 words, naming the kind of role this résumé is actually built for (e.g. "Salesforce technical lead roles on enterprise CRM programmes"). Based on the résumé alone, not this posting.`,
+    `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nReturn: {matches:[{requirement, kind:"must"|"nice", bucket, evidence, evidence_kind, suggestion}], fits}. fits = one plain sentence, under 18 words, naming the kind of role this résumé is actually built for (e.g. "Salesforce technical lead roles on enterprise CRM programmes"). Based on the résumé alone, not this posting.`,
     6000
   );
 }

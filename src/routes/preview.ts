@@ -15,11 +15,11 @@ export function scores(matches: Match[]) {
   for (const m of matches) {
     const w = m.kind === "must" ? 2 : 1; tot += w;
     if (m.bucket === "said") { before += w; after += w; }
-    else if (m.bucket === "have_not_said") { before += w * 0.25; after += w; }
+    else if (m.bucket === "have_not_said") { before += w * 0.25; after += w * (m.evidence_kind === "keyword" ? 0.6 : 1); }
   }
   if (!tot) return { before: 0, after: 0 };
   // "after" assumes every hidden strength gets said; a missing requirement stays missing.
-  // Conservative: count only 80% of the hidden lift (not every hidden item survives the verifier), never promise 100 unless nothing is missing.
+  // Conservative: a keyword-only strength lifts less than a real line; count only 80% of the hidden lift (not every hidden item survives the verifier), never promise 100 unless nothing is missing.
   const b = before / tot, a = after / tot;
   const promised = b + (a - b) * 0.8;
   return { before: Math.round(b * 100), after: Math.min(Math.round(promised * 100), 96 + (matches.some((m) => m.bucket === "missing") ? 0 : 4)) };
