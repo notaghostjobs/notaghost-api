@@ -7,3 +7,7 @@ samples/batch/out/
 samples/batch/results.json
 samples/batch/run.log
 samples/kr/
+samples/batch/profiles.json
+samples/batch/v*/
+samples/batch/png/
+samples/batch/my_scores.json
