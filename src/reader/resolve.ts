@@ -66,12 +66,23 @@ async function fromCareersPage(name: string, url: string): Promise<Resolution | 
   return null;
 }
 
-/** Last resort for the systems whose slugs are the company name: exact slug only, never a partial word. */
+/** The board page's own <title> (e.g. "Swiggy - Jobs") so a slug guess on a name-keyed system can be checked against our name. */
+async function boardTitle(url: string): Promise<string | null> {
+  const r = await getText(url, { timeoutMs: 8000 }); if (!r.ok) return null;
+  const m = r.text.match(/<title[^>]*>([^<]{2,120})<\/title>/i); return m ? m[1].replace(/\s+/g, " ").trim() : null;
+}
+/** Cheap first: the systems whose slugs are usually the company name. Exact slug only, and the board must carry our name. */
 async function fromSlugGuess(name: string): Promise<Resolution | null> {
   const base = companyKey(name).replace(/\s+/g, ""); if (base.length < 4) return null;
-  for (const sys of ["greenhouse", "lever", "ashby"]) {
-    const f = await tryRef(name, sys, base);
-    if (f) return { ats: sys, ats_ref: base, careers_url: f.board_url, website: null, confidence: "guess", evidence: `slug "${base}" exists on ${sys} with ${f.jobs.length} jobs`, feed: f };
+  const probes = await Promise.all((["greenhouse", "lever", "ashby"] as const).map(async (sys) => ({ sys, f: await tryRef(name, sys, base) })));
+  for (const { sys, f } of probes) {
+    if (!f) continue;
+    if (!f.company_name) { // lever/ashby do not say whose board it is: read the board page title and insist our name is in it
+      const t = await boardTitle(f.board_url);
+      if (!t || !sameCompany(name, t)) continue;
+      return { ats: sys, ats_ref: base, careers_url: f.board_url, website: null, confidence: "guess", evidence: `slug "${base}" on ${sys}, board title "${t}", ${f.jobs.length} jobs`, feed: f };
+    }
+    return { ats: sys, ats_ref: base, careers_url: f.board_url, website: null, confidence: "guess", evidence: `slug "${base}" on ${sys} (${f.company_name}), ${f.jobs.length} jobs`, feed: f };
   }
   return null;
 }
@@ -81,20 +92,20 @@ export async function resolveEmployer(e: { key: string; name: string; website: s
   // 0. hints we hold (seed "greenhouse:slug", or a careers URL)
   if (e.ats && e.ats_ref && e.ats !== "none" && e.ats !== "page") { const f = await tryRef(e.name, e.ats, e.ats_ref); if (f) return { ats: e.ats, ats_ref: e.ats_ref, careers_url: f.board_url, website: e.website, confidence: "link", evidence: "known ref re-read", feed: f }; }
   if (e.careers_url) { const r = (await fromUrl(e.name, e.careers_url)) ?? (await fromCareersPage(e.name, e.careers_url)); if (r) return { ...r, website: e.website }; }
-  // 1. find the careers page
+  // 1. cheap: exact slug on the name-keyed systems (1 second, name-checked)
+  const g = await fromSlugGuess(e.name); if (g) return { ...g, website: e.website };
+  // 2. find the careers page by web search, then read it
   const found = await research.careersPage(e.name, e.website).catch(() => null);
   const website = found?.domain ?? e.website ?? null;
   if (found?.url) {
     const r = (await fromUrl(e.name, found.url)) ?? (await fromCareersPage(e.name, found.url));
     if (r) return { ...r, website, confidence: r.confidence === "link" ? "search" : r.confidence, evidence: `search → ${found.url}; ${r.evidence}` };
   }
-  // 2. slug guess on the name-keyed systems
-  const g = await fromSlugGuess(e.name); if (g) return { ...g, website };
   return { ats: "none", ats_ref: null, careers_url: found?.url ?? e.careers_url ?? null, website, confidence: "none", evidence: found?.url ? `careers page ${found.url} has no readable list` : "no careers page found" };
 }
 
 /** Resolve a batch of unresolved employers, `concurrency` at a time. Returns counts. */
-export async function resolveBatch(limit = 20, concurrency = 4, onDone?: (key: string, r: Resolution) => Promise<void>) {
+export async function resolveBatch(limit = 20, concurrency = 6, onDone?: (key: string, r: Resolution) => Promise<void>) {
   const { data } = await db.from("employers").select("key, name, website, careers_url, ats, ats_ref").is("resolved_at", null).order("created_at").limit(limit);
   const q = [...(data ?? [])]; const stats = { done: 0, found: 0, none: 0, errors: 0 };
   async function worker() {

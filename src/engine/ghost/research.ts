@@ -5,13 +5,13 @@ import { FAST, MODEL } from "../claude.js";
 
 const client = new Anthropic({ apiKey: env.anthropicKey });
 
-async function ask<T>(instructions: string, question: string, maxUses = 4, model = FAST): Promise<T | null> {
+async function ask<T>(instructions: string, question: string, maxUses = 4, model = FAST, effort: "low" | "medium" | "high" = "medium"): Promise<T | null> {
   const r = await client.messages.create({
-    model, max_tokens: 2500,
+    model, max_tokens: 2500, thinking: { type: "adaptive" }, output_config: { effort },
     system: instructions + "\n\nSearch the web as needed, then respond with a single JSON object and nothing else. Report only what the results say; use null when unknown. Today is " + new Date().toDateString() + ".",
-    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: maxUses } as any],
+    tools: [{ type: "web_search_20250305", name: "web_search", max_uses: maxUses }],
     messages: [{ role: "user", content: question }],
-  });
+  } as any);
   const text = r.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
   const a = text.lastIndexOf("{"), b = text.lastIndexOf("}");
   // the final JSON is usually the last object; find the outermost one that parses
@@ -49,6 +49,6 @@ export const research = {
   /** The company's official careers page URL and website domain */
   careersPage: (company: string, hintDomain: string | null) => ask<{ url: string | null; domain: string | null; ats_hint: string | null }>(
     `Find the OFFICIAL careers/jobs page of ONE company (its own domain, or its page on Greenhouse, Lever, Ashby, SmartRecruiters, Workday, Darwinbox, Keka). Not LinkedIn, not Naukri, not Glassdoor. Return the URL exactly as found.`,
-    `Company: ${company}${hintDomain ? `\nKnown domain: ${hintDomain}` : ""}\n\nReturn: {url, domain, ats_hint}`, 3),
+    `Company: ${company}${hintDomain ? `\nKnown domain: ${hintDomain}` : ""}\n\nReturn: {url, domain, ats_hint}`, 2, FAST, "low"),
 };
 export { MODEL };

@@ -53,8 +53,8 @@ export async function harvestLinks(url: string): Promise<{ jobs: FeedJob[]; html
   const b = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
   try {
     const p = await b.newPage({ userAgent: UA });
-    await p.goto(url, { waitUntil: "networkidle", timeout: 30000 }).catch(() => {});
-    await p.waitForTimeout(1500);
+    await p.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+    await p.waitForTimeout(2500);
     const html = await p.content();
     const links: { t: string; h: string }[] = await p.$$eval("a[href]", (as) => as.map((a) => ({ t: (a.textContent || "").replace(/\s+/g, " ").trim(), h: (a as HTMLAnchorElement).href })));
     const seen = new Set<string>(); const jobs: FeedJob[] = [];
