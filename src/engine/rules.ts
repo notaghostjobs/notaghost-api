@@ -75,8 +75,10 @@ export function tidy(r: Rewrite): Rewrite {
     ...r,
     headline: cap(clean(r.headline), 8),
     summary: clean(r.summary),
-    relevant: (r.relevant ?? []).slice(0, 4).map(clean),
-    roles: r.roles.map((ro) => ({ ...ro, bullets: ro.bullets.map(clean) })),
-    skills: (r.skills ?? []).slice(0, 14),
+    skills: (r.skills ?? []).map((x: unknown) => typeof x === "string" ? x : (x as { name?: string })?.name ?? String(x)).filter(Boolean).slice(0, 14),
+    relevant: (r.relevant ?? []).map((x: unknown) => typeof x === "string" ? x : String((x as any)?.text ?? (x as any)?.line ?? x)).slice(0, 4).map(clean),
+    roles: r.roles.map((ro) => ({ ...ro, bullets: ro.bullets.map((b: unknown) => clean(typeof b === "string" ? b : String((b as any)?.text ?? b))) })),
+    education: (r.education ?? []).map((e: any) => typeof e === "string" ? { school: e, degree: "", year: undefined } : e),
+    extra_sections: (r.extra_sections ?? []).map((x: any) => ({ title: String(x?.title ?? ""), items: (x?.items ?? []).map((i: unknown) => typeof i === "string" ? i : String((i as any)?.text ?? i)) })),
   };
 }
