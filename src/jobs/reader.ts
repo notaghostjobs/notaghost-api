@@ -33,8 +33,11 @@ export async function readCity(opts: { limit?: number; onlyStale?: boolean } = {
     stats.companies++;
     try {
       // discover (first time) or re-read
+      // skip companies we've already found have no readable feed, unless it's been a month
+      if ((c.ats === "none" || c.ats === "unknown") && c.ats_checked && Date.now() - new Date(c.ats_checked).getTime() < 30 * DAY) continue;
       const hintUrl = c.ats_slug?.startsWith("greenhouse:") ? `https://boards.greenhouse.io/${c.ats_slug.split(":")[1]}` : c.careers_url ?? null;
-      const ats = await findAts(c.name, hintUrl, null);
+      const hintSlug = c.ats_slug && !c.ats_slug.includes(":") ? c.ats_slug : null;
+      const ats = await findAts(c.name, hintUrl, null, hintSlug ? [hintSlug] : []);
       const now = new Date().toISOString();
       await db.from("companies").update({ ats: ats.system, ats_slug: ats.slug ?? c.ats_slug, careers_url: ats.careers_url ?? c.careers_url, ats_jobs: ats.jobs, ats_checked: now, openings: ats.jobs.length || null }).eq("key", c.key);
       if (!ats.jobs.length) continue;
@@ -80,3 +83,25 @@ export async function scoreUnscored(limit = 50) {
 }
 
 export type { AtsJob };
+
+let running = false;
+/** Kick a full read of every company in the background; returns immediately. */
+export function readAllInBackground() {
+  if (running) return { started: false, reason: "already running" };
+  running = true;
+  (async () => {
+    try {
+      let total = { companies: 0, postings: 0, new: 0 };
+      for (let i = 0; i < 10; i++) {
+        const r = await readCity({ limit: 25, onlyStale: true });
+        total = { companies: total.companies + r.companies, postings: total.postings + r.postings, new: total.new + r.new };
+        if (r.companies < 25) break;
+      }
+      console.log("[reader] full read", JSON.stringify(total));
+      const n = await scoreUnscored(200); console.log("[score]", n);
+    } catch (e) { console.error("[reader] background", e); }
+    finally { running = false; }
+  })();
+  return { started: true };
+}
+export const readerStatus = () => ({ running });

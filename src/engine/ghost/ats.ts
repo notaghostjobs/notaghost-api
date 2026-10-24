@@ -10,16 +10,16 @@ const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (
 const get = (u: string) => fetch(u, { headers: { "user-agent": UA, accept: "application/json,text/html" }, signal: AbortSignal.timeout(12000) });
 
 /** Guess slugs from the company name, probe each ATS, else find the careers page by search. */
-export async function findAts(company: string, applyUrl: string | null, hintDomain?: string | null): Promise<AtsResult> {
+export async function findAts(company: string, applyUrl: string | null, hintDomain?: string | null, extraSlugs: string[] = []): Promise<AtsResult> {
   // 0. the apply link itself may point into an ATS
   const fromLink = applyUrl ? await fromUrl(applyUrl) : null;
   if (fromLink) return fromLink;
 
   const base = companyKey(company).replace(/\s+/g, "");
-  const slugs = unique([base, companyKey(company).replace(/\s+/g, "-"), companyKey(company).split(" ")[0]]).filter((s) => s.length >= 3);
+  const slugs = unique([...extraSlugs, base, companyKey(company).replace(/\s+/g, "-"), companyKey(company).split(" ")[0]]).filter((s) => s && s.length >= 3);
 
   // 1. probe public ATS APIs in parallel (cheap, no auth)
-  const probes = slugs.flatMap((s) => [greenhouse(s), lever(s), ashby(s), smartrecruiters(s)]);
+  const probes = slugs.flatMap((s) => [greenhouse(s), lever(s), ashby(s), smartrecruiters(s), workday(s, "External"), workday(s, "Careers"), workday(s, `${s}careers`)]);
   const hits = (await Promise.allSettled(probes)).filter((p): p is PromiseFulfilledResult<AtsResult | null> => p.status === "fulfilled").map((p) => p.value).filter(Boolean) as AtsResult[];
   if (hits.length) return hits.sort((a, b) => b.jobs.length - a.jobs.length)[0];
 
