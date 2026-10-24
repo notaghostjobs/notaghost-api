@@ -50,7 +50,7 @@ preview.post("/", async (c) => {
 
   const posting = parsed ?? (await parsePosting(postingText));
   if (postingId && !parsed) await db.from("postings").update({ company: posting.company, title: posting.title, parsed: posting }).eq("id", postingId);
-  const { matches } = await matchResume(resume.parsed as ResumeProfile, posting);
+  const { matches, fits } = await matchResume(resume.parsed as ResumeProfile, posting);
   const s = scores(matches);
   // remember this exact match so the paid run scores against the same list the user saw
   const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting, matches, score_before: s.before, score_after: s.after }).select("id").single();
@@ -59,5 +59,5 @@ preview.post("/", async (c) => {
     ...matches.filter((m) => m.bucket === "have_not_said").slice(0, 2).map((m) => ({ tone: "ok", label: "You have it, you just didn’t say it", title: m.requirement, body: m.suggestion, evidence: m.evidence })),
     ...matches.filter((m) => m.bucket === "missing" && m.kind === "must").slice(0, 1).map((m) => ({ tone: "bad", label: "Genuinely missing", title: m.requirement, body: m.suggestion })),
   ].slice(0, 3);
-  return c.json({ preview_id: pv?.id ?? null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location }, score_before: s.before, score_after: s.after, reasons, matches });
+  return c.json({ preview_id: pv?.id ?? null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location }, score_before: s.before, score_after: s.after, reasons, matches, fits: fits ?? null });
 });
