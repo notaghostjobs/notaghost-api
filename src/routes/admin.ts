@@ -31,9 +31,10 @@ admin.post("/reader/run", async (c) => {
 /** The truth, in numbers. */
 admin.get("/reader/stats", async (c) => {
   const count = async (table: string, f: (q: any) => any) => { const { count } = await f(db.from(table).select("*", { count: "exact", head: true })); return count ?? 0; };
-  const [employers, unresolved, none, sightings, live, blr, ctl] = await Promise.all([
+  const [employers, unresolved, none, sightings, live, blr, enriched, ctl] = await Promise.all([
     count("employers", (q) => q), count("employers", (q) => q.is("resolved_at", null)), count("employers", (q) => q.eq("ats", "none")),
     count("sightings", (q) => q), count("sightings", (q) => q.is("gone_at", null)), count("sightings", (q) => q.is("gone_at", null).eq("blr", true)),
+    count("sightings", (q) => q.is("gone_at", null).eq("blr", true).not("description", "is", null)),
     db.from("reader_control").select("key, value, updated_at"),
   ]);
   // PostgREST caps a select at 1000 rows, so count per known value instead of fetching rows
@@ -46,7 +47,7 @@ admin.get("/reader/stats", async (c) => {
     ...SOURCES.map(async (src) => { const all = await count("sightings", (q) => q.eq("source", src).is("gone_at", null)); if (!all) return; const b = await count("sightings", (q) => q.eq("source", src).is("gone_at", null).eq("blr", true)); sources[src] = { all, blr: b }; }),
   ]);
   const control: Record<string, unknown> = {}; for (const r of ctl.data ?? []) control[r.key] = r.value;
-  return c.json({ employers: { total: employers, unresolved, resolved: employers - unresolved, with_feed: employers - unresolved - none, none, systems, confidence }, sightings: { total: sightings, live, blr, by_source: sources }, worker: control });
+  return c.json({ employers: { total: employers, unresolved, resolved: employers - unresolved, with_feed: employers - unresolved - none, none, systems, confidence }, sightings: { total: sightings, live, blr, enriched, by_source: sources }, worker: control });
 });
 
 /** Employers with what we decided and why; filter by system. */

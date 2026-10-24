@@ -8,6 +8,7 @@ import { byId } from "./systems/index.js";
 import { isBlr } from "./blr.js";
 import { seedTier1, checkTier1, type Tier1Row } from "./tier1.js";
 import { probeUrl } from "./probe.js";
+import { enrichDue } from "./enrich.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), "[reader]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -62,6 +63,8 @@ async function runTier1() {
   return { companies: r.length, with_feed: r.filter((x) => x.ats && x.ats !== "none").length, blr: r.reduce((a, x) => a + x.blr, 0) };
 }
 
+async function runEnrich(n: number) { await status("enrich", { batch: n }); const r = await enrichDue(n); log("enrich", JSON.stringify(r)); return r; }
+
 /** One command from the admin page: {step, n, url}. */
 async function runCommand(cmd: { step: string; n?: number; url?: string }) {
   if (cmd.step === "probe" && cmd.url) { await status("probe", { url: cmd.url }); const r = await probeUrl(cmd.url).catch((e) => ({ error: (e as Error).message })); await setControl("probe", r); return r; }
@@ -72,6 +75,7 @@ async function runCommand(cmd: { step: string; n?: number; url?: string }) {
   if (cmd.step === "sectors") return runSectors(n);
   if (cmd.step === "selftest") return selfTest();
   if (cmd.step === "tier1") return runTier1();
+  if (cmd.step === "enrich") return runEnrich(n || 60);
   return { error: `unknown step ${cmd.step}` };
 }
 
@@ -83,7 +87,9 @@ async function daily() {
   for (let i = 0; i < 400; i++) { const r = await runResolve(20); if (!r.done) break; resolved = { done: resolved.done + r.done, found: resolved.found + r.found, none: resolved.none + r.none, errors: resolved.errors + r.errors }; }
   let read = { employers: 0, jobs: 0, blr: 0, gone: 0, errors: 0 };
   for (let i = 0; i < 50; i++) { const r = await runRead(500); if (!r.employers) break; read = { employers: read.employers + r.employers, jobs: read.jobs + r.jobs, blr: read.blr + r.blr, gone: read.gone + r.gone, errors: read.errors + r.errors }; }
-  await setControl("last_daily", { at: new Date().toISOString(), minutes: Math.round((Date.now() - t0) / 60000), harvest: h, resolved, read });
+  let enriched = { tried: 0, ok: 0, failed: 0 };
+  for (let i = 0; i < 200; i++) { const e = await runEnrich(60); if (!e.tried) break; enriched = { tried: enriched.tried + e.tried, ok: enriched.ok + e.ok, failed: enriched.failed + e.failed }; }
+  await setControl("last_daily", { at: new Date().toISOString(), minutes: Math.round((Date.now() - t0) / 60000), harvest: h, resolved, read, enriched });
 }
 
 const istHour = () => (new Date().getUTCHours() + 5.5) % 24;
@@ -115,9 +121,9 @@ async function main() {
       if (istHour() >= 6 && istHour() < 7 && lastDaily !== today) { lastDaily = today; await daily(); await status("idle"); continue; }
       // 3. otherwise keep resolving whatever is unresolved, then keep feeds fresh
       const { count } = await db.from("employers").select("key", { count: "exact", head: true }).is("resolved_at", null);
-      if ((count ?? 0) > 0) { await runResolve(20); if (++batches % 3 === 0) await runRead(20); await status("idle", { unresolved: (count ?? 0) - 20 }); continue; }
-      const r = await runRead(50); await status("idle");
-      if (!r.employers) await sleep(30000);
+      if ((count ?? 0) > 0) { await runResolve(20); if (++batches % 3 === 0) await runRead(20); await runEnrich(30); await status("idle", { unresolved: (count ?? 0) - 20 }); continue; }
+      const r = await runRead(50); const e = await runEnrich(60); await status("idle");
+      if (!r.employers && !e.tried) await sleep(30000);
     } catch (e) { log("loop error", (e as Error).message); await status("idle", { error: (e as Error).message }); await sleep(10000); }
   }
 }
