@@ -56,8 +56,13 @@ async function fromCareersPage(name: string, url: string, website: string | null
   if (big) { const f = await tryRef(name, big.system, big.ref); if (f) return { ats: big.system, ats_ref: big.ref, careers_url: url, website: null, confidence: "page", evidence: `careers page runs on ${big.system} (${big.ref})`, feed: f }; }
   // 1c. ask the host itself: SuccessFactors? Phenom? Eightfold? (cheap requests; most large Indian employers are one of these)
   try {
-    const origin = new URL(url).origin;
-    if (isSuccessFactors(html) || /\/search\/\?q=/.test(html)) { const sf = await tryRef(name, "successfactors", origin); if (sf) return { ats: "successfactors", ats_ref: origin, careers_url: url, website: null, confidence: "page", evidence: `${origin} is a SuccessFactors site (${sf.jobs.length} Bengaluru jobs)`, feed: sf }; }
+    const u0 = new URL(url); const origin = u0.origin;
+    if (isSuccessFactors(html) || /\/search\/\?q=/.test(html) || /rmkcdn\.successfactors\.com/i.test(html)) {
+      // the SF career site is often on a sibling host (careers.x.com / jobs.x.com) of the marketing page that embeds it
+      const root = u0.host.replace(/^(www|careers|jobs|career)\./, "");
+      const candidates = [...new Set([origin, `https://careers.${root}`, `https://jobs.${root}`, `https://career.${root}`, ...[...html.matchAll(/https?:\/\/(?:careers?|jobs)\.[a-z0-9.-]+\.[a-z]{2,}/gi)].map((m) => m[0])])];
+      for (const cand of candidates) { const sf = await tryRef(name, "successfactors", cand); if (sf) return { ats: "successfactors", ats_ref: cand, careers_url: url, website: null, confidence: "page", evidence: `${cand} is a SuccessFactors site (${sf.jobs.length} Bengaluru jobs)`, feed: sf }; }
+    }
     const host = new URL(url).host;
     const pf = await probeBig(host, website);
     if (pf) return { ats: pf.system, ats_ref: pf.ref, careers_url: url, website: null, confidence: "page", evidence: `${host} answered as ${pf.system} (${pf.jobs.length} Bengaluru jobs)`, feed: pf };
