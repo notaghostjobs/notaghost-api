@@ -77,6 +77,7 @@ on.get("/reader/stats", async (c) => {
 on.get("/reader/employers", async (c) => {
   let q = db.from("employers").select("name, ats, ats_ref, confidence, evidence, careers_url, openings, blr_openings, read_error, resolve_error, source").order("blr_openings", { ascending: false, nullsFirst: false }).limit(Number(c.req.query("limit") ?? 200));
   if (c.req.query("ats")) q = q.eq("ats", c.req.query("ats")!);
+  if (c.req.query("q")) q = q.ilike("name", `%${c.req.query("q")}%`);
   const { data } = await q; return c.json(data ?? []);
 });
 
@@ -84,5 +85,6 @@ on.get("/reader/employers", async (c) => {
 on.get("/reader/sightings", async (c) => {
   let q = db.from("sightings").select("source, company_name, title, location, url, posted_at, posted_text, first_seen").is("gone_at", null).eq("blr", true).order("first_seen", { ascending: false }).limit(Number(c.req.query("limit") ?? 100));
   if (c.req.query("source")) q = q.eq("source", c.req.query("source")!);
+  if (c.req.query("q")) q = q.or(`company_name.ilike.%${c.req.query("q")}%,title.ilike.%${c.req.query("q")}%`);
   const { data } = await q; return c.json(data ?? []);
 });
