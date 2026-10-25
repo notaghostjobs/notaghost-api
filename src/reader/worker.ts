@@ -43,7 +43,7 @@ async function runResolve(n: number) {
     (name, res, err) => { resolvedThisRun++; const last = err ? `${name} → error: ${err.slice(0, 80)}` : `${name} → ${res!.ats}${res!.feed ? ` (${res!.feed.jobs.length} jobs)` : ""}`; log("resolved", last); void status("resolve", { batch: n, done_since_boot: resolvedThisRun, last }); });
   log("resolve", JSON.stringify(r)); return r;
 }
-async function runRead(n: number) { await status("read", { batch: n }); const r = await readDue(n); log("read", JSON.stringify(r)); return r; }
+async function runRead(n: number) { await status("read+enrich", { read_batch: n }); const r = await readDue(n); log("read", JSON.stringify(r)); return r; }
 async function runHarvest(maxPages: number) {
   await status("harvest", { source: "naukri", maxPages });
   const r = await harvestNaukri({ maxPages, onPage: (s) => { if (s.pages % 10 === 0) void status("harvest", { source: "naukri", ...s }); } });
@@ -68,7 +68,7 @@ async function runTier1() {
   return { companies: r.length, with_feed: r.filter((x) => x.ats && x.ats !== "none").length, blr: r.reduce((a, x) => a + x.blr, 0) };
 }
 
-async function runEnrich(n: number) { await status("enrich", { batch: n }); const r = await enrichDue(n); log("enrich", JSON.stringify(r)); return r; }
+async function runEnrich(n: number) { const r = await enrichDue(n); log("enrich", JSON.stringify(r)); return r; }
 
 /** One command from the admin page: {step, n, url}. */
 async function runCommand(cmd: { step: string; n?: number; url?: string }) {
@@ -164,7 +164,8 @@ async function main() {
       // 3. otherwise keep resolving whatever is unresolved, then keep feeds fresh
       const { count } = await db.from("employers").select("key", { count: "exact", head: true }).is("resolved_at", null);
       if ((count ?? 0) > 0) { await runResolve(20); if (++batches % 3 === 0) await runRead(20); await runEnrich(120); await status("idle", { unresolved: (count ?? 0) - 20 }); continue; }
-      const r = await runRead(50); const e = await runEnrich(300); await status("idle", { enrich: e });
+      // feed re-reads and page enrichment hit different servers: run them together so a slow feed never starves enrichment
+      const [r, e] = await Promise.all([runRead(50), runEnrich(300)]); await status("idle", { read: r, enrich: e });
       if (!r.employers && !e.tried) await sleep(30000);
     } catch (e) { log("loop error", (e as Error).message); await status("idle", { error: (e as Error).message }); await sleep(10000); }
   }
