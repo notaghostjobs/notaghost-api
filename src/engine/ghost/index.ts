@@ -17,7 +17,7 @@ export interface CheckResult extends Scored {
 }
 
 /** Check a link (or pasted text). Returns the stored score if it's current; computes and stores otherwise. */
-export async function ghostCheck(input: { url?: string; text?: string }, opts: { force?: boolean } = {}): Promise<CheckResult> {
+export async function ghostCheck(input: { url?: string; text?: string; page?: { title?: string; company?: string; location?: string; posted_text?: string; applicants?: number; apply_url?: string } }, opts: { force?: boolean } = {}): Promise<CheckResult> {
   const url = input.url ? (/^https?:\/\//i.test(input.url) ? input.url.trim() : `https://${input.url.trim()}`) : null;
   const key = url ? jobKey(url).key : `text:${fingerprint(input.text ?? "").slice(0, 24)}`;
 
@@ -32,7 +32,10 @@ export async function ghostCheck(input: { url?: string; text?: string }, opts: {
   }
 
   // 2. read the posting (facts layer A)
-  const raw = url ? await readPosting(url) : { text: input.text!, source: "pasted" as const };
+  // a URL with the page text already supplied (the extension) is read as-is; a bare URL is fetched; bare text is "pasted"
+  const raw = url && input.text && input.text.length >= 80
+    ? { text: input.text, source: jobKey(url).source, title: input.page?.title ?? null, company: input.page?.company ?? null, location: input.page?.location ?? null, posted_text: input.page?.posted_text ?? null, applicants: input.page?.applicants ?? null, apply_url: input.page?.apply_url ?? null, posted_days: daysFromText(input.page?.posted_text ?? null) }
+    : url ? await readPosting(url) : { text: input.text!, source: "pasted" as const };
   const a = await extractFacts(raw, url ?? "pasted");
   const facts: PostingFacts = { ...a, read_at: new Date().toISOString(), source: raw.source, url: url ?? "", job_key: key, description: raw.text.slice(0, 20000) };
   if (facts.posted_days == null && facts.posted_text) facts.posted_days = daysFromText(facts.posted_text);
