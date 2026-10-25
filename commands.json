@@ -120,6 +120,16 @@
 "id": "p3-microsoft",
 "step": "probe",
 "url": "https://jobs.careers.microsoft.com/global/en/search?lc=Bengaluru%2C%20Karnataka%2C%20India"
+},
+{
+"id": "p4-hcl-raw",
+"step": "probe",
+"url": "https://careers.hcltech.com/search/?q=&locationsearch=Bengaluru"
+},
+{
+"id": "p4-wipro-raw",
+"step": "probe",
+"url": "https://careers.wipro.com/search/?q=&locationsearch=Bengaluru"
 }
 ]
 }
