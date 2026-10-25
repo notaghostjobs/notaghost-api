@@ -61,7 +61,9 @@ async function runTier1() {
   await status("tier1", { of: 20 });
   await seedTier1();
   const rows: Tier1Row[] = [];
+  mode.progress = (line) => void status("tier1", { done: rows.length, of: 20, now: line });
   const r = await checkTier1(async (row) => { rows.push(row); log("tier1", `${row.name} → ${row.ats ?? "?"} blr ${row.blr}/${row.jobs}${row.error ? " ERR " + row.error : ""}`); await setControl("tier1", { at: new Date().toISOString(), done: rows.length, rows }); void status("tier1", { done: rows.length, of: 20, last: `${row.name} → ${row.ats ?? "?"} (${row.blr} BLR)` }); });
+  mode.progress = null;
   await setControl("tier1", { at: new Date().toISOString(), done: r.length, rows: r });
   return { companies: r.length, with_feed: r.filter((x) => x.ats && x.ats !== "none").length, blr: r.reduce((a, x) => a + x.blr, 0) };
 }

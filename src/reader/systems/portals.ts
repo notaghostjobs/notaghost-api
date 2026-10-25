@@ -1,6 +1,6 @@
 // Big employers whose own portals expose a JSON search. Each endpoint below was captured from the live page, 25 Oct 2026.
 import { getJson } from "../http.js";
-import { mode, type FeedJob, type System } from "./types.js";
+import { mode, progress, type FeedJob, type System } from "./types.js";
 
 const ts = (v: unknown) => { const n = Number(v); return n > 1e9 ? new Date((n > 1e12 ? n : n * 1000)).toISOString() : null; };
 
@@ -12,6 +12,7 @@ export const ibm: System = {
     const url = "https://www-api.ibm.com/search/api/v2"; const diag: string[] = [];
     const jobs: FeedJob[] = []; const seen = new Set<string>(); const size = 50; let total = 0;
     for (let from = 0; from < (mode.quick ? size * 2 : 3000); from += size) {
+      progress(`ibm from ${from}${total ? `/${total}` : ""}`);
       const body = { appId: "careers", scopes: ["careers2"], size, from, _source: ["url", "title", "description", "field_keyword_19", "field_keyword_18", "field_keyword_08", "dcdate"], query: { bool: { filter: [{ term: { field_keyword_19: "Bangalore, IN" } }] } }, sort: [{ dcdate: "desc" }] };
       const r = await getJson<any>(url, { method: "POST", body, gapMs: 600, timeoutMs: 20000, headers: { accept: "application/json", origin: "https://www.ibm.com", referer: "https://www.ibm.com/careers/search" } });
       if (!r.ok || !r.data?.hits) { diag.push(`@${from} HTTP ${r.status}`); break; }
@@ -37,6 +38,7 @@ export const microsoft: System = {
   async read() {
     const diag: string[] = []; const jobs: FeedJob[] = []; const seen = new Set<string>(); let count = 0;
     for (let start = 0; start < (mode.quick ? 20 : 2000); start += 10) {
+      progress(`microsoft from ${start}${count ? `/${count}` : ""}`);
       const r = await getJson<any>(`https://apply.careers.microsoft.com/api/pcsx/search?domain=microsoft.com&query=&location=Bengaluru&start=${start}&num=10&sort_by=timestamp`, { gapMs: 600, timeoutMs: 20000, headers: { accept: "application/json", referer: "https://apply.careers.microsoft.com/careers" } });
       if (!r.ok || !r.data?.data) { diag.push(`@${start} HTTP ${r.status}`); break; }
       count = Number(r.data.data.count ?? 0);

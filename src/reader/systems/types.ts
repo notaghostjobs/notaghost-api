@@ -28,4 +28,6 @@ export interface System {
 }
 
 /** Self-test runs read a few pages only; a real read goes to the end. Readers check `mode.quick`. */
-export const mode = { quick: false };
+export const mode: { quick: boolean; progress: ((line: string) => void) | null } = { quick: false, progress: null };
+/** Readers call this every few pages; the worker shows it on the status line. */
+export const progress = (line: string) => { try { mode.progress?.(line); } catch { /* never let reporting break a read */ } };

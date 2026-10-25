@@ -1,6 +1,6 @@
 // The hiring systems with public JSON feeds. Each reader is exact: it returns what the system says, or null if the ref does not exist.
 import { getJson } from "../http.js";
-import type { Feed, FeedJob, System } from "./types.js";
+import { progress, type Feed, type FeedJob, type System } from "./types.js";
 
 const iso = (v: unknown): string | null => {
   if (!v) return null;
@@ -120,6 +120,7 @@ export const workday: System = {
       const page = async (applied: Record<string, string[]>) => {
         let maxTotal = 0, got = 0;
         for (let offset = 0; offset < 2000; offset += 20) {
+          if (offset % 200 === 0) progress(`workday ${ref} offset ${offset}${maxTotal ? `/${maxTotal}` : ""}, ${jobs.length} read`);
           const r = await post({ appliedFacets: applied, limit: 20, offset, searchText: "" });
           if (!r.ok || !r.data) { diag.push(`@${offset} HTTP ${r.status}`); break; }
           const t = Number(r.data.total ?? 0); if (t > maxTotal) maxTotal = t;

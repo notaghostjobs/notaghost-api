@@ -2,7 +2,7 @@
 // Public HTML search with a location box and 25 rows per page: /search/?q=&locationsearch=Bengaluru&startrow=N
 // Each row carries title, link, location and date. Bengaluru-direct by construction.
 import { getText, getJson } from "../http.js";
-import { mode, type Feed, type FeedJob, type System } from "./types.js";
+import { mode, progress, type Feed, type FeedJob, type System } from "./types.js";
 
 /** The script-loaded theme's endpoint: POST /services/recruiting/v1/jobs, 10 rows a page.
  *  Wipro honours the location box (location: "Bengaluru" → 1,829). HCLTech ignores it, but takes a country facet
@@ -26,9 +26,13 @@ async function readApi(origin: string, diag: string[]): Promise<FeedJob[] | null
   }
   const jobs: FeedJob[] = []; const seen = new Set<string>();
   const pages = Math.min(Math.ceil(expect / 10), mode.quick ? (filter ? 15 : 5) : 1400);
-  let empty = 0;
+  let empty = 0; let slow = 0; const t0 = Date.now(); const budgetMs = 25 * 60000;
   for (let p = 0; p < pages; p++) {
+    if (Date.now() - t0 > budgetMs) { diag.push(`stopped at page ${p}/${pages}: 25 min budget`); break; }
+    if (p % 10 === 0) progress(`${origin.replace(/^https?:\/\//, "")} page ${p}/${pages}, ${jobs.length} Bengaluru so far${slow ? `, ${slow} slow/failed pages` : ""}`);
+    const t1 = Date.now();
     const r = p === 0 && !filter ? probe : await call({ ...q, pageNumber: p });
+    if (!r.ok || Date.now() - t1 > 4000) slow++;
     const rows: any[] = r.data?.jobSearchResult ?? [];
     if (!r.ok || rows.length === 0) { if (++empty >= 3) { diag.push(`stopped at page ${p} (empty)`); break; } continue; }
     for (const x of rows) {
