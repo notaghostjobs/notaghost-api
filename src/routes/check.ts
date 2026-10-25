@@ -17,8 +17,11 @@ check.post("/", async (c) => {
     return c.json(r);
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
+    const msg = (e as Error).message ?? "";
+    // a failure of OUR service (model credits, rate limit, outage) is never shown as the user's fault, and never verbatim
+    if (/credit balance|rate_limit|overloaded|invalid_request_error|authentication_error|api_error/i.test(msg)) { console.error("[check] upstream", msg.slice(0, 300)); return c.json({ error: "Checks are paused for a moment — please try again shortly." }, 503); }
     if (status >= 500) console.error("[check]", e);
-    return c.json({ error: status >= 500 ? "Couldn’t check that link right now. Paste the posting text instead." : (e as Error).message }, status as 400);
+    return c.json({ error: status >= 500 ? "Couldn’t check that link right now. Paste the posting text instead." : msg }, status as 400);
   }
 });
 
