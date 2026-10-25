@@ -51,8 +51,8 @@ on.get("/reader/stats", async (c) => {
     db.from("reader_control").select("key, value, updated_at"),
   ]);
   // PostgREST caps a select at 1000 rows, so count per known value instead of fetching rows
-  const SYSTEMS = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "keka", "darwinbox", "page", "none"];
-  const SOURCES = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "keka", "darwinbox", "page", "naukri", "linkedin"];
+  const SYSTEMS = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "successfactors", "amazon", "google", "ibm", "microsoft", "goldman", "eightfold", "phenom", "oracle", "keka", "darwinbox", "page", "none"];
+  const SOURCES = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday", "successfactors", "amazon", "google", "ibm", "microsoft", "goldman", "eightfold", "phenom", "oracle", "keka", "darwinbox", "page", "naukri", "linkedin"];
   const systems: Record<string, number> = {}, confidence: Record<string, number> = {}, sources: Record<string, { all: number; blr: number }> = {};
   await Promise.all([
     ...SYSTEMS.map(async (sys) => { const n = await count("employers", (q) => q.eq("ats", sys)); if (n) systems[sys] = n; }),

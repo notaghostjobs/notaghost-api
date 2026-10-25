@@ -26,3 +26,6 @@ export interface System {
   /** Read the whole feed. Throws only on network failure; returns null when the ref does not exist. */
   read(ref: string): Promise<Feed | null>;
 }
+
+/** Self-test runs read a few pages only; a real read goes to the end. Readers check `mode.quick`. */
+export const mode = { quick: false };

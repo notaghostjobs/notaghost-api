@@ -108,8 +108,10 @@ export const workday: System = {
       }
     };
     // 1. probe: learn the facets (an empty search returns the full facet tree)
-    const probe = await post({ appliedFacets: {}, limit: 20, offset: 0, searchText: "" });
+    let probe = await post({ appliedFacets: {}, limit: 20, offset: 0, searchText: "" });
     if (probe.status === 404) return null;
+    // some tenants (Walmart, Wipro) answer 422 to an empty search; a worded search still returns the facet tree
+    if (probe.status === 422 || probe.status === 400) { diag.push(`empty search HTTP ${probe.status}, probing with a word`); probe = await post({ appliedFacets: {}, limit: 20, offset: 0, searchText: "Bengaluru" }); }
     if (!probe.ok || !probe.data) throw new Error(`workday ${ref}: HTTP ${probe.status}`);
     const fac = blrFacets(probe.data.facets ?? []);
     diag.push(`board total ${probe.data.total ?? "?"}`, fac ? `facet ${fac.param} → ${fac.ids.length} Bengaluru value(s)` : "no Bengaluru facet");
@@ -138,8 +140,9 @@ export const workday: System = {
         if (sliceBy) { let n = 0; for (const id of sliceBy.ids) { await page({ [fac.param]: fac.ids, [sliceBy.param]: [id] }); n++; } diag.push(`sliced by ${sliceBy.param} (${n} values) → ${jobs.length}`); }
         else diag.push("capped at 2000, no facet to slice by");
       }
-    } else {
-      // 3. fallback: text search, both spellings
+    }
+    if (!fac || jobs.length === 0) {
+      // 3. fallback: text search, both spellings (also when the facet query was refused)
       for (const term of ["Bengaluru", "Bangalore"]) {
         let maxTotal = 0, got = 0;
         for (let offset = 0; offset < 4000; offset += 20) {

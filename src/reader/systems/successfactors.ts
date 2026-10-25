@@ -1,8 +1,53 @@
 // SAP SuccessFactors "Career Site Builder" sites: jobs.sap.com, jobs.siemens.com, jobs.ericsson.com, careers.ltimindtree.com, ...
 // Public HTML search with a location box and 25 rows per page: /search/?q=&locationsearch=Bengaluru&startrow=N
 // Each row carries title, link, location and date. Bengaluru-direct by construction.
-import { getText } from "../http.js";
-import type { Feed, FeedJob, System } from "./types.js";
+import { getText, getJson } from "../http.js";
+import { mode, type Feed, type FeedJob, type System } from "./types.js";
+import { isBlr } from "../blr.js";
+
+/** The script-loaded theme's endpoint: POST /services/recruiting/v1/jobs, 10 rows a page.
+ *  Wipro honours the location box (location: "Bengaluru" → 1,829). HCLTech ignores it, but takes a country facet
+ *  (custCountryRegion: India → 12,388) and tags each row with its city, so we page the country and keep Bengaluru rows.
+ *  Returns null when the host has no such endpoint. */
+async function readApi(origin: string, diag: string[]): Promise<FeedJob[] | null> {
+  const url = `${origin}/services/recruiting/v1/jobs`;
+  const call = (o: Record<string, unknown>) => getJson<any>(url, { method: "POST", gapMs: 450, timeoutMs: 20000, headers: { accept: "application/json", referer: `${origin}/search/` },
+    body: { locale: "en_US", pageNumber: 0, sortBy: "", keywords: "", location: "", facetFilters: {}, brand: "", skills: [], categoryId: 0, alertId: "", rcmCandidateId: "", ...o } });
+  const probe = await call({ location: "Bengaluru" });
+  if (!probe.ok || !probe.data || typeof probe.data.totalJobs === "undefined") return null;
+  const total = Number(probe.data.totalJobs ?? 0);
+  // which query to page: the location box when it works, else the India facet (then filter rows by city)
+  let q: Record<string, unknown>; let expect: number; let filter = false;
+  if (total > 0) { q = { location: "Bengaluru" }; expect = total; diag.push(`api location=Bengaluru: ${total}`); }
+  else {
+    const india = await call({ facetFilters: { custCountryRegion: ["India"] } });
+    const t2 = Number(india.data?.totalJobs ?? 0);
+    if (!india.ok || t2 === 0) { diag.push("api: 0 for Bengaluru and no India facet"); return []; }
+    q = { facetFilters: { custCountryRegion: ["India"] } }; expect = t2; filter = true; diag.push(`api facet India: ${t2}, filtering rows by city`);
+  }
+  const jobs: FeedJob[] = []; const seen = new Set<string>();
+  const pages = Math.min(Math.ceil(expect / 10), mode.quick ? (filter ? 15 : 5) : 1400);
+  let empty = 0;
+  for (let p = 0; p < pages; p++) {
+    const r = p === 0 && !filter ? probe : await call({ ...q, pageNumber: p });
+    const rows: any[] = r.data?.jobSearchResult ?? [];
+    if (!r.ok || rows.length === 0) { if (++empty >= 3) { diag.push(`stopped at page ${p} (empty)`); break; } continue; }
+    for (const x of rows) {
+      const j = x?.response ?? x; const id = String(j?.id ?? ""); if (!id || seen.has(id)) continue;
+      const city = String(j.custprimecity ?? "").trim();
+      const short = (Array.isArray(j.jobLocationShort) ? j.jobLocationShort : [j.jobLocationShort]).filter(Boolean).map((s: unknown) => String(s).replace(/<[^>]+>/g, " ").trim()).join(" | ");
+      const state = [j.jobLocationState, j.jobLocationCountry].flat().filter(Boolean).join(", ");
+      const location = short || [city, state || (Array.isArray(j.custCountryRegion) ? j.custCountryRegion.join(", ") : j.custCountryRegion)].filter(Boolean).join(", ");
+      if (filter && !isBlr(location)) continue;
+      seen.add(id);
+      const d = String(j.unifiedStandardStart ?? ""); const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+      const posted = m ? new Date(Date.UTC(m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]), Number(m[1]) - 1, Number(m[2]))).toISOString() : null;
+      jobs.push({ id, title: String(j.unifiedStandardTitle ?? j.urlTitle ?? "").replace(/&amp;/g, "&"), location, url: `${origin}/job/${j.urlTitle ?? j.unifiedUrlTitle ?? id}/${id}/`, posted_at: posted, updated_at: null, posted_text: d || null });
+    }
+  }
+  diag.push(`api read ${jobs.length} of ${expect} rows${filter ? " (India, Bengaluru kept)" : ""}${mode.quick ? ", quick" : ""}`);
+  return jobs;
+}
 
 const ROW = /<tr[^>]*class="[^"]*data-row[^"]*"[\s\S]*?<\/tr>/gi;
 const strip = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&rsquo;/g, "'").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
@@ -45,21 +90,10 @@ export const successfactors: System = {
   detect: (u) => { const m = u.match(/^(https?:\/\/[a-z0-9.-]+)\/(?:search\/|job\/[^/]+\/\d+|go\/|content\/)/i); return m && /jobs\.|careers?\./i.test(m[1]) ? m[1] : null; },
   async read(origin) {
     const jobs: FeedJob[] = []; const seen = new Set<string>(); const diag: string[] = [];
-    // newer theme: results come from /search-results (fragment/JSON) with the same query params
-    for (const loc of ["Bengaluru", "Bangalore"]) {
-      let got = 0;
-      for (let start = 0; start < 2500; start += 25) {
-        const r = await getText(`${origin}/search-results?q=&locationsearch=${encodeURIComponent(loc)}&startrow=${start}`, { timeoutMs: 20000, gapMs: 700, headers: { accept: "text/html, application/json, */*", "x-requested-with": "XMLHttpRequest", referer: `${origin}/search/?q=&locationsearch=${encodeURIComponent(loc)}` } });
-        if (!r.ok) break;
-        const body = r.text.startsWith("{") ? (() => { try { const j = JSON.parse(r.text); return String(j.html ?? j.results ?? j.data ?? r.text); } catch { return r.text; } })() : r.text;
-        const rows = parseRows(body, origin);
-        let fresh = 0; for (const j of rows) if (!seen.has(j.id)) { seen.add(j.id); jobs.push(j); fresh++; }
-        got += rows.length;
-        if (rows.length < 10 || fresh === 0) break;
-      }
-      if (got) diag.push(`${loc} via search-results: ${got}`);
-    }
-    if (jobs.length) return { system: "successfactors", ref: origin, board_url: `${origin}/search/?q=&locationsearch=Bengaluru`, company_name: null, jobs, debug: diag.join("; ") };
+    // 1. newer theme (HCLTech, Wipro): the list is fetched by script from a JSON endpoint on the same host
+    const api = await readApi(origin, diag);
+    if (api) return { system: "successfactors", ref: origin, board_url: `${origin}/search/?q=&locationsearch=Bengaluru`, company_name: null, jobs: api, debug: diag.join("; ") };
+    // 2. classic theme: server-rendered rows
     for (const loc of ["Bengaluru", "Bangalore"]) {
       let got = 0;
       for (let start = 0; start < 2500; start += 25) {

@@ -5,6 +5,7 @@ import { readDue, recordFeed } from "./read.js";
 import { harvestNaukri } from "./harvest/naukri.js";
 import { harvestSectors } from "./harvest/sectors.js";
 import { byId } from "./systems/index.js";
+import { mode } from "./systems/types.js";
 import { isBlr } from "./blr.js";
 import { seedTier1, checkTier1, type Tier1Row } from "./tier1.js";
 import { probeUrl } from "./probe.js";
@@ -22,13 +23,14 @@ async function status(doing: string, extra: Record<string, unknown> = {}) { busy
 /** Prove each reader against an employer we know uses that system. Stored for the admin page. */
 async function selfTest() {
   const probes: [string, string][] = [["greenhouse", "razorpaysoftwareprivatelimited"], ["lever", "spotify"], ["ashby", "ashby"], ["smartrecruiters", "BoschGroup"],
-    ["successfactors", "https://careers.hcltech.com"], ["hcltech", "hcltech"], ["wipro", "wipro"], ["google", "google"], ["goldman", "goldman"], ["ibm", "ibm"], ["microsoft", "microsoft"], ["flipkart", "flipkart"], ["workday", "adobe/wd5/external_experienced"], ["workday", "walmart/wd5/WalmartExternal"], ["workday", "infosys/wd103/InfosysCareers"], ["workday", "wipro/wd3/Wipro_Careers"], ["workday", "nvidia/wd5/NVIDIAExternalCareerSite"], ["workday", "salesforce/wd12/External_Career_Site"]];
+    ["successfactors", "https://careers.hcltech.com"], ["successfactors", "https://careers.wipro.com"], ["google", "google"], ["goldman", "goldman"], ["ibm", "ibm"], ["microsoft", "microsoft"], ["workday", "adobe/wd5/external_experienced"], ["workday", "walmart/wd5/WalmartExternal"], ["workday", "infosys/wd103/InfosysCareers"], ["workday", "wipro/wd3/Wipro_Careers"], ["workday", "nvidia/wd5/NVIDIAExternalCareerSite"], ["workday", "salesforce/wd12/External_Career_Site"]];
   const out: Record<string, unknown>[] = [];
-  for (const [sys, ref] of probes) {
+  mode.quick = true; // a few pages per reader: enough to prove it reads, not the whole board
+  try { for (const [sys, ref] of probes) {
     const t0 = Date.now();
     try { const f = await byId(sys)!.read(ref); const blr = f ? f.jobs.filter((j) => isBlr(j.location)).length : 0; out.push({ system: sys, ref, ok: !!f && f.jobs.length > 0, jobs: f?.jobs.length ?? 0, blr, company: f?.company_name ?? null, sample: f?.jobs[0] ? `${f.jobs[0].title} — ${f.jobs[0].location}` : null, debug: f?.debug ?? null, ms: Date.now() - t0 }); }
     catch (e) { out.push({ system: sys, ref, ok: false, error: (e as Error).message, ms: Date.now() - t0 }); }
-  }
+  } } finally { mode.quick = false; }
   await setControl("selftest", { at: new Date().toISOString(), results: out });
   log("selftest", out.map((o) => `${o.system}:${o.ok ? o.jobs : "FAIL"}`).join(" "));
 }
