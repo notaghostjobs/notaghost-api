@@ -112,20 +112,36 @@ export const phenom: System = {
 export const oracle: System = {
   id: "oracle",
   detect: (u) => { const m = u.match(/^https?:\/\/([a-z0-9.-]+\.oraclecloud\.com)\/hcmUI\/CandidateExperience\/[a-z-]+\/sites\/(CX_\d+)/i); return m ? `${m[1]}/${m[2]}` : null; },
+  // Oracle Recruiting Cloud. The LOCATIONS facet is a tree: country → state → city. Selecting India lists its
+  // cities with ids; selecting Bengaluru's id gives the exact set (JPMC: 145 vs 10 by keyword). Keyword is the fallback.
   async read(ref) {
     const [host, site] = ref.split("/");
     const jobs: FeedJob[] = []; const diag: string[] = []; let total = 0;
-    for (const kw of ["Bengaluru", "Bangalore"]) {
-      for (let offset = 0; offset < 3000; offset += 100) {
-        const url = `https://${host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&expand=requisitionList.secondaryLocations&finder=findReqs;siteNumber=${site},keyword=${encodeURIComponent(kw)},limit=100,offset=${offset},sortBy=POSTING_DATES_DESC`;
-        const r = await getJson<any>(url, { headers: { ...BROWSERISH, "ora-irc-language": "en" }, gapMs: 700 });
-        if (!r.ok || !r.data) { diag.push(`${kw}@${offset} HTTP ${r.status}`); break; }
+    const api = (finder: string, expand = "requisitionList.secondaryLocations") => getJson<any>(`https://${host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&expand=${expand}&finder=findReqs;siteNumber=${site},${finder}`, { headers: { ...BROWSERISH, "ora-irc-language": "en" }, gapMs: 700 });
+    const take = (list: any[]) => { for (const x of list) jobs.push({ id: String(x.Id), title: x.Title ?? "", location: [x.PrimaryLocation, ...(x.secondaryLocations ?? []).map((s: any) => s.Name)].filter(Boolean).join(" · "), url: `https://${host}/hcmUI/CandidateExperience/en/sites/${site}/job/${x.Id}`, posted_at: iso(x.PostedDate), updated_at: null, posted_text: null }); };
+    const page = async (finder: string, label: string) => {
+      let got = 0;
+      for (let offset = 0; offset < 5000; offset += 100) {
+        const r = await api(`${finder},limit=100,offset=${offset},sortBy=POSTING_DATES_DESC`);
+        if (!r.ok || !r.data) { diag.push(`${label}@${offset} HTTP ${r.status}`); break; }
         const item = r.data.items?.[0] ?? {}; total = item.TotalJobsCount ?? total; const list: any[] = item.requisitionList ?? [];
-        for (const x of list) jobs.push({ id: String(x.Id), title: x.Title ?? "", location: [x.PrimaryLocation, ...(x.secondaryLocations ?? []).map((s: any) => s.Name)].filter(Boolean).join(" · "), url: `https://${host}/hcmUI/CandidateExperience/en/sites/${site}/job/${x.Id}`, posted_at: iso(x.PostedDate), updated_at: null, posted_text: null });
+        got += list.length; take(list);
         if (list.length < 100 || offset + 100 >= total) break;
       }
-      diag.push(`${kw}: total ${total}`);
-    }
+      diag.push(`${label}: total ${total}, read ${got}`);
+    };
+    // 1. exact: the location facet
+    let exact = false;
+    const f0 = await api("facetsList=LOCATIONS,limit=1,offset=0", "requisitionList.secondaryLocations");
+    const india = (f0.data?.items?.[0]?.locationsFacet ?? []).find((v: any) => /^india$/i.test(String(v.Name ?? "")));
+    if (india?.Id) {
+      const f1 = await api(`facetsList=LOCATIONS,selectedLocationsFacet=${india.Id},limit=1,offset=0`);
+      const blr = (f1.data?.items?.[0]?.locationsFacet ?? []).filter((v: any) => /bengaluru|bangalore/i.test(String(v.Name ?? "")));
+      if (blr.length) { for (const b of blr) await page(`selectedLocationsFacet=${b.Id}`, `facet ${b.Name}`); exact = true; }
+      else diag.push(`India facet (${india.TotalCount}) lists no Bengaluru city`);
+    } else diag.push("no India in the location facet");
+    // 2. fallback: keyword search
+    if (!exact) for (const kw of ["Bengaluru", "Bangalore"]) await page(`keyword=${encodeURIComponent(kw)}`, `keyword ${kw}`);
     const seen = new Set<string>(); const uniq = jobs.filter((j) => !seen.has(j.id) && seen.add(j.id));
     return { system: "oracle", ref, board_url: `https://${host}/hcmUI/CandidateExperience/en/sites/${site}/requisitions?keyword=Bengaluru`, company_name: null, jobs: uniq, debug: diag.join("; ") };
   },

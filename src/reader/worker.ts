@@ -23,7 +23,7 @@ async function status(doing: string, extra: Record<string, unknown> = {}) { busy
 /** Prove each reader against an employer we know uses that system. Stored for the admin page. */
 async function selfTest() {
   const probes: [string, string][] = [["greenhouse", "razorpaysoftwareprivatelimited"], ["lever", "spotify"], ["ashby", "ashby"], ["smartrecruiters", "BoschGroup"],
-    ["successfactors", "https://careers.hcltech.com"], ["successfactors", "https://careers.wipro.com"], ["google", "google"], ["goldman", "goldman"], ["ibm", "ibm"], ["microsoft", "microsoft"], ["workday", "adobe/wd5/external_experienced"], ["workday", "walmart/wd5/WalmartExternal"], ["workday", "infosys/wd103/InfosysCareers"], ["workday", "wipro/wd3/Wipro_Careers"], ["workday", "nvidia/wd5/NVIDIAExternalCareerSite"], ["workday", "salesforce/wd12/External_Career_Site"]];
+    ["successfactors", "https://careers.hcltech.com"], ["successfactors", "https://careers.wipro.com"], ["google", "google"], ["goldman", "goldman"], ["ibm", "ibm"], ["microsoft", "microsoft"], ["oracle", "jpmc.fa.oraclecloud.com/CX_1001"], ["workday", "adobe/wd5/external_experienced"], ["workday", "walmart/wd5/WalmartExternal"], ["workday", "infosys/wd103/InfosysCareers"], ["workday", "wipro/wd3/Wipro_Careers"], ["workday", "nvidia/wd5/NVIDIAExternalCareerSite"], ["workday", "salesforce/wd12/External_Career_Site"]];
   const out: Record<string, unknown>[] = [];
   mode.quick = true; // a few pages per reader: enough to prove it reads, not the whole board
   try { for (const [sys, ref] of probes) {

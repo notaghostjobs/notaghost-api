@@ -108,7 +108,13 @@ async function fromSlugGuess(name: string): Promise<Resolution | null> {
   return null;
 }
 
-/** Resolve one employer. Order: a URL we already hold → web search for the careers page → read that page → slug guess → none. */
+/** Web research spend cap: this many careers-page searches per calendar day (≈ ₹2–3 each). */
+export const RESEARCH_PER_DAY = Number(process.env.RESEARCH_PER_DAY ?? 300);
+const researchBudget = { day: "", used: 0 };
+export function researchBudgetLeft() { const day = new Date().toISOString().slice(0, 10); if (researchBudget.day !== day) { researchBudget.day = day; researchBudget.used = 0; } return RESEARCH_PER_DAY - researchBudget.used; }
+function takeResearchBudget() { if (researchBudgetLeft() <= 0) return false; researchBudget.used++; return true; }
+
+/** Resolve one employer. Order: a URL we already hold → slug guess → the website's usual careers paths → (priority 0/1, within budget) web search → none. */
 export async function resolveEmployer(e: { key: string; name: string; website: string | null; careers_url: string | null; ats_ref: string | null; ats: string | null; priority?: number }): Promise<Resolution> {
   const render = (e.priority ?? 5) <= 1;
   // 0. hints we hold (seed "greenhouse:slug", or a careers URL)
@@ -116,8 +122,18 @@ export async function resolveEmployer(e: { key: string; name: string; website: s
   if (e.careers_url) { const r = (await fromUrl(e.name, e.careers_url)) ?? (await fromCareersPage(e.name, e.careers_url, e.website, render)); if (r) return { ...r, website: e.website }; }
   // 1. cheap: exact slug on the name-keyed systems (1 second, name-checked)
   const g = await fromSlugGuess(e.name); if (g) return { ...g, website: e.website };
-  // 2. find the careers page by web search, then read it
-  const found = await research.careersPage(e.name, e.website).catch(() => null);
+  // 2. free: the usual careers paths on the website we already hold
+  if (e.website) {
+    const origin = e.website.replace(/\/+$/, "");
+    for (const path of ["/careers", "/careers/", "/jobs", "/join-us", "/careers/jobs"]) {
+      const r = (await fromUrl(e.name, origin + path)) ?? (await fromCareersPage(e.name, origin + path, e.website, render && path === "/careers"));
+      if (r) return { ...r, website: e.website, evidence: `${origin}${path}; ${r.evidence}` };
+    }
+  }
+  // 3. paid: find the careers page by web search (Haiku + 2 searches ≈ ₹2–3). Only for priority 0/1 employers, within the daily budget.
+  const paid = (e.priority ?? 5) <= 1 && takeResearchBudget();
+  const found = paid ? await research.careersPage(e.name, e.website).catch(() => null) : null;
+  if (!paid) return { ats: "none", ats_ref: null, careers_url: e.careers_url ?? null, website: e.website ?? null, confidence: "none", evidence: (e.priority ?? 5) <= 1 ? "no careers page found; research budget for today used up" : "no careers page at the usual paths; web research not spent on priority 5" };
   const website = found?.domain ?? e.website ?? null;
   if (found?.url) {
     const r = (await fromUrl(e.name, found.url)) ?? (await fromCareersPage(e.name, found.url, website, render));
