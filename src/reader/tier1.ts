@@ -32,7 +32,7 @@ export async function seedTier1() {
   for (const t of TIER1) {
     const key = companyKey(t.name);
     const { data } = await db.from("employers").select("key, ats").eq("key", key).maybeSingle();
-    const direct: Record<string, [string, string]> = { "goldman sachs": ["goldman", "goldman"], "ibm": ["ibm", "ibm"], "flipkart": ["flipkart", "flipkart"], "microsoft": ["microsoft", "microsoft"], "google": ["google", "google"], "amazon": ["amazon", "amazon"] };
+    const direct: Record<string, [string, string]> = { "goldman sachs": ["goldman", "goldman"], "ibm": ["ibm", "ibm"], "flipkart": ["flipkart", "flipkart"], "microsoft": ["microsoft", "microsoft"], "google": ["google", "google"], "amazon": ["amazon", "amazon"], "hcltech": ["hcltech", "hcltech"], "wipro": ["wipro", "wipro"] };
     const d = direct[key];
     if (!data) await db.from("employers").insert({ key, name: t.name, website: t.website, careers_url: t.careers, source: "tier1", priority: 0, ...(d ? { ats: d[0], ats_ref: d[1], confidence: "link", evidence: "own reader", resolved_at: new Date().toISOString() } : {}) });
     else if (d) await db.from("employers").update({ careers_url: t.careers, website: t.website, priority: 0, ats: d[0], ats_ref: d[1], confidence: "link", evidence: "own reader", resolved_at: new Date().toISOString(), read_at: null }).eq("key", key);

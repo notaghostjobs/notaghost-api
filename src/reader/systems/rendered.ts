@@ -8,9 +8,11 @@ interface Spec { id: string; url: string; company: string; link: RegExp; idFrom:
 
 const SPECS: Spec[] = [
   { id: "goldman", company: "Goldman Sachs", url: "https://higher.gs.com/roles?LOCATION=Bengaluru", link: /higher\.gs\.com\/roles\/(\d+)/i, idFrom: /\/roles\/(\d+)/, next: "scroll", location: "Bengaluru" },
-  { id: "ibm", company: "IBM", url: "https://www.ibm.com/careers/search?field_keyword_18[0]=India&field_keyword_05[0]=Bangalore", link: /ibm\.com\/careers\/job\/(\d+)/i, idFrom: /\/job\/(\d+)/, next: "page", pageParam: "p", maxPages: 60, location: "Bangalore, India" },
-  { id: "flipkart", company: "Flipkart", url: "https://www.flipkartcareers.com/#!/joblist?location=Bangalore", link: /flipkartcareers\.com\/#!\/job-view\/([A-Za-z0-9_-]+)/i, idFrom: /job-view\/([A-Za-z0-9_-]+)/, next: "scroll", location: "Bangalore" },
-  { id: "microsoft", company: "Microsoft", url: "https://jobs.careers.microsoft.com/global/en/search?lc=Bengaluru%2C%20Karnataka%2C%20India&pgSz=20&o=Recent", link: /careers\.microsoft\.com\/global\/en\/job\/(\d+)/i, idFrom: /\/job\/(\d+)/, next: "page", pageParam: "pg", maxPages: 60, location: "Bengaluru, Karnataka, India" },
+  { id: "ibm", company: "IBM", url: "https://www.ibm.com/careers/search?field_keyword_18[0]=India&field_keyword_05[0]=Bangalore", link: /ibm\.com\/careers\/job\/|ibm\.com\/[a-z-]+\/careers\/job\//i, idFrom: /\/job\/([^/?#]+)/, next: "page", pageParam: "p", maxPages: 60, location: "Bangalore, India" },
+  { id: "flipkart", company: "Flipkart", url: "https://www.flipkartcareers.com/#!/joblist?location=Bangalore", link: /flipkartcareers\.com\/#!\/job-view\//i, idFrom: /job-view\/([^/?#]+)/, next: "scroll", location: "Bangalore" },
+  { id: "hcltech", company: "HCLTech", url: "https://careers.hcltech.com/search/?q=&locationsearch=Bengaluru", link: /careers\.hcltech\.com\/job\/[^/]+\/\d{4,}/i, idFrom: /\/(\d{4,})\/?$/, next: "page", pageParam: "startrow", maxPages: 80, location: "Bengaluru" },
+  { id: "wipro", company: "Wipro", url: "https://careers.wipro.com/search/?q=&locationsearch=Bengaluru", link: /careers\.wipro\.com\/job\/[^/]+\/\d{4,}/i, idFrom: /\/(\d{4,})\/?$/, next: "page", pageParam: "startrow", maxPages: 80, location: "Bengaluru" },
+  { id: "microsoft", company: "Microsoft", url: "https://jobs.careers.microsoft.com/global/en/search?lc=Bengaluru%2C%20Karnataka%2C%20India&pgSz=20&o=Recent", link: /careers\.microsoft\.com\/[a-z]+\/[a-z]+\/job\//i, idFrom: /\/job\/([^/?#]+)/, next: "page", pageParam: "pg", maxPages: 60, location: "Bengaluru, Karnataka, India" },
 ];
 
 function make(spec: Spec): System {

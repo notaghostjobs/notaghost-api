@@ -107,7 +107,7 @@ function renderOnce(url: string, link: RegExp, o: { next: "scroll" | "page"; pag
   return serial(async () => {
     const b = await getBrowser();
     const ctx = await b.newContext({ userAgent: UA, viewport: { width: 1280, height: 900 } });
-    const out = new Map<string, { h: string; t: string; loc: string }>(); const diag: string[] = [];
+    const out = new Map<string, { h: string; t: string; loc: string }>(); const diag: string[] = []; const sampled: string[] = [];
     try {
       const p = await ctx.newPage();
       await p.route("**/*", (route) => (/\.(png|jpe?g|gif|webp|svg|woff2?|ttf|mp4|css)(\?|$)/i.test(route.request().url()) ? route.abort() : route.continue()));
@@ -119,6 +119,7 @@ function renderOnce(url: string, link: RegExp, o: { next: "scroll" | "page"; pag
           return { h: (a as HTMLAnchorElement).href, t: (a.textContent || "").replace(/\s+/g, " ").trim(), loc: m ? m[0].trim() : "" };
         }));
         let fresh = 0; for (const l of links) { if (!link.test(l.h) || l.t.length < 3 || l.t.length > 160 || out.has(l.h)) continue; out.set(l.h, l); fresh++; }
+        if (!out.size && !sampled.length) for (const l of links) { if (l.t.length > 8 && l.t.length < 120 && !/^(home|login|sign|about|contact|privacy|cookie|terms)/i.test(l.t)) sampled.push(`${l.t.slice(0, 50)} → ${l.h.slice(0, 100)}`); if (sampled.length >= 12) break; }
         return fresh;
       };
       await p.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
@@ -133,13 +134,14 @@ function renderOnce(url: string, link: RegExp, o: { next: "scroll" | "page"; pag
         }
       } else {
         for (let n = 2; n <= o.maxPages && fresh > 0; n++) {
-          const u = new URL(url); u.searchParams.set(o.pageParam ?? "page", String(n));
+          const u = new URL(url); const pp = o.pageParam ?? "page"; u.searchParams.set(pp, pp === "startrow" ? String((n - 1) * 25) : String(n));
           await p.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
           await p.waitForTimeout(2500);
           fresh = await collect();
         }
       }
       diag.push(`total ${out.size}`);
+      if (!out.size) diag.push(`links on page e.g. ${sampled.slice(0, 8).join(" | ")}`);
       return { links: [...out.values()], debug: diag.join("; ") };
     } catch (e) {
       throw new Error((e as Error).message.split("\n")[0].slice(0, 160));
