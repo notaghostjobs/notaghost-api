@@ -1,1 +1,16 @@
-{"v":1,"commands":[{"id":"p1-infosys","step":"probe","url":"https://career.infosys.com/jobs?companyhiringtype=IL&countrycode=IN&location=Bangalore"},{"id":"p1-tcs","step":"probe","url":"https://ibegin.tcs.com/iBegin/jobs/search"},{"id":"p1-wipro","step":"probe","url":"https://careers.wipro.com/careers-home/jobs?location=Bengaluru"},{"id":"p1-hcl","step":"probe","url":"https://www.hcltech.com/careers/careers-in-india"},{"id":"p1-lti","step":"probe","url":"https://careers.ltimindtree.com"}]}
+{"v":1,"commands":[
+{"id":"p1-infosys","step":"probe","url":"https://career.infosys.com/jobs?companyhiringtype=IL&countrycode=IN&location=Bangalore"},
+{"id":"p1-tcs","step":"probe","url":"https://ibegin.tcs.com/iBegin/jobs/search"},
+{"id":"p1-wipro","step":"probe","url":"https://careers.wipro.com/careers-home/jobs?location=Bengaluru"},
+{"id":"p1-hcl","step":"probe","url":"https://www.hcltech.com/careers/careers-in-india"},
+{"id":"p1-lti","step":"probe","url":"https://careers.ltimindtree.com"},
+{"id":"p2-tcs","step":"probe","url":"https://ibegin.tcs.com/iBegin/jobs/search"},
+{"id":"p2-wipro","step":"probe","url":"https://careers.wipro.com/careers-home/jobs"},
+{"id":"p2-hcl-sf","step":"probe","url":"https://careers.hcltech.com/search/?q=&locationsearch=Bengaluru"},
+{"id":"p2-lti","step":"probe","url":"https://www.ltimindtree.com/careers/"},
+{"id":"p2-ibm","step":"probe","url":"https://www.ibm.com/careers/search?field_keyword_18[0]=India"},
+{"id":"p2-google","step":"probe","url":"https://www.google.com/about/careers/applications/jobs/results/?location=Bengaluru%2C%20Karnataka%2C%20India"},
+{"id":"p2-flipkart","step":"probe","url":"https://www.flipkartcareers.com/"},
+{"id":"p2-techm","step":"probe","url":"https://careers.techmahindra.com/"},
+{"id":"p2-goldman","step":"probe","url":"https://higher.gs.com/roles?LOCATION=Bengaluru"}
+]}
