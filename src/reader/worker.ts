@@ -48,9 +48,9 @@ async function runHarvest(maxPages: number) {
   log("harvest naukri", JSON.stringify(r)); return r;
 }
 
-async function runSectors(n: number) {
-  await status("sectors", { of: n || "all" });
-  const r = await harvestSectors({ limit: n || undefined, onSector: (done, total, added) => void status("sectors", { done, total, employers_new: added }) });
+async function runSectors(n: number, set: 1 | 2 = 1) {
+  await status("sectors", { of: n || "all", set });
+  const r = await harvestSectors({ limit: n || undefined, set, onSector: (done, total, added) => void status("sectors", { done, total, set, employers_new: added }) });
   log("sectors", JSON.stringify(r)); return r;
 }
 
@@ -74,6 +74,7 @@ async function runCommand(cmd: { step: string; n?: number; url?: string }) {
   if (cmd.step === "read") return runRead(n || 200);
   if (cmd.step === "harvest") return runHarvest(n || 50);
   if (cmd.step === "sectors") return runSectors(n);
+  if (cmd.step === "sectors2") return runSectors(n, 2);
   if (cmd.step === "selftest") return selfTest();
   if (cmd.step === "tier1") return runTier1();
   if (cmd.step === "enrich") return runEnrich(n || 60);

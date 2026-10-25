@@ -7,6 +7,22 @@ import { companyKey } from "../../engine/ghost/canon.js";
 
 const client = new Anthropic({ apiKey: env.anthropicKey });
 
+export const SECTORS2 = [
+  "mid-size IT services and consulting firms (200–5,000 staff) with Bengaluru delivery centres", "product engineering and R&D services firms", "global capability centres of US banks and insurers", "global capability centres of retailers and consumer companies",
+  "global capability centres of pharma and healthcare companies", "global capability centres of industrial and automotive companies", "semiconductor design centres and EDA companies", "embedded systems, firmware and automotive software",
+  "enterprise SaaS companies with engineering in Bengaluru", "B2B software startups Series A–C", "developer tools, APIs and infrastructure startups", "cybersecurity and identity companies",
+  "data engineering, analytics and AI services firms", "AI startups founded 2023–2026", "fintech lending and NBFC-tech", "payments and banking infrastructure", "insurtech and wealthtech",
+  "e-commerce enablement, logistics tech and supply chain SaaS", "quick commerce, food delivery and dark-store operators", "D2C brands with Bengaluru HQ", "consumer internet apps (social, content, dating, gaming)",
+  "edtech and upskilling platforms", "healthtech, telehealth and diagnostics chains", "medical devices and diagnostics manufacturers", "biotech, CRO and contract manufacturing",
+  "hospitals and hospital chains in Bengaluru", "aerospace, defence and space suppliers", "drones, robotics and hardware startups", "electric vehicles and EV components", "cleantech, solar and energy storage",
+  "real estate developers, proptech and co-living", "construction, infrastructure and engineering consultancies", "hospitality, hotels and travel tech", "media, OTT, adtech and marketing agencies",
+  "HR tech, recruitment platforms and staffing companies", "legal, compliance and professional services firms", "management consulting and advisory with Bengaluru offices", "accounting, audit and tax firms",
+  "banks and NBFCs headquartered or with large Bengaluru operations", "venture-backed startups that raised in 2025–2026", "unicorns and soonicorns with Bengaluru HQ", "Japanese, Korean and European MNC engineering centres",
+  "telecom equipment, networking and 5G companies", "cloud, hosting and data-centre operators", "gaming studios and esports companies", "agritech, foodtech and FMCG companies", "retail chains, QSR and supermarkets with Bengaluru operations",
+  "automobile OEMs and tier-1 suppliers near Bengaluru", "manufacturing and industrial automation companies", "PSUs, government bodies and research institutes in Bengaluru", "universities, colleges and research labs hiring in Bengaluru",
+  "nonprofits, foundations and social enterprises", "sports, fitness and wellness companies", "fashion, beauty and lifestyle brands", "travel, mobility and ride-hailing", "SME lenders, co-operative banks and microfinance",
+  "architecture, interior design and furniture", "printing, packaging and textiles", "pet care, kids and parenting brands", "space tech and satellite companies",
+];
 export const SECTORS = [
   "fintech and payments", "banks and NBFCs", "insurance and insurtech", "wealth, broking and investment platforms",
   "SaaS and B2B software", "developer tools and cloud infrastructure", "cybersecurity", "AI and machine learning startups", "data analytics and consulting",
@@ -56,8 +72,9 @@ export async function enumerateSector(sector: string): Promise<Found[]> {
 }
 
 /** Run every sector (or the first n), storing new employers. Concurrency 3. */
-export async function harvestSectors(opts: { limit?: number; onSector?: (done: number, total: number, added: number) => void } = {}) {
-  const sectors = SECTORS.slice(0, opts.limit ?? SECTORS.length);
+export async function harvestSectors(opts: { limit?: number; set?: 1 | 2; onSector?: (done: number, total: number, added: number) => void } = {}) {
+  const all = opts.set === 2 ? SECTORS2 : SECTORS;
+  const sectors = all.slice(0, opts.limit ?? all.length);
   const stats = { sectors: 0, names: 0, employers_new: 0, errors: 0, stopped: "end" };
   const q = [...sectors];
   async function worker() {
