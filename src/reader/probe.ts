@@ -38,6 +38,13 @@ export async function probeUrl(url: string): Promise<Record<string, unknown>> {
     try { const r = await http(`https://${h}/search/?q=&locationsearch=Bengaluru`, { retries: 0, timeoutMs: 10000 }); const t = await r.text(); sib[`${h} sf`] = `${r.status} jobTitle-link=${/jobTitle-link/i.test(t)} ${snip(t.match(/<title[^>]*>([^<]*)</i)?.[1] ?? "", 60)}`; } catch (e) { sib[`${h} sf`] = `error: ${(e as Error).message.slice(0, 60)}`; }
   }
   out.siblings = sib;
+  // 3c. for parser work: anchors on the page that look like jobs (href + text), and a raw excerpt around the first one
+  try {
+    const anchors = [...page.text.matchAll(/<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]{0,300}?)<\/a>/gi)].map((m) => ({ h: m[1], t: m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() })).filter((a) => /job|career|position|opening|requisition|\/\d{4,}/i.test(a.h) && a.t.length > 3);
+    out.job_like_anchors = anchors.slice(0, 15);
+    const i = anchors.length ? page.text.indexOf(anchors[0].h) : -1;
+    out.raw_excerpt = i >= 0 ? page.text.slice(Math.max(0, i - 1200), i + 1200) : page.text.slice(0, 1500);
+  } catch { /* ignore */ }
   // 4. any JSON-looking XHR endpoints the page mentions
   const apis = [...new Set([...page.text.matchAll(/["'](\/[a-z0-9_\-/.]*(?:api|search|jobs|positions|requisition)[a-z0-9_\-/.]*)["']/gi)].map((m) => m[1]))].slice(0, 12);
   out.api_paths_in_page = apis;
