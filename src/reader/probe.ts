@@ -27,8 +27,21 @@ export async function probeUrl(url: string): Promise<Record<string, unknown>> {
     const r = await http(`https://${host}/api/apply/v2/jobs?domain=${domain}&location=Bengaluru&start=0&num=5`, { retries: 0 });
     out.eightfold = { status: r.status, body: snip(await r.text()) };
   } catch (e) { out.eightfold = `error: ${(e as Error).message}`; }
+  // 3b. sibling hosts: the real job site is often careers./jobs. of the root domain
+  const root = host.replace(/^(www|careers|jobs|career)\./, "");
+  const sib: Record<string, unknown> = {};
+  for (const h of [...new Set([`careers.${root}`, `jobs.${root}`, `career.${root}`])].filter((h) => h !== host)) {
+    try {
+      const r = await http(`https://${h}/widgets`, { method: "POST", body: { lang: "en_us", deviceType: "desktop", country: "in", pageName: "search-results", ddoKey: "refineSearch", sortBy: "", subsearch: "", from: 0, jobs: true, counts: true, all_fields: ["category", "country", "state", "city"], size: 10, clearAll: false, jdsource: "facets", isSliderEnable: false, pageId: "page1", siteType: "external", keywords: "", global: true, selected_fields: { city: ["Bengaluru"] }, locationData: {} }, headers: { origin: `https://${h}`, referer: `https://${h}/`, accept: "application/json" }, retries: 0, timeoutMs: 10000 });
+      const t = await r.text(); sib[`${h} phenom`] = `${r.status} ${snip(t, 100)}`;
+    } catch (e) { sib[`${h} phenom`] = `error: ${(e as Error).message.slice(0, 60)}`; }
+    try { const r = await http(`https://${h}/search/?q=&locationsearch=Bengaluru`, { retries: 0, timeoutMs: 10000 }); const t = await r.text(); sib[`${h} sf`] = `${r.status} jobTitle-link=${/jobTitle-link/i.test(t)} ${snip(t.match(/<title[^>]*>([^<]*)</i)?.[1] ?? "", 60)}`; } catch (e) { sib[`${h} sf`] = `error: ${(e as Error).message.slice(0, 60)}`; }
+  }
+  out.siblings = sib;
   // 4. any JSON-looking XHR endpoints the page mentions
   const apis = [...new Set([...page.text.matchAll(/["'](\/[a-z0-9_\-/.]*(?:api|search|jobs|positions|requisition)[a-z0-9_\-/.]*)["']/gi)].map((m) => m[1]))].slice(0, 12);
   out.api_paths_in_page = apis;
-  return out;
+  const pg = out.page as any;
+  out.summary = `page ${pg.status} "${pg.title ?? ""}" hints=[${(pg.hints ?? []).join(",")}] big=${pg.big ? (pg.big as any).system : "-"} detect=${d ? d.system : "-"} read=${typeof out.read === "object" && out.read ? (out.read as any).jobs : out.read ?? "-"} | phenom ${typeof out.phenom === "object" ? (out.phenom as any).status : out.phenom} | eightfold ${typeof out.eightfold === "object" ? (out.eightfold as any).status : out.eightfold} | apis=${apis.length} | ${Object.entries(sib).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(" ; ")}`;
+  return { summary: out.summary, ...out };
 }
