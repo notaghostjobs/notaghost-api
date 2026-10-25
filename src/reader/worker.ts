@@ -81,7 +81,7 @@ async function runCommand(cmd: { step: string; n?: number; url?: string }) {
   if (cmd.step === "sectors2") return runSectors(n, 2);
   if (cmd.step === "selftest") return selfTest();
   if (cmd.step === "tier1") return runTier1();
-  if (cmd.step === "enrich") return runEnrich(n || 60);
+  if (cmd.step === "enrich") return runEnrich(n || 300);
   return { error: `unknown step ${cmd.step}` };
 }
 
@@ -163,8 +163,8 @@ async function main() {
       if (istHour() >= 6 && istHour() < 7 && lastDaily !== today) { lastDaily = today; await daily(); await status("idle"); continue; }
       // 3. otherwise keep resolving whatever is unresolved, then keep feeds fresh
       const { count } = await db.from("employers").select("key", { count: "exact", head: true }).is("resolved_at", null);
-      if ((count ?? 0) > 0) { await runResolve(20); if (++batches % 3 === 0) await runRead(20); await runEnrich(30); await status("idle", { unresolved: (count ?? 0) - 20 }); continue; }
-      const r = await runRead(50); const e = await runEnrich(60); await status("idle");
+      if ((count ?? 0) > 0) { await runResolve(20); if (++batches % 3 === 0) await runRead(20); await runEnrich(120); await status("idle", { unresolved: (count ?? 0) - 20 }); continue; }
+      const r = await runRead(50); const e = await runEnrich(300); await status("idle", { enrich: e });
       if (!r.employers && !e.tried) await sleep(30000);
     } catch (e) { log("loop error", (e as Error).message); await status("idle", { error: (e as Error).message }); await sleep(10000); }
   }

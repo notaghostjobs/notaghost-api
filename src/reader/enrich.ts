@@ -45,9 +45,13 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
 }
 
 /** Enrich a batch of live Bengaluru sightings that have not been opened yet. Gentle: 3 at a time, per-host spacing from http(). */
-export async function enrichDue(limit = 60, concurrency = 3) {
-  const { data } = await db.from("sightings").select("id, url, posted_at, salary_text, raw").eq("blr", true).is("gone_at", null).is("enriched_at", null).not("url", "is", null).order("first_seen", { ascending: false }).limit(limit);
-  const q = [...(data ?? [])]; const stats = { tried: 0, ok: 0, failed: 0 };
+export async function enrichDue(limit = 300, concurrency = 6) {
+  const { data } = await db.from("sightings").select("id, url, posted_at, salary_text, raw, employer_key").eq("blr", true).is("gone_at", null).is("enriched_at", null).not("url", "is", null).order("first_seen", { ascending: false }).limit(limit);
+  // spread the batch across employers: the per-host pacing in http() then runs in parallel instead of serialising one big employer
+  type Row = NonNullable<typeof data>[number];
+  const byHost = new Map<string, Row[]>(); for (const s of data ?? []) { const k = s.employer_key ?? "?"; if (!byHost.has(k)) byHost.set(k, []); byHost.get(k)!.push(s); }
+  const q: Row[] = []; const lists = [...byHost.values()]; for (let i = 0; q.length < (data ?? []).length; i++) for (const l of lists) if (l[i]) q.push(l[i]);
+  const stats = { tried: 0, ok: 0, failed: 0 };
   async function worker() {
     for (;;) {
       const s = q.shift(); if (!s) return;
