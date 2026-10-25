@@ -97,6 +97,49 @@ export function harvestLinks(url: string): Promise<{ jobs: FeedJob[]; html: stri
   });
 }
 
+/** Render a search page and collect links matching `link`, scrolling or paging until nothing new appears. Serialized on the shared browser. */
+export function renderAndCollect(url: string, link: RegExp, o: { next: "scroll" | "page"; pageParam?: string; maxPages: number }): Promise<{ links: { h: string; t: string; loc: string }[]; debug: string }> {
+  return serial(async () => {
+    const b = await getBrowser();
+    const ctx = await b.newContext({ userAgent: UA, viewport: { width: 1280, height: 900 } });
+    const out = new Map<string, { h: string; t: string; loc: string }>(); const diag: string[] = [];
+    try {
+      const p = await ctx.newPage();
+      await p.route("**/*", (route) => (/\.(png|jpe?g|gif|webp|svg|woff2?|ttf|mp4|css)(\?|$)/i.test(route.request().url()) ? route.abort() : route.continue()));
+      const collect = async () => {
+        const links: { h: string; t: string; loc: string }[] = await p.$$eval("a[href]", (as) => as.map((a) => {
+          const card = a.closest("li, article, tr, [class*='card'], [class*='job'], [class*='result'], [class*='tile'], [role='listitem'], div");
+          const c = card ? (card.textContent || "").replace(/\s+/g, " ").trim().slice(0, 400) : "";
+          const m = c.match(/[^.;|·]{0,40}(Bengaluru|Bangalore|Karnataka)[^.;|·]{0,40}/i);
+          return { h: (a as HTMLAnchorElement).href, t: (a.textContent || "").replace(/\s+/g, " ").trim(), loc: m ? m[0].trim() : "" };
+        }));
+        let fresh = 0; for (const l of links) { if (!link.test(l.h) || l.t.length < 3 || l.t.length > 160 || out.has(l.h)) continue; out.set(l.h, l); fresh++; }
+        return fresh;
+      };
+      await p.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+      await p.waitForTimeout(3500);
+      let fresh = await collect(); diag.push(`first ${fresh}`);
+      if (o.next === "scroll") {
+        for (let i = 0; i < 60 && fresh > 0; i++) {
+          await p.mouse.wheel(0, 2400); await p.waitForTimeout(900);
+          // "load more" buttons, if any
+          const btn = await p.$("button:has-text('Load more'), button:has-text('Show more'), button:has-text('View more'), a:has-text('Load more')"); if (btn) { await btn.click().catch(() => {}); await p.waitForTimeout(1500); }
+          fresh = await collect();
+        }
+      } else {
+        for (let n = 2; n <= o.maxPages && fresh > 0; n++) {
+          const u = new URL(url); u.searchParams.set(o.pageParam ?? "page", String(n));
+          await p.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+          await p.waitForTimeout(2500);
+          fresh = await collect();
+        }
+      }
+      diag.push(`total ${out.size}`);
+      return { links: [...out.values()], debug: diag.join("; ") };
+    } finally { await ctx.close().catch(() => {}); }
+  });
+}
+
 /** A plain careers page as a "system": ref is the page URL. */
 export const page: System = {
   id: "page",

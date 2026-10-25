@@ -2,9 +2,10 @@ import { ATS } from "./ats.js";
 import { keka, darwinbox, page } from "./page.js";
 import { BIG } from "./big.js";
 import { successfactors } from "./successfactors.js";
+import { RENDERED } from "./rendered.js";
 import type { System } from "./types.js";
 
-export const SYSTEMS: System[] = [...ATS, ...BIG, successfactors, keka, darwinbox];
+export const SYSTEMS: System[] = [...ATS, ...BIG.filter((b) => b.id !== "microsoft"), successfactors, ...RENDERED, keka, darwinbox];
 export const byId = (id: string): System | undefined => (id === "page" ? page : SYSTEMS.find((s) => s.id === id));
 
 /** Which system does this URL belong to, and what ref would we read? */
