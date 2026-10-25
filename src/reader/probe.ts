@@ -42,6 +42,6 @@ export async function probeUrl(url: string): Promise<Record<string, unknown>> {
   const apis = [...new Set([...page.text.matchAll(/["'](\/[a-z0-9_\-/.]*(?:api|search|jobs|positions|requisition)[a-z0-9_\-/.]*)["']/gi)].map((m) => m[1]))].slice(0, 12);
   out.api_paths_in_page = apis;
   const pg = out.page as any;
-  out.summary = `page ${pg.status} "${pg.title ?? ""}" hints=[${(pg.hints ?? []).join(",")}] big=${pg.big ? (pg.big as any).system : "-"} detect=${d ? d.system : "-"} read=${typeof out.read === "object" && out.read ? (out.read as any).jobs : out.read ?? "-"} | phenom ${typeof out.phenom === "object" ? (out.phenom as any).status : out.phenom} | eightfold ${typeof out.eightfold === "object" ? (out.eightfold as any).status : out.eightfold} | apis=${apis.length} | ${Object.entries(sib).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(" ; ")}`;
+  out.summary = `page ${pg.status} "${pg.title ?? ""}" hints=[${(pg.hints ?? []).join(",")}] big=${pg.big ? (pg.big as any).system : "-"} detect=${d ? d.system : "-"} read=${typeof out.read === "object" && out.read ? (out.read as any).jobs : out.read ?? "-"} | phenom ${typeof out.phenom === "object" ? (out.phenom as any).status : out.phenom} | eightfold ${typeof out.eightfold === "object" ? (out.eightfold as any).status : out.eightfold} | apis=${apis.length} ${apis.slice(0, 4).join(" ")} | ${Object.entries(sib).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(" ; ")}`;
   return { summary: out.summary, ...out };
 }

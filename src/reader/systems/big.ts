@@ -27,21 +27,24 @@ export const amazon: System = {
   },
 };
 
-/** careers.google.com — public search API, Bengaluru. ref: "google" */
+/** Google careers — the results page carries the listings (20 per page); the old JSON API is gone. ref: "google" */
 export const google: System = {
   id: "google",
   detect: (u) => (/careers\.google\.com|google\.com\/about\/careers/i.test(u) ? "google" : null),
   async read() {
-    const jobs: FeedJob[] = []; const diag: string[] = []; let count = 0;
-    for (let page = 1; page <= 100; page++) {
-      const r = await getJson<any>(`https://careers.google.com/api/v3/search/?location=Bengaluru%2C%20Karnataka%2C%20India&page=${page}&page_size=20`, { headers: { ...BROWSERISH, referer: "https://www.google.com/about/careers/applications/jobs/results/?location=Bengaluru" }, gapMs: 700 });
-      if (!r.ok || !r.data) { diag.push(`page ${page} HTTP ${r.status}`); break; }
-      count = r.data.count ?? count; const list: any[] = r.data.jobs ?? [];
-      for (const x of list) jobs.push({ id: String(x.id ?? x.job_id), title: x.title ?? "", location: (x.locations ?? []).map((l: any) => l.display).join(" · "), url: x.apply_url ?? `https://www.google.com/about/careers/applications/jobs/results/${String(x.id ?? "").replace(/^jobs\//, "")}`, posted_at: iso(x.publish_date), updated_at: null, posted_text: null });
-      if (list.length < 20 || jobs.length >= count) break;
+    const jobs: FeedJob[] = []; const diag: string[] = []; const seen = new Set<string>();
+    for (let page = 1; page <= 60; page++) {
+      const r = await getText(`https://www.google.com/about/careers/applications/jobs/results/?location=Bengaluru%2C%20Karnataka%2C%20India&page=${page}`, { headers: BROWSERISH, gapMs: 800, timeoutMs: 25000 });
+      if (!r.ok) { diag.push(`page ${page} HTTP ${r.status}`); break; }
+      let fresh = 0;
+      for (const m of r.text.matchAll(/href="(?:https:\/\/www\.google\.com\/about\/careers\/applications)?\/?jobs\/results\/(\d+)-([^"?#]+)[^"]*"[^>]*>([\s\S]{0,400}?)<\/a>/gi)) {
+        const id = m[1]; if (seen.has(id)) continue; seen.add(id); fresh++;
+        const title = m[3].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || m[2].replace(/-/g, " ");
+        jobs.push({ id, title, location: "Bengaluru, Karnataka, India", url: `https://www.google.com/about/careers/applications/jobs/results/${id}-${m[2]}`, posted_at: null, updated_at: null, posted_text: null });
+      }
+      if (!fresh) { diag.push(`stopped at page ${page}`); break; }
     }
-    diag.push(`count ${count}`);
-    return { system: "google", ref: "google", board_url: "https://www.google.com/about/careers/applications/jobs/results/?location=Bengaluru", company_name: "Google", jobs, debug: diag.join("; ") };
+    return { system: "google", ref: "google", board_url: "https://www.google.com/about/careers/applications/jobs/results/?location=Bengaluru", company_name: "Google", jobs, debug: diag.join("; ") || `read ${jobs.length}` };
   },
 };
 
