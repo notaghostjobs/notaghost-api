@@ -54,9 +54,10 @@ export function jsonLdJobs(html: string, pageUrl: string): FeedJob[] {
 let browserP: Promise<import("playwright-core").Browser> | null = null;
 let renderLock: Promise<void> = Promise.resolve();
 async function getBrowser() {
+  if (browserP) { try { const b = await browserP; if (!b.isConnected()) browserP = null; } catch { browserP = null; } }
   if (!browserP) {
     const { chromium } = await import("playwright-core");
-    browserP = chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process", "--no-zygote", "--renderer-process-limit=1", "--js-flags=--max-old-space-size=128", "--disable-extensions", "--mute-audio"] });
+    browserP = chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--renderer-process-limit=2", "--js-flags=--max-old-space-size=160", "--disable-extensions", "--mute-audio", "--disable-background-networking"] });
     browserP.then((b) => b.on("disconnected", () => { browserP = null; })).catch(() => { browserP = null; });
   }
   return browserP;
@@ -98,7 +99,11 @@ export function harvestLinks(url: string): Promise<{ jobs: FeedJob[]; html: stri
 }
 
 /** Render a search page and collect links matching `link`, scrolling or paging until nothing new appears. Serialized on the shared browser. */
-export function renderAndCollect(url: string, link: RegExp, o: { next: "scroll" | "page"; pageParam?: string; maxPages: number }): Promise<{ links: { h: string; t: string; loc: string }[]; debug: string }> {
+export async function renderAndCollect(url: string, link: RegExp, o: { next: "scroll" | "page"; pageParam?: string; maxPages: number }): Promise<{ links: { h: string; t: string; loc: string }[]; debug: string }> {
+  try { return await renderOnce(url, link, o); }
+  catch (e) { const msg = (e as Error).message; if (/closed|crashed|disconnected|Target page/i.test(msg)) { browserP = null; return renderOnce(url, link, o); } throw e; }
+}
+function renderOnce(url: string, link: RegExp, o: { next: "scroll" | "page"; pageParam?: string; maxPages: number }): Promise<{ links: { h: string; t: string; loc: string }[]; debug: string }> {
   return serial(async () => {
     const b = await getBrowser();
     const ctx = await b.newContext({ userAgent: UA, viewport: { width: 1280, height: 900 } });
@@ -136,6 +141,8 @@ export function renderAndCollect(url: string, link: RegExp, o: { next: "scroll" 
       }
       diag.push(`total ${out.size}`);
       return { links: [...out.values()], debug: diag.join("; ") };
+    } catch (e) {
+      throw new Error((e as Error).message.split("\n")[0].slice(0, 160));
     } finally { await ctx.close().catch(() => {}); }
   });
 }
