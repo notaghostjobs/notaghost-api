@@ -41,7 +41,7 @@ interface Found { name: string; website: string | null }
 
 /** Ask for employers in one sector. Returns deduped names with websites when known. */
 export async function enumerateSector(sector: string): Promise<Found[]> {
-  const system = `You list employers that have offices and hire in Bengaluru (Bangalore), India, for ONE sector. Use web search to be thorough and current. Include large companies, mid-size companies and startups. Only real companies you can name; no placeholders, no duplicates, no staffing agencies. Prefer 60–120 names. Respond with a single JSON object and nothing else: {"companies":[{"name":"...","website":"https://... or null"}]}. Today is ${new Date().toDateString()}.`;
+  const system = `You list employers that have offices and hire in Bengaluru (Bangalore), India, for ONE sector. Use web search to be thorough and current. Include large companies, mid-size companies and startups; prefer the less obvious names over the famous ones (the famous ones are already known). Only real companies you can name; no placeholders, no duplicates, no staffing agencies. Prefer 80–150 names. Respond with a single JSON object and nothing else: {"companies":[{"name":"...","website":"https://... or null"}]}. Today is ${new Date().toDateString()}.`;
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: `Sector: ${sector}\nCity: Bengaluru, India` }];
   // thinking is on by default for this model and eats the budget; cap it, give the answer room, fewer searches
   const req = () => client.messages.create({ model: FAST, max_tokens: 16000, system, thinking: { type: "adaptive" }, output_config: { effort: "low" }, tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }], messages } as any);
