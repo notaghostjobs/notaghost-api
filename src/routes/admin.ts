@@ -59,6 +59,18 @@ on.get("/reader/stats", async (c) => {
     ...["link", "page", "search", "guess"].map(async (cf) => { const n = await count("employers", (q) => q.eq("confidence", cf).neq("ats", "none")); if (n) confidence[cf] = n; }),
     ...SOURCES.map(async (src) => { const all = await count("sightings", (q) => q.eq("source", src).is("gone_at", null)); if (!all) return; const b = await count("sightings", (q) => q.eq("source", src).is("gone_at", null).eq("blr", true)); sources[src] = { all, blr: b }; }),
   ]);
+  // enrichment, honestly: opened and read / opened and failed (why) / not opened yet — all over live Bengaluru rows
+  const liveBlr = (q: any) => q.is("gone_at", null).eq("blr", true);
+  const reasons: Record<string, string> = { "robots.txt": "disallowed by robots.txt%", "not readable without a browser": "page has no readable text%", "HTTP 403": "HTTP 403", "HTTP 404": "HTTP 404", "other HTTP": "HTTP %", "no response": "fetch failed%" };
+  const failed_by_reason: Record<string, number> = {}, failed_by_source: Record<string, number> = {};
+  const [failed, pending] = await Promise.all([
+    count("sightings", (q) => liveBlr(q).not("enriched_at", "is", null).is("description", null)),
+    count("sightings", (q) => liveBlr(q).is("enriched_at", null).not("url", "is", null)),
+    ...Object.entries(reasons).map(async ([label, pat]) => { const n = await count("sightings", (q) => liveBlr(q).is("description", null).like("enrich_error", pat)); if (n) failed_by_reason[label] = n; }),
+    ...SOURCES.map(async (src) => { const n = await count("sightings", (q) => liveBlr(q).eq("source", src).not("enriched_at", "is", null).is("description", null)); if (n) failed_by_source[src] = n; }),
+  ]);
+  if (failed_by_reason["other HTTP"]) failed_by_reason["other HTTP"] -= (failed_by_reason["HTTP 403"] ?? 0) + (failed_by_reason["HTTP 404"] ?? 0);
+  if (!failed_by_reason["other HTTP"]) delete failed_by_reason["other HTTP"];
   const control: Record<string, unknown> = {}; for (const r of ctl.data ?? []) control[r.key] = r.value;
   // recent ops results, in full
   const recent = (control.ops_recent as { ids?: string[] } | undefined)?.ids ?? [];
@@ -70,7 +82,7 @@ on.get("/reader/stats", async (c) => {
   void key;
   const links: Record<string, string> = { status: `${self}/status`, probe_result: `${self}/probe`, employers: `${self}/employers?limit=100`, sightings: `${self}/sightings?limit=50`, tier1: `${self}/run?step=tier1`, selftest: `${self}/run?step=selftest`, resolve20: `${self}/run?step=resolve&n=20`, enrich60: `${self}/run?step=enrich&n=60` };
   for (const [k, u] of Object.entries(probeTargets)) links[`probe_${k}`] = `${self}/run?step=probe&url=${encodeURIComponent(u)}`;
-  return c.json({ employers: { total: employers, unresolved, resolved: employers - unresolved, with_feed: employers - unresolved - none, none, systems, confidence }, sightings: { total: sightings, live, blr, enriched, by_source: sources }, worker: control, links });
+  return c.json({ employers: { total: employers, unresolved, resolved: employers - unresolved, with_feed: employers - unresolved - none, none, systems, confidence }, sightings: { total: sightings, live, blr, enriched, by_source: sources, enrich: { done: enriched, failed, pending, failed_by_reason, failed_by_source } }, worker: control, links });
 });
 
 /** Employers with what we decided and why; filter by system. */

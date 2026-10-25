@@ -3,7 +3,7 @@ import { json, FAST } from "../claude.js";
 import { jobKey } from "./canon.js";
 import type { PostingFacts } from "./types.js";
 
-const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+const UA = "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello.jobs)";
 const H = { "user-agent": UA, "accept-language": "en-IN,en;q=0.9", accept: "text/html,application/json;q=0.9,*/*;q=0.8" };
 const get = (u: string, extra: Record<string, string> = {}) => fetch(u, { headers: { ...H, ...extra }, redirect: "follow", signal: AbortSignal.timeout(15000) });
 

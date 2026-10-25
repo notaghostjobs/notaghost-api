@@ -1,7 +1,7 @@
 // Enrich: open each live Bengaluru job once. Description, a real posting date when the list did not give one,
 // salary/experience when the page states them, and a fingerprint for the repost signal.
 import { db } from "../lib/db.js";
-import { getText } from "./http.js";
+import { getText, getJson, ROBOTS_STATUS } from "./http.js";
 import { htmlToText } from "../engine/extract.js";
 import { fingerprint } from "../engine/ghost/canon.js";
 
@@ -28,12 +28,32 @@ function pick(text: string) {
   return { salary, exp };
 }
 
+/** Workday job pages are empty shells; the same JSON endpoint the page itself calls returns the posting in full. */
+async function workdayDetail(url: string): Promise<{ ok: true; text: string; posted?: string | null } | { ok: false; status: number } | null> {
+  const m = url.match(/^https?:\/\/([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com\/(?:[a-z]{2}-[a-z]{2}\/)?([^/?#]+)(\/job\/[^?#]+)/i);
+  if (!m) return null;
+  const [, tenant, wd, site, path] = m; const base = `https://${tenant}.${wd}.myworkdayjobs.com`;
+  const r = await getJson<any>(`${base}/wday/cxs/${tenant}/${site}${path}`, { timeoutMs: 20000, gapMs: 800, headers: { accept: "application/json", referer: `${base}/${site}` } });
+  if (!r.ok || !r.data) return { ok: false, status: r.status };
+  const info = r.data.jobPostingInfo ?? {};
+  const text = htmlToText(String(info.jobDescription ?? ""));
+  return { ok: true, text, posted: info.startDate ?? null };
+}
+
 export async function enrichOne(s: { id: number; url: string; posted_at: string | null; salary_text: string | null; raw: any }) {
-  const r = await getText(s.url, { timeoutMs: 20000, gapMs: 800 });
-  if (!r.ok) { await db.from("sightings").update({ enriched_at: new Date().toISOString(), enrich_error: `HTTP ${r.status}` }).eq("id", s.id); return false; }
-  const ld = jsonLd(r.text);
-  const text = (ld?.description && ld.description.length > 300 ? ld.description : htmlToText(r.text)).slice(0, 20000);
-  if (text.length < 200) { await db.from("sightings").update({ enriched_at: new Date().toISOString(), enrich_error: "page has no readable text (likely rendered by script)" }).eq("id", s.id); return false; }
+  const fail = (why: string) => db.from("sightings").update({ enriched_at: new Date().toISOString(), enrich_error: why }).eq("id", s.id);
+  let ld: ReturnType<typeof jsonLd> = null, text = "";
+  const wd = await workdayDetail(s.url);
+  if (wd) {
+    if (!wd.ok) { await fail(wd.status === ROBOTS_STATUS ? "disallowed by robots.txt" : `HTTP ${wd.status}`); return false; }
+    text = wd.text.slice(0, 20000); if (wd.posted) ld = { datePosted: wd.posted };
+  } else {
+    const r = await getText(s.url, { timeoutMs: 20000, gapMs: 800 });
+    if (!r.ok) { await fail(r.status === ROBOTS_STATUS ? "disallowed by robots.txt" : `HTTP ${r.status}`); return false; }
+    ld = jsonLd(r.text);
+    text = (ld?.description && ld.description.length > 300 ? ld.description : htmlToText(r.text)).slice(0, 20000);
+  }
+  if (text.length < 200) { await fail("page has no readable text (likely rendered by script)"); return false; }
   const p = pick(text);
   const upd: Record<string, unknown> = { description: text, fingerprint: fingerprint(text), enriched_at: new Date().toISOString(), enrich_error: null };
   if (!s.posted_at && ld?.datePosted) upd.posted_at = iso(ld.datePosted);

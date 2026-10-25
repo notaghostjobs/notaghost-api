@@ -139,6 +139,8 @@ async function setPriorities() {
   // Workday employers read with the old crawl; "page" employers before the Phenom/Eightfold probe existed — each re-queued exactly once.
   await onceOnly("workday-facet-reread-v1", async () => { await db.from("employers").update({ read_at: null }).eq("ats", "workday"); });
   await onceOnly("page-reresolve-v1", async () => { await db.from("employers").update({ resolved_at: null, ats: null, ats_ref: null }).eq("ats", "page"); });
+  // Workday job pages failed as "no readable text" before the JSON detail reader existed — queue them again, once.
+  await onceOnly("enrich-retry-workday-v1", async () => { const { error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).eq("source", "workday").is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null); if (error) log("enrich retry", error.message); });
 }
 
 async function main() {

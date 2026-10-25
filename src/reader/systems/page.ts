@@ -1,9 +1,7 @@
 // Careers pages without a JSON feed: JSON-LD job lists when present, else a browser render and a careful link harvest.
 // Also: finding the hiring system a careers page points at (iframes, embeds, "apply" links).
-import { getText, getJson } from "../http.js";
+import { getText, getJson, UA, robotsAllows, RobotsDisallowed } from "../http.js";
 import type { Feed, FeedJob, System } from "./types.js";
-
-const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
 /** Every hiring-system URL mentioned anywhere in a page (links, iframes, scripts, inline config). */
 export function atsLinksIn(html: string): string[] {
@@ -71,6 +69,7 @@ function serial<T>(fn: () => Promise<T>): Promise<T> {
 /** Render with a browser and collect links that look like individual jobs. Conservative: titles 6–90 chars, job-ish path. */
 export function harvestLinks(url: string): Promise<{ jobs: FeedJob[]; html: string }> {
   return serial(async () => {
+    if (!(await robotsAllows(url))) throw new RobotsDisallowed(url);
     const b = await getBrowser();
     const ctx = await b.newContext({ userAgent: UA });
     try {
@@ -105,6 +104,7 @@ export async function renderAndCollect(url: string, link: RegExp, o: { next: "sc
 }
 function renderOnce(url: string, link: RegExp, o: { next: "scroll" | "page"; pageParam?: string; maxPages: number }): Promise<{ links: { h: string; t: string; loc: string }[]; debug: string }> {
   return serial(async () => {
+    if (!(await robotsAllows(url))) throw new RobotsDisallowed(url);
     const b = await getBrowser();
     const ctx = await b.newContext({ userAgent: UA, viewport: { width: 1280, height: 900 } });
     const out = new Map<string, { h: string; t: string; loc: string }>(); const diag: string[] = []; const sampled: string[] = [];

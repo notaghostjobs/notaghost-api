@@ -4,7 +4,7 @@ import { db } from "../../lib/db.js";
 import { getJson } from "../http.js";
 import { companyKey } from "../../engine/ghost/canon.js";
 
-const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+const UA = "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello.jobs)";
 const SEARCH = "jobapi/v3/search";
 
 /** Open naukri.com in a browser, watch the request its own front-end makes to the search API, and keep those exact headers + cookies.

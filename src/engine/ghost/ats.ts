@@ -6,7 +6,7 @@ import { research } from "./research.js";
 export interface AtsJob { id: string; title: string; location: string; created_at: string | null; updated_at: string | null; url: string }
 export interface AtsResult { system: string; slug: string | null; careers_url: string | null; jobs: AtsJob[] }
 
-const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+const UA = "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello.jobs)";
 const get = (u: string) => fetch(u, { headers: { "user-agent": UA, accept: "application/json,text/html" }, signal: AbortSignal.timeout(12000) });
 
 /** Guess slugs from the company name, probe each ATS, else find the careers page by search. */

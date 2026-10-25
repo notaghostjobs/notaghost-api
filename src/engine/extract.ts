@@ -26,14 +26,14 @@ export async function fetchPosting(url: string): Promise<string> {
   if (li) {
     try {
       const g = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${li[1]}`, {
-        headers: { "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "accept-language": "en-IN,en;q=0.9" },
+        headers: { "user-agent": "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello.jobs)", "accept-language": "en-IN,en;q=0.9" },
         signal: AbortSignal.timeout(15000),
       });
       if (g.ok) { const t = htmlToText(await g.text()); if (t.length > 200) return t; }
     } catch { /* fall through */ }
   }
   const r = await fetch(url, {
-    headers: { "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "accept-language": "en-IN,en;q=0.9" },
+    headers: { "user-agent": "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello.jobs)", "accept-language": "en-IN,en;q=0.9" },
     redirect: "follow",
     signal: AbortSignal.timeout(15000),
   });
