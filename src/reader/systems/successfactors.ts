@@ -3,7 +3,6 @@
 // Each row carries title, link, location and date. Bengaluru-direct by construction.
 import { getText, getJson } from "../http.js";
 import { mode, type Feed, type FeedJob, type System } from "./types.js";
-import { isBlr } from "../blr.js";
 
 /** The script-loaded theme's endpoint: POST /services/recruiting/v1/jobs, 10 rows a page.
  *  Wipro honours the location box (location: "Bengaluru" → 1,829). HCLTech ignores it, but takes a country facet
@@ -38,7 +37,8 @@ async function readApi(origin: string, diag: string[]): Promise<FeedJob[] | null
       const short = (Array.isArray(j.jobLocationShort) ? j.jobLocationShort : [j.jobLocationShort]).filter(Boolean).map((s: unknown) => String(s).replace(/<[^>]+>/g, " ").trim()).join(" | ");
       const state = [j.jobLocationState, j.jobLocationCountry].flat().filter(Boolean).join(", ");
       const location = short || [city, state || (Array.isArray(j.custCountryRegion) ? j.custCountryRegion.join(", ") : j.custCountryRegion)].filter(Boolean).join(", ");
-      if (filter && !isBlr(location)) continue;
+      // when we page the whole country, only an explicit city counts — a blank or "Others" city is not Bengaluru
+      if (filter && !/bengaluru|bangalore/i.test(`${city} ${short}`)) continue;
       seen.add(id);
       const d = String(j.unifiedStandardStart ?? ""); const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
       const posted = m ? new Date(Date.UTC(m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3]), Number(m[1]) - 1, Number(m[2]))).toISOString() : null;
