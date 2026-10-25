@@ -69,6 +69,9 @@ export interface PostingFacts {
 
   // --- same-text check (signal 7)
   same_text_companies?: string[];
+
+  // --- the reader's view of the employer (free; where layer B now comes from)
+  reader?: { known: boolean; system: string | null; blr_openings: number | null; live: number; by_url: boolean; evidence: string };
 }
 
 export type Verdict = "Real" | "Caution" | "Ghost" | "Scam" | "Can’t verify";

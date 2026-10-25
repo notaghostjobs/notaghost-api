@@ -27,7 +27,7 @@ export function score(f: PostingFacts): Scored {
   if (f.ats && f.ats.system !== "unknown" && f.ats.system !== "none") {
     evaluated += 5;
     if (f.ats.found) {
-      ok(9, "On the company’s own careers page", undefined, `(${f.ats.system})`);
+      ok(9, "On the company’s own hiring system", undefined, f.reader?.blr_openings != null ? `(${f.ats.system}; ${f.reader.blr_openings} Bengaluru roles open there today)` : `(${f.ats.system})`);
       if (f.ats.created_at && f.posted_days != null) {
         const createdDays = daysAgo(f.ats.created_at);
         if (createdDays - f.posted_days >= 30) bad(8, 15, "Created", `${createdDays} days ago`, `in ${f.ats.system} — the page says “${f.posted_text ?? `${f.posted_days} days ago`}”`);
@@ -36,6 +36,9 @@ export function score(f: PostingFacts): Scored {
       if (f.ats.copies >= 5) bad(10, 8, "Many copies of one title —", `${f.ats.copies} open “${f.title}” requisitions`);
       if (f.ats.updated_at && daysAgo(f.ats.updated_at) >= 60) bad(11, 8, "Stale in their system —", `not updated in ${daysAgo(f.ats.updated_at)} days`);
       if (f.ats.req_reopened) bad(12, 8, "Same requisition ID closed and reopened");
+    } else if (f.reader && f.reader.live >= 20) {
+      // we read their system today and it has a real list; the role is simply not there
+      bad(9, 15, "Not on the company’s own hiring system —", `${f.reader.blr_openings ?? f.reader.live} roles open there today, this title not among them`, "— listed on boards only");
     } else {
       bad(9, 8, "Not on the company’s own careers page —", "listed on boards only");
     }

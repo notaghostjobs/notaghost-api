@@ -4,6 +4,7 @@ import { readPosting, extractFacts, daysFromText } from "./read.js";
 import { findAts, matchTitle } from "./ats.js";
 import { research } from "./research.js";
 import { score } from "./score.js";
+import { readerFacts } from "./reader.js";
 import { jobKey, strip, companyKey, fingerprint, hamming } from "./canon.js";
 import type { PostingFacts, Scored } from "./types.js";
 
@@ -48,32 +49,37 @@ export async function ghostCheck(input: { url?: string; text?: string }, opts: {
     facts.same_text_companies = [...new Set((sims ?? []).filter((s) => s.fingerprint && hamming(s.fingerprint, fp) <= 16).map((s) => s.company_key as string))].slice(0, 5);
   }
 
-  // 4. company-level facts, cached (layers B, C, D) — all in parallel
+  // 4. company-level facts. Layer B comes from the reader (free). Research (paid, cached per company) runs only where the reader cannot answer.
   if (ckey) {
+    const rf = await readerFacts(ckey, facts.company, facts.title, url);
+    facts.reader = { known: rf.known, system: rf.system, blr_openings: rf.blr_openings, live: rf.live, by_url: rf.by_url, evidence: rf.evidence };
     const company = await loadCompany(ckey, facts.company);
     const stale = (t?: string | null, ttl = DAY) => !t || Date.now() - new Date(t).getTime() > ttl;
-    const [ats, boards, news, size] = await Promise.all([
-      stale(company.ats_checked, TTL.ats) ? findAts(facts.company, raw.apply_url ?? null, company.domain).catch(() => null) : null,
-      stale(company.research?.[titleKey(facts.title)]?.checked_at, TTL.boards) ? research.boards(facts.company, facts.title, facts.location).catch(() => null) : null,
-      stale(company.news?.checked_at, TTL.news) ? research.news(facts.company).catch(() => null) : null,
-      stale(company.size_checked, TTL.size) ? research.size(facts.company).catch(() => null) : null,
+    const readable = !!rf.ats;                                                                    // the employer's own system, read by us
+    const confirmedFresh = readable && rf.ats!.found && !!rf.ats!.created_at && (Date.now() - new Date(rf.ats!.created_at).getTime()) / DAY <= 30;
+    const [ats, boards, news] = await Promise.all([
+      // own-system detection by probing: only for companies the reader does not know at all (free, http only)
+      !rf.known && stale(company.ats_checked, TTL.ats) ? findAts(facts.company, raw.apply_url ?? null, company.domain).catch(() => null) : null,
+      // boards research (≈ ₹3–5, cached 7 days per company+title): skipped when the employer's own system confirms a fresh posting
+      !confirmedFresh && stale(company.research?.[titleKey(facts.title)]?.checked_at, TTL.boards) ? research.boards(facts.company, facts.title, facts.location).catch(() => null) : null,
+      // news (≈ ₹3, cached 7 days): only when the reader could not confirm the role on the company's own system
+      !(readable && rf.ats!.found) && stale(company.news?.checked_at, TTL.news) ? research.news(facts.company).catch(() => null) : null,
     ]);
     const now = new Date().toISOString();
     const patch: any = { name: facts.company, updated_at: now };
     if (ats) { patch.ats = ats.system; patch.ats_slug = ats.slug; patch.careers_url = ats.careers_url; patch.ats_jobs = ats.jobs; patch.ats_checked = now; Object.assign(company, patch); }
     if (boards) { company.research = { ...(company.research ?? {}), [titleKey(facts.title)]: { ...boards, checked_at: now } }; patch.research = company.research; }
     if (news) { company.news = { ...news, checked_at: now }; patch.news = company.news; }
-    if (size) { company.headcount = size.headcount; company.openings = size.openings ?? company.openings; company.size_checked = now; patch.headcount = size.headcount; patch.openings = company.openings; patch.size_checked = now; }
     await db.from("companies").upsert({ key: ckey, ...patch }, { onConflict: "key" });
 
     // B
-    if (company.ats && company.ats !== "unknown") {
+    if (readable) facts.ats = rf.ats!;
+    else if (rf.system === "none") facts.ats = { system: "none", found: false, created_at: null, updated_at: null, copies: 0, req_id: null, req_reopened: false, careers_url: null };
+    else if (company.ats && company.ats !== "unknown") {
       const jobs = (company.ats_jobs ?? []) as any[];
       const { best, copies } = matchTitle(facts.title, jobs);
-      const reopened = best ? await reqReopened(row.id, best.id) : false;
-      facts.ats = { system: company.ats, found: !!best || company.ats === "careers" && jobs.length === 0 && false, created_at: best?.created_at ?? null, updated_at: best?.updated_at ?? null, copies, req_id: best?.id ?? null, req_reopened: reopened, careers_url: company.careers_url };
+      facts.ats = { system: company.ats, found: !!best, created_at: best?.created_at ?? null, updated_at: best?.updated_at ?? null, copies, req_id: best?.id ?? null, req_reopened: false, careers_url: company.careers_url };
       if (company.ats === "none") facts.ats.found = false;
-      if (jobs.length && company.openings == null) company.openings = jobs.length;
     } else facts.ats = { system: "unknown", found: false, created_at: null, updated_at: null, copies: 0, req_id: null, req_reopened: false, careers_url: null };
     // C
     const br = company.research?.[titleKey(facts.title)];
@@ -84,7 +90,7 @@ export async function ghostCheck(input: { url?: string; text?: string }, opts: {
     }
     // D
     if (company.news) facts.company_news = company.news;
-    facts.headcount = company.headcount ?? null; facts.openings = company.openings ?? null;
+    facts.headcount = company.headcount ?? null; facts.openings = rf.openings ?? company.openings ?? null;
     // E (22)
     facts.reply_rate = await replyRate(ckey);
   }
