@@ -123,8 +123,13 @@ function renderOnce(url: string, link: RegExp, o: { next: "scroll" | "page"; pag
         return fresh;
       };
       await p.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
-      await p.waitForTimeout(3500);
-      let fresh = await collect(); diag.push(`first ${fresh}`);
+      // results load after first paint on most portals: wait up to 20s for a matching link, nudging with a scroll
+      const t0 = Date.now(); let fresh = 0;
+      while (Date.now() - t0 < 20000) {
+        fresh = await collect(); if (fresh) break;
+        await p.mouse.wheel(0, 800).catch(() => {}); await p.waitForTimeout(1500);
+      }
+      diag.push(`first ${fresh} after ${Math.round((Date.now() - t0) / 1000)}s`);
       if (o.next === "scroll") {
         for (let i = 0; i < 60 && fresh > 0; i++) {
           await p.mouse.wheel(0, 2400); await p.waitForTimeout(900);
@@ -136,8 +141,8 @@ function renderOnce(url: string, link: RegExp, o: { next: "scroll" | "page"; pag
         for (let n = 2; n <= o.maxPages && fresh > 0; n++) {
           const u = new URL(url); const pp = o.pageParam ?? "page"; u.searchParams.set(pp, pp === "startrow" ? String((n - 1) * 25) : String(n));
           await p.goto(u.toString(), { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
-          await p.waitForTimeout(2500);
-          fresh = await collect();
+          const t1 = Date.now(); fresh = 0;
+          while (Date.now() - t1 < 12000) { fresh = await collect(); if (fresh) break; await p.waitForTimeout(1200); }
         }
       }
       diag.push(`total ${out.size}`);

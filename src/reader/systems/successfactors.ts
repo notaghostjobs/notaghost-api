@@ -45,6 +45,21 @@ export const successfactors: System = {
   detect: (u) => { const m = u.match(/^(https?:\/\/[a-z0-9.-]+)\/(?:search\/|job\/[^/]+\/\d+|go\/|content\/)/i); return m && /jobs\.|careers?\./i.test(m[1]) ? m[1] : null; },
   async read(origin) {
     const jobs: FeedJob[] = []; const seen = new Set<string>(); const diag: string[] = [];
+    // newer theme: results come from /search-results (fragment/JSON) with the same query params
+    for (const loc of ["Bengaluru", "Bangalore"]) {
+      let got = 0;
+      for (let start = 0; start < 2500; start += 25) {
+        const r = await getText(`${origin}/search-results?q=&locationsearch=${encodeURIComponent(loc)}&startrow=${start}`, { timeoutMs: 20000, gapMs: 700, headers: { accept: "text/html, application/json, */*", "x-requested-with": "XMLHttpRequest", referer: `${origin}/search/?q=&locationsearch=${encodeURIComponent(loc)}` } });
+        if (!r.ok) break;
+        const body = r.text.startsWith("{") ? (() => { try { const j = JSON.parse(r.text); return String(j.html ?? j.results ?? j.data ?? r.text); } catch { return r.text; } })() : r.text;
+        const rows = parseRows(body, origin);
+        let fresh = 0; for (const j of rows) if (!seen.has(j.id)) { seen.add(j.id); jobs.push(j); fresh++; }
+        got += rows.length;
+        if (rows.length < 10 || fresh === 0) break;
+      }
+      if (got) diag.push(`${loc} via search-results: ${got}`);
+    }
+    if (jobs.length) return { system: "successfactors", ref: origin, board_url: `${origin}/search/?q=&locationsearch=Bengaluru`, company_name: null, jobs, debug: diag.join("; ") };
     for (const loc of ["Bengaluru", "Bangalore"]) {
       let got = 0;
       for (let start = 0; start < 2500; start += 25) {
