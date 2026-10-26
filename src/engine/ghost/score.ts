@@ -42,6 +42,9 @@ export function score(f: PostingFacts): Scored {
     } else {
       bad(9, 8, "Not on the company’s own careers page —", "listed on boards only");
     }
+  } else if (!f.company) {
+    // we never learned who the employer is: say that, and score nothing for it
+    na(9, "Couldn’t read the company name on this page");
   } else {
     // nothing of the employer's own to check this posting against: that uncertainty carries weight of its own
     evaluated += 1;
