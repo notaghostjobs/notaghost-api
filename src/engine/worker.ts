@@ -62,9 +62,13 @@ export async function runShot(shotId: string) {
     const up = await db.storage.from("outputs").upload(pdf_path, pdf, { contentType: "application/pdf" });
     if (up.error) throw up.error;
 
+    const before = scores(out.matches).before, after = scores(out.after_matches).before, promised = scores(out.matches).after;
+    // the number we delivered is below the number we promised at preview: the document still goes out, the shot comes back
+    const short = after < promised;
+    if (short) await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
     await db.from("shots").update({
       status: "done", posting_id: postingId, done_at: new Date().toISOString(),
-      output: { ...out, before: scores(out.matches).before, after: scores(out.after_matches).before, promised: scores(out.matches).after, pdf_path },
+      output: { ...out, before, after, promised, shot_returned: short, pdf_path },
     }).eq("id", shotId);
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
