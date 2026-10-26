@@ -120,7 +120,7 @@ export function score(f: PostingFacts): Scored {
 
   const copy = COPY[verdict](total, uniq, f);
   const signals = [...uniq.sort((a, b) => b.pts - a.pts), ...ctx.filter((c) => c.kind === "ok").slice(0, 3), ...ctx.filter((c) => c.kind === "na").slice(0, 2)];
-  return { score: total, verdict, signals, ...copy, checked: evaluated, coverage: `${evaluated} of 22 checks ran` };
+  return { score: total, verdict, signals, ...copy, checked: evaluated, coverage: `${evaluated} checks ran` };
 }
 
 /** Copy is built from the signals that fired — never a template that could contradict the list. */
