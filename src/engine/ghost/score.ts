@@ -140,7 +140,8 @@ const COPY: Record<Verdict, (s: number, f: FiredSignal[], p: PostingFacts) => Pi
   }),
   Real: (s, f, p) => ({
     headline: "Worth your shot.",
-    body: `${positives(p)}${f.length ? ` ${sentence(f)}` : ""} Nothing we checked says it’s fake.`,
+    // the anchor leads; at most one caveat, and only a weighty one — the rest stay in the signal list
+    body: `${positives(p)}${(() => { const c = f.filter((x) => x.pts >= 8).slice(0, 1); return c.length ? ` One thing to know: ${sentence(c).replace(/^\w/, (ch) => ch.toLowerCase())}` : ""; })()} ${p.ats?.found ? "It’s on the employer’s own system, which is the strongest sign we have." : "Nothing we checked says it’s fake."}`,
     adviceLabel: "Next move:", advice: "make sure they can see you. Let’s check your résumé against this posting — free.",
   }),
   "Can’t verify": (s, f, p) => ({
@@ -193,7 +194,7 @@ function positives(p: PostingFacts) {
   if (p.posted_days != null && p.posted_days <= 21) bits.push(`posted ${p.posted_text?.toLowerCase() ?? `${p.posted_days} days ago`}`);
   if (!p.templated) bits.push("describes a specific team");
   if (p.pay_stated) bits.push("pay stated");
-  if (p.ats?.found) bits.push(`on ${p.company || "the company"}’s own careers page`);
+  if (p.ats?.found) bits.unshift(`on ${p.company || "the company"}’s own hiring system${p.ats.created_at ? ` since ${new Date(p.ats.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}`);
   if (p.company_news && !p.company_news.layoffs_90d && !p.company_news.freeze_90d) bits.push("no layoffs in the news");
   if (!bits.length) return "";
   const j = bits.length === 1 ? bits[0] : bits.slice(0, -1).join(", ") + " and " + bits[bits.length - 1];
