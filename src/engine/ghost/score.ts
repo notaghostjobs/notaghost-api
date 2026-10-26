@@ -42,11 +42,10 @@ export function score(f: PostingFacts): Scored {
     } else {
       bad(9, 8, "Not on the company’s own careers page —", "listed on boards only");
     }
-  } else if (f.ats?.system === "none") {
-    evaluated += 1;
-    na(9, "Company has no public hiring system we can read");
   } else {
-    na(9, "Company’s hiring system not identified yet");
+    // nothing of the employer's own to check this posting against: that uncertainty carries weight of its own
+    evaluated += 1;
+    bad(9, 15, "Not on any hiring system we can read —", "we’ll watch it from here");
   }
 
   // ---------- C. the job boards ----------
