@@ -37,3 +37,14 @@ check.post("/snapshot", async (c) => {
   const n = await snapshotDue(Number(c.req.query("limit") ?? 200));
   return c.json({ ok: true, rechecked: n });
 });
+
+/** Waitlist for products not yet open (Radar, Build): phone + product, kept in the control table until the product exists. */
+check.post("/waitlist", async (c) => {
+  const body = z.object({ product: z.enum(["radar", "build"]), phone: z.string().min(10).max(16), note: z.string().max(200).optional() }).safeParse(await c.req.json());
+  if (!body.success) return c.json({ error: "A phone number, please." }, 400);
+  const phone = body.data.phone.replace(/\D/g, "").slice(-10);
+  if (phone.length !== 10) return c.json({ error: "That doesn’t look like an Indian mobile number." }, 400);
+  const key = `waitlist:${body.data.product}:${phone}`;
+  await db.from("reader_control").upsert({ key, value: { product: body.data.product, phone, note: body.data.note ?? null, at: new Date().toISOString() } }, { onConflict: "key" });
+  return c.json({ ok: true });
+});
