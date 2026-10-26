@@ -92,6 +92,22 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
   return plan;
 }
 
+/** Test grant, founder's phone only: retires every plan the user holds and issues a fresh 10-shot Sharpen plan without
+ *  a payment, so the end-to-end flow can be walked from shot 1 before the gateway is used for real. */
+const TEST_PHONES = new Set(["9952037479"]);
+payments.post("/dummy", requireUser, async (c) => {
+  const u = c.get("user");
+  if (!TEST_PHONES.has((u.phone ?? "").replace(/\D/g, "").slice(-10))) return c.json({ error: "Not available." }, 403);
+  const now = new Date().toISOString();
+  await db.from("plans").update({ expires_at: now }).eq("user_id", u.id).gt("expires_at", now);
+  const price = PRICES.sharpen;
+  const { data: pay, error } = await db.from("payments").insert({ user_id: u.id, product: "sharpen", amount_paise: 0, status: "paid", razorpay_order_id: `test_${Date.now()}`, paid_at: now }).select("*").single();
+  if (error || !pay) return c.json({ error: error?.message ?? "could not record" }, 500);
+  const { data: cur } = await db.from("resumes").select("parsed").eq("user_id", u.id).eq("is_current", true).maybeSingle();
+  const { data: plan } = await db.from("plans").insert({ user_id: u.id, product: "sharpen", shots_total: price.shots, resume_name: (cur?.parsed as any)?.name ?? null, expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id }).select("*").single();
+  return c.json({ ok: true, plan });
+});
+
 payments.get("/", requireUser, async (c) => {
   const { data } = await db.from("payments")
     .select("id, product, amount_paise, status, receipt_no, paid_at")
