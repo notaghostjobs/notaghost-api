@@ -106,10 +106,14 @@ export function score(f: PostingFacts): Scored {
   const total = Math.min(100, uniq.reduce((a, s) => a + s.pts, 0));
   const has15 = uniq.some((s) => s.pts === 15);
 
+  // Real needs something FOR it, not just little against it: the employer's own system lists the role, or the posting is
+  // fresh with nothing worse than one small flag. Two or more flags with no anchor is a Caution, whatever the arithmetic says.
+  const anchored = f.ats?.found === true || (f.posted_days != null && f.posted_days <= 30 && uniq.length <= 1);
   let verdict: Verdict;
   if (scam) verdict = "Scam";
   else if (total >= 60 && has15) verdict = "Ghost";
   else if (total >= 25) verdict = "Caution";
+  else if (!anchored && uniq.length >= 2) verdict = "Caution";
   else if (total < 25 && f.ats?.found === false && (f.boards?.listings.length ?? 1) <= 1 && evaluated < 14) verdict = "Can’t verify";
   else if (evaluated < 9) verdict = "Can’t verify";
   else verdict = "Real";
