@@ -6,6 +6,7 @@ import { requireUser } from "../lib/auth.js";
 import { fetchPosting } from "../engine/extract.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../engine/sharpen.js";
 
+const hashUrl = (u: string) => createHash("sha256").update(u.trim().toLowerCase()).digest("hex");
 export const preview = new Hono<{ Variables: { user: User } }>();
 preview.use("*", requireUser);
 
@@ -39,7 +40,7 @@ preview.post("/", async (c) => {
 
   let postingText = body.data.posting_text ?? "", postingId: string | null = null, parsed: any = null;
   if (body.data.posting_url) {
-    const url_hash = createHash("sha256").update(body.data.posting_url.trim().toLowerCase()).digest("hex");
+    const url_hash = hashUrl(body.data.posting_url);
     const { data: cached } = await db.from("postings").select("id, raw_text, parsed").eq("url_hash", url_hash).maybeSingle();
     if (cached) { postingId = cached.id; postingText = cached.raw_text; parsed = cached.parsed; }
     else {
@@ -52,7 +53,7 @@ preview.post("/", async (c) => {
 
   const posting = parsed ?? (await parsePosting(postingText));
   if (postingId && !parsed) await db.from("postings").update({ company: posting.company, title: posting.title, parsed: posting }).eq("id", postingId);
-  const { matches, fits } = await matchAndGrade(resume.parsed as ResumeProfile, posting);
+  const [{ matches, fits }, similar_open] = await Promise.all([matchAndGrade(resume.parsed as ResumeProfile, posting), similarOpen(posting.title)]);
   const s = scores(matches);
   // remember this exact match so the paid run scores against the same list the user saw
   const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting, matches, score_before: s.before, score_after: s.after }).select("id").single();
@@ -61,5 +62,33 @@ preview.post("/", async (c) => {
     ...matches.filter((m) => m.bucket === "have_not_said").slice(0, 2).map((m) => ({ tone: "ok", label: "You have it, you just didn’t say it", title: m.requirement, body: m.suggestion, evidence: m.evidence })),
     ...matches.filter((m) => m.bucket === "missing" && m.kind === "must").slice(0, 1).map((m) => ({ tone: "bad", label: "Genuinely missing", title: m.requirement, body: m.suggestion })),
   ].slice(0, 3);
-  return c.json({ preview_id: pv?.id ?? null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location }, score_before: s.before, score_after: s.after, reasons, matches, fits: fits ?? null });
+  return c.json({ similar_open, preview_id: pv?.id ?? null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location }, score_before: s.before, score_after: s.after, reasons, matches, fits: fits ?? null });
+});
+
+
+/** Live Bengaluru roles on employers' own systems whose title shares the posting's two most specific words. */
+async function similarOpen(title: string): Promise<number> {
+  const stop = new Set(["senior","sr","junior","jr","lead","principal","staff","associate","assistant","head","director","manager","the","and","for","of","ii","iii","iv","i","india","bengaluru","bangalore"]);
+  const words = (title || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !stop.has(w)).sort((a, b) => b.length - a.length).slice(0, 2);
+  if (!words.length) return 0;
+  let q = db.from("sightings").select("*", { count: "exact", head: true }).eq("blr", true).is("gone_at", null);
+  for (const w of words) q = q.ilike("title", `%${w}%`);
+  const { count } = await q;
+  return count ?? 0;
+}
+
+/** Warm-up from the panel: parse the posting while the person is still uploading, so the fit verdict is ~8 s faster. */
+preview.post("/warm", async (c) => {
+  const body = z.object({ posting_url: z.string().min(8) }).safeParse(await c.req.json());
+  if (!body.success) return c.json({ ok: false }, 400);
+  const url_hash = hashUrl(body.data.posting_url);
+  const { data: cached } = await db.from("postings").select("id, raw_text, parsed").eq("url_hash", url_hash).maybeSingle();
+  if (cached?.parsed) return c.json({ ok: true, warm: true });
+  try {
+    const postingText = cached?.raw_text ?? (await fetchPosting(body.data.posting_url));
+    const id = cached?.id ?? (await db.from("postings").insert({ url: body.data.posting_url, url_hash, raw_text: postingText }).select("id").single()).data?.id;
+    const posting = await parsePosting(postingText);
+    if (id) await db.from("postings").update({ company: posting.company, title: posting.title, parsed: posting }).eq("id", id);
+    return c.json({ ok: true, warm: false });
+  } catch { return c.json({ ok: false }); }
 });

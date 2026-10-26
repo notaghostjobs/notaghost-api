@@ -15,6 +15,8 @@ export async function processResume(resumeId: string) {
   const { text, pages } = await extractText(buf, row.filename ?? "resume.pdf");
   if (text.length < 300) throw Object.assign(new Error("Couldn't read text from that file. Export it as a text PDF, not a scan."), { status: 400 });
   const parsed = await parseResume(text, pages);
+  const layout = layoutWarning(text, pages);
+  (parsed as any).layout_warning = layout;
   await db.from("resumes").update({ text, parsed }).eq("id", resumeId);
   return parsed;
 }
@@ -84,4 +86,17 @@ function sourceOf(url: string) {
   if (h.includes("greenhouse")) return "greenhouse";
   if (h.includes("lever")) return "lever";
   return "careers";
+}
+
+
+/** What a screener's software would also struggle with: columns, graphics, very little text. Heuristics on the extracted text only. */
+export function layoutWarning(text: string, pages: number): string | null {
+  const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return null;
+  const short = lines.filter((l) => l.split(/\s+/).length <= 3).length / lines.length;     // columns extract as word fragments
+  const perPage = text.length / Math.max(1, pages);
+  const broken = (text.match(/[a-z]{2,}\s{2,}[a-z]{2,}/g) || []).length / Math.max(1, lines.length);
+  if (perPage < 900) return "Very little readable text per page — graphics, a photo or a scanned layout. Screening software reads what we read: a plain text PDF will do better.";
+  if (short > 0.55 || broken > 0.6) return "This layout (two columns or a sidebar) comes out jumbled when software reads it — the same thing an employer's screening system sees. A single-column version will do better everywhere.";
+  return null;
 }

@@ -12,7 +12,8 @@ export async function json<T>(system: string, user: string, maxTokens = 4000, mo
     const r = await client.messages.create({
       model,
       max_tokens: maxTokens,
-      system: system + "\n\nRespond with a single JSON object and nothing else. No markdown fences.",
+      // the instructions repeat call after call: cache them (billed at a tenth after the first call, and faster to start)
+      system: [{ type: "text", text: system + "\n\nRespond with a single JSON object and nothing else. No markdown fences.", cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: user }],
     });
     const text = r.content.map((b) => (b.type === "text" ? b.text : "")).join("");

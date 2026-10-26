@@ -81,6 +81,7 @@ export function matchResume(resume: ResumeProfile, posting: PostingProfile) {
   Generic words are NOT a mention of a specific requirement: "Communication" is not "writes PRDs", "Data-Driven Decision Making" is not "runs experiments", "Leadership" is not "built a team of 5". Those are missing.
 - "missing": nothing in the résumé points to this specific requirement — no same-activity line, no same-activity keyword. Test: if asked "where does your résumé mention this?", the candidate could not point to a line that a screener would accept.
 Do not stretch across kinds of work: SAP enhancement delivery is not product management; building a dashboard is not category management. A missing must-have is useful information, not a failure.
+Grade "said" the way a fair screener would: a plain equivalent anywhere in the résumé counts ("lead a team through 1:1s" satisfies "mentor engineers"; "directly accountable for category P&L" satisfies "owned a category P&L"). Only call it have_not_said when a screener searching for the requirement would genuinely not connect the line.
 Evidence must be a verbatim quote from the résumé. suggestion: for said/have_not_said, how to phrase it in the employer's words; for missing, one honest line (adjacent experience to mention, or "don't claim this").`,
     `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nReturn: {matches:[{requirement, kind:"must"|"nice", bucket, evidence, evidence_kind, suggestion}], fits}. fits = one plain sentence, under 18 words, naming the kind of role this résumé is actually built for (e.g. "Salesforce technical lead roles on enterprise CRM programmes"). Based on the résumé alone, not this posting.`,
     6000
@@ -135,14 +136,8 @@ export function rescore(matches: Match[], rewrite: Rewrite) {
 }
 /** The before-picture: the matcher's requirements + evidence, with "said" decided by the same fair screener that grades the rewrite. */
 export async function matchAndGrade(resume: ResumeProfile, posting: PostingProfile) {
-  const { matches, fits } = await matchResume(resume, posting);
-  const { matches: graded } = await grade(matches, { headline: resume.headline, roles: resume.roles, skills: resume.skills, extra_sections: resume.extra_sections }, "ORIGINAL RÉSUMÉ");
-  const merged = matches.map((m) => {
-    const g = graded.find((x) => x.requirement === m.requirement);
-    if (g?.bucket === "said") return { ...m, bucket: "said" as const, evidence: g.evidence || m.evidence };
-    return m;
-  });
-  return { matches: merged, fits };
+  // the matcher now grades as the fair screener itself (rubric in its prompt): one call, ~8 s faster at preview
+  return matchResume(resume, posting);
 }
 
 export async function runSharpen(resume: ResumeProfile, postingText: string, onStage?: (s: string) => void, pre?: { posting: PostingProfile; matches: Match[] }) {
@@ -159,6 +154,9 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   let rewrite = tidy(firstDraft);
 
   t0 = t("Checking every claim");
+  // the audit and the after-score are independent reads of the same draft: run them together
+  let rescoredDraft: Rewrite = rewrite;
+  let rescoreP = rescore(matches, rewrite);
   let verification = await verifyRewrite(resume, rewrite);
   let broken = checkRules(rewrite, resume, posting);
   timing.verify = Date.now() - t0;
@@ -199,7 +197,8 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   }
   const needs_review = !verification.ok || broken.length > 0;
   t0 = t("Scoring the result");
-  const { matches: rescored } = await rescore(matches, rewrite);
+  if (rewrite !== rescoredDraft) { rescoredDraft = rewrite; rescoreP = rescore(matches, rewrite); }   // only re-run when a repair changed the text
+  const { matches: rescored } = await rescoreP;
   const rank = { missing: 0, have_not_said: 1, said: 2 } as const;
   const after_matches = matches.map((m) => {
     const r = rescored.find((x) => x.requirement === m.requirement);
