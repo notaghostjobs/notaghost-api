@@ -1,7 +1,7 @@
 // SAP SuccessFactors "Career Site Builder" sites: jobs.sap.com, jobs.siemens.com, jobs.ericsson.com, careers.ltimindtree.com, ...
 // Public HTML search with a location box and 25 rows per page: /search/?q=&locationsearch=Bengaluru&startrow=N
 // Each row carries title, link, location and date. Bengaluru-direct by construction.
-import { getText, getJson } from "../http.js";
+import { getText, getJson, ROBOTS_STATUS } from "../http.js";
 import { mode, progress, type Feed, type FeedJob, type System } from "./types.js";
 
 /** The script-loaded theme's endpoint: POST /services/recruiting/v1/jobs, 10 rows a page.
@@ -13,7 +13,9 @@ async function readApi(origin: string, diag: string[]): Promise<FeedJob[] | null
   const call = (o: Record<string, unknown>) => getJson<any>(url, { method: "POST", gapMs: 450, timeoutMs: 20000, headers: { accept: "application/json", referer: `${origin}/search/` },
     body: { locale: "en_US", pageNumber: 0, sortBy: "", keywords: "", location: "", facetFilters: {}, brand: "", skills: [], categoryId: 0, alertId: "", rcmCandidateId: "", ...o } });
   const probe = await call({ location: "Bengaluru" });
-  if (!probe.ok || !probe.data || typeof probe.data.totalJobs === "undefined") return null;
+  // a refusal is not "no such endpoint": say so, and never fall through to an empty read
+  if (!probe.ok && (probe.status === ROBOTS_STATUS || probe.status === 403 || probe.status === 429 || probe.status === 0)) throw new Error(`successfactors ${origin}: API HTTP ${probe.status}`);
+  if (!probe.ok || !probe.data || typeof probe.data.totalJobs === "undefined") { diag.push(`api probe HTTP ${probe.status}`); return null; }
   const total = Number(probe.data.totalJobs ?? 0);
   // which query to page: the location box when it works, else the India facet (then filter rows by city)
   let q: Record<string, unknown>; let expect: number; let filter = false;

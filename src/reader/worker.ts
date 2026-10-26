@@ -140,6 +140,20 @@ async function setPriorities() {
   await onceOnly("workday-facet-reread-v1", async () => { await db.from("employers").update({ read_at: null }).eq("ats", "workday"); });
   await onceOnly("page-reresolve-v1", async () => { await db.from("employers").update({ resolved_at: null, ats: null, ats_ref: null }).eq("ats", "page"); });
   // Workday job pages failed as "no readable text" before the JSON detail reader existed — queue them again, once.
+  // 25 Oct night: readers that were refused returned empty feeds and the loop marked whole employers gone. Undo exactly that:
+  // employers with nothing live now whose rows were marked gone after that deploy get them back, and a fresh read.
+  await onceOnly("restore-empty-reads-v1", async () => {
+    const since = "2026-10-25T16:27:00Z"; let restored = 0, employers = 0;
+    const { data: es } = await db.from("employers").select("key, ats").not("ats", "is", null).not("ats", "in", '("none")').limit(2000);
+    for (const e of es ?? []) {
+      const { count: live } = await db.from("sightings").select("*", { count: "exact", head: true }).eq("employer_key", e.key).is("gone_at", null);
+      if ((live ?? 0) > 0) continue;
+      const { data } = await db.from("sightings").update({ gone_at: null }).eq("employer_key", e.key).gte("gone_at", since).select("id");
+      if (data?.length) { restored += data.length; employers++; await db.from("employers").update({ read_at: null, read_error: "restored after an empty read; re-reading" }).eq("key", e.key); }
+    }
+    log("restore", `${restored} sightings across ${employers} employers`);
+    await setControl("restore_v1", { at: new Date().toISOString(), restored, employers });
+  });
   await onceOnly("enrich-retry-workday-v1", async () => { const { error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).eq("source", "workday").is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null); if (error) log("enrich retry", error.message); });
 }
 

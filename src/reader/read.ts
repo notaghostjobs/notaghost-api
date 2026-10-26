@@ -8,6 +8,20 @@ export interface Employer { key: string; name: string; ats: string | null; ats_r
 /** Write a feed's jobs as sightings for this employer; mark the ones that vanished. */
 export async function recordFeed(e: Employer, feed: Feed) {
   const now = new Date().toISOString();
+  // Circuit breaker: a read that comes back empty (or collapses to under a fifth) where roles were live is far more
+  // likely a refusal, a maintenance page or a broken pager than a hiring freeze. Keep what we have, say so, retry
+  // on the next cycle; accept the drop only once it has held for three consecutive reads.
+  const { count: liveBefore } = await db.from("sightings").select("*", { count: "exact", head: true }).eq("employer_key", e.key).eq("source", feed.system).is("gone_at", null);
+  const before = liveBefore ?? 0;
+  if (before > 0 && (feed.jobs.length === 0 || (before >= 50 && feed.jobs.length < before / 5))) {
+    const { data: prev } = await db.from("employers").select("read_error").eq("key", e.key).maybeSingle();
+    const held = Number(prev?.read_error?.match(/held (\d+)x/)?.[1] ?? 0) + 1;
+    if (held < 3) {
+      // read_at set 19h back: the next cycle (20h stale) retries in about an hour instead of tomorrow
+      await db.from("employers").update({ read_at: new Date(Date.now() - 19 * 3600e3).toISOString(), read_error: `read returned ${feed.jobs.length} where ${before} were live — kept, held ${held}x${feed.debug ? ` (${feed.debug.slice(0, 160)})` : ""}` }).eq("key", e.key);
+      return { jobs: feed.jobs.length, blr: 0, gone: 0, held: true };
+    }
+  }
   const rows = feed.jobs.map((j) => ({
     source: feed.system, source_id: `${feed.ref}:${j.id}`, employer_key: e.key, company_name: feed.company_name ?? e.name,
     title: j.title.slice(0, 300), location: (j.location ?? "").slice(0, 300), url: j.url, posted_at: j.posted_at, updated_at_src: j.updated_at, posted_text: j.posted_text,
@@ -22,7 +36,7 @@ export async function recordFeed(e: Employer, feed: Feed) {
   const { data: gone } = await db.from("sightings").update({ gone_at: now }).eq("employer_key", e.key).eq("source", feed.system).is("gone_at", null).lt("last_seen", now).select("id");
   const blr = rows.filter((r) => r.blr).length;
   await db.from("employers").update({ read_at: now, read_error: null, openings: rows.length, blr_openings: blr }).eq("key", e.key);
-  return { jobs: rows.length, blr, gone: gone?.length ?? 0 };
+  return { jobs: rows.length, blr, gone: gone?.length ?? 0, held: false };
 }
 
 /** Read one employer by its stored system + ref. */

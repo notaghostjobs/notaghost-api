@@ -1,6 +1,6 @@
 // The hiring systems of the largest Bengaluru employers. Every reader asks for Bengaluru directly; none crawls a global board.
 // Each returns `debug` so the self-test shows how the read went.
-import { getJson, getText } from "../http.js";
+import { getJson, getText, ROBOTS_STATUS } from "../http.js";
 import type { Feed, FeedJob, System } from "./types.js";
 
 const iso = (v: unknown): string | null => { if (!v) return null; const d = typeof v === "number" ? new Date(v < 1e12 ? v * 1000 : v) : new Date(String(v)); return isNaN(d.getTime()) ? null : d.toISOString(); };
@@ -15,7 +15,7 @@ export const amazon: System = {
     for (const city of ["Bengaluru", "Bangalore"]) {
       for (let offset = 0; offset < 3000; offset += 100) {
         const r = await getJson<any>(`https://www.amazon.jobs/en/search.json?normalized_country_code[]=IND&normalized_city_name[]=${encodeURIComponent(city)}&offset=${offset}&result_limit=100&sort=recent`, { headers: BROWSERISH, gapMs: 600 });
-        if (!r.ok || !r.data) { diag.push(`${city}@${offset} HTTP ${r.status}`); break; }
+        if (!r.ok || !r.data) { if (offset === 0 && city === "Bengaluru") throw new Error(`amazon: HTTP ${r.status}`); diag.push(`${city}@${offset} HTTP ${r.status}`); break; }
         hits = r.data.hits ?? hits; const page: any[] = r.data.jobs ?? [];
         for (const x of page) jobs.push({ id: String(x.id_icims ?? x.id), title: x.title ?? "", location: x.normalized_location ?? [x.city, x.state, x.country_code].filter(Boolean).join(", "), url: `https://www.amazon.jobs${x.job_path}`, posted_at: iso(x.posted_date), updated_at: iso(x.updated_time), posted_text: null });
         if (page.length < 100 || offset + 100 >= hits) break;
@@ -35,7 +35,7 @@ export const google: System = {
     const jobs: FeedJob[] = []; const diag: string[] = []; const seen = new Set<string>();
     for (let page = 1; page <= 60; page++) {
       const r = await getText(`https://www.google.com/about/careers/applications/jobs/results/?location=Bengaluru%2C%20Karnataka%2C%20India&page=${page}`, { headers: BROWSERISH, gapMs: 800, timeoutMs: 25000 });
-      if (!r.ok) { diag.push(`page ${page} HTTP ${r.status}`); break; }
+      if (!r.ok) { if (page === 1) throw new Error(`google: HTTP ${r.status}`); diag.push(`page ${page} HTTP ${r.status}`); break; }
       let fresh = 0;
       for (const m of r.text.matchAll(/href="(?:https:\/\/www\.google\.com\/about\/careers\/applications)?\/?jobs\/results\/(\d+)-([^"?#]+)[^"]*"[^>]*>([\s\S]{0,400}?)<\/a>/gi)) {
         const id = m[1]; if (seen.has(id)) continue; seen.add(id); fresh++;
@@ -123,7 +123,7 @@ export const oracle: System = {
       let got = 0;
       for (let offset = 0; offset < 5000; offset += 100) {
         const r = await api(`${finder},limit=100,offset=${offset},sortBy=POSTING_DATES_DESC`);
-        if (!r.ok || !r.data) { diag.push(`${label}@${offset} HTTP ${r.status}`); break; }
+        if (!r.ok || !r.data) { if (offset === 0 && (r.status === ROBOTS_STATUS || r.status === 403 || r.status === 429 || r.status === 0)) throw new Error(`oracle ${label}: HTTP ${r.status}`); diag.push(`${label}@${offset} HTTP ${r.status}`); break; }
         const item = r.data.items?.[0] ?? {}; total = item.TotalJobsCount ?? total; const list: any[] = item.requisitionList ?? [];
         got += list.length; take(list);
         if (list.length < 100 || offset + 100 >= total) break;
