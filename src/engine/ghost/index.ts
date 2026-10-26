@@ -1,6 +1,6 @@
 // Orchestrates the ghost check. Rule: a posting's score only changes when a FACT changes, and every change is logged.
 import { db } from "../../lib/db.js";
-import { readPosting, extractFacts, daysFromText } from "./read.js";
+import { readPosting, extractFacts, extractFactsRules, daysFromText } from "./read.js";
 import { findAts, matchTitle } from "./ats.js";
 import { research } from "./research.js";
 import { score } from "./score.js";
@@ -17,7 +17,7 @@ export interface CheckResult extends Scored {
 }
 
 /** Check a link (or pasted text). Returns the stored score if it's current; computes and stores otherwise. */
-export async function ghostCheck(input: { url?: string; text?: string; page?: { title?: string; company?: string; location?: string; posted_text?: string; applicants?: number; apply_url?: string } }, opts: { force?: boolean } = {}): Promise<CheckResult> {
+export async function ghostCheck(input: { url?: string; text?: string; page?: { title?: string; company?: string; location?: string; posted_text?: string; applicants?: number; apply_url?: string } }, opts: { force?: boolean; quick?: boolean } = {}): Promise<CheckResult> {
   const url = input.url ? (/^https?:\/\//i.test(input.url) ? input.url.trim() : `https://${input.url.trim()}`) : null;
   const key = url ? jobKey(url).key : `text:${fingerprint(input.text ?? "").slice(0, 24)}`;
 
@@ -36,7 +36,9 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   const raw = url && input.text && input.text.length >= 80
     ? { text: input.text, source: jobKey(url).source, title: input.page?.title ?? null, company: input.page?.company ?? null, location: input.page?.location ?? null, posted_text: input.page?.posted_text ?? null, applicants: input.page?.applicants ?? null, apply_url: input.page?.apply_url ?? null, posted_days: daysFromText(input.page?.posted_text ?? null) }
     : url ? await readPosting(url) : { text: input.text!, source: "pasted" as const };
-  const a = await extractFacts(raw, url ?? "pasted");
+  // quick = the ₹0 reading: rules + the reader, no model, no web research. The default for every free check.
+  const quick = opts.quick !== false;
+  const a = quick ? extractFactsRules(raw, url ?? "pasted") : await extractFacts(raw, url ?? "pasted");
   const facts: PostingFacts = { ...a, read_at: new Date().toISOString(), source: raw.source, url: url ?? "", job_key: key, description: raw.text.slice(0, 20000) };
   if (facts.posted_days == null && facts.posted_text) facts.posted_days = daysFromText(facts.posted_text);
   const ckey = companyKey(facts.company || "");
@@ -64,9 +66,9 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
       // own-system detection by probing: only for companies the reader does not know at all (free, http only)
       !rf.known && stale(company.ats_checked, TTL.ats) ? findAts(facts.company, raw.apply_url ?? null, company.domain).catch(() => null) : null,
       // boards research (≈ ₹3–5, cached 7 days per company+title): skipped when the employer's own system confirms a fresh posting
-      !confirmedFresh && stale(company.research?.[titleKey(facts.title)]?.checked_at, TTL.boards) ? research.boards(facts.company, facts.title, facts.location).catch(() => null) : null,
+      !quick && !confirmedFresh && stale(company.research?.[titleKey(facts.title)]?.checked_at, TTL.boards) ? research.boards(facts.company, facts.title, facts.location).catch(() => null) : null,
       // news (≈ ₹3, cached 7 days): only when the reader could not confirm the role on the company's own system
-      !(readable && rf.ats!.found) && stale(company.news?.checked_at, TTL.news) ? research.news(facts.company).catch(() => null) : null,
+      !quick && !(readable && rf.ats!.found) && stale(company.news?.checked_at, TTL.news) ? research.news(facts.company).catch(() => null) : null,
     ]);
     const now = new Date().toISOString();
     const patch: any = { name: facts.company, updated_at: now };

@@ -3,7 +3,7 @@ import { json, FAST } from "../claude.js";
 import { jobKey } from "./canon.js";
 import type { PostingFacts } from "./types.js";
 
-const UA = "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello.jobs)";
+const UA = "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello@notaghost.jobs)";
 const H = { "user-agent": UA, "accept-language": "en-IN,en;q=0.9", accept: "text/html,application/json;q=0.9,*/*;q=0.8" };
 const get = (u: string, extra: Record<string, string> = {}) => fetch(u, { headers: { ...H, ...extra }, redirect: "follow", signal: AbortSignal.timeout(15000) });
 
@@ -100,7 +100,45 @@ export async function readPosting(url: string): Promise<RawRead> {
 }
 
 /** The model reads the text and reports ONLY what is literally there. Deterministic enough: temperature 0, facts not opinions. */
-export async function extractFacts(raw: RawRead, url: string): Promise<Omit<PostingFacts, "job_key" | "read_at" | "source" | "url" | "description">> {
+type Extracted = Omit<PostingFacts, "job_key" | "read_at" | "source" | "url" | "description">;
+
+/** The ₹0 reading: every fact a rule can read from the text, no model. What a rule cannot see stays null/false
+ *  and the score treats it as "not checked" rather than guessing. The free check runs on this; the model reading
+ *  is reserved for paid flows. */
+export function extractFactsRules(raw: RawRead, url: string): Extracted {
+  const text = raw.text ?? ""; const low = text.toLowerCase();
+  const title = (raw.title ?? "").trim(); const company = (raw.company ?? "").trim(); const location = (raw.location ?? "").trim();
+  const posted_text = raw.posted_text ?? ((text.match(/\b(?:re-?posted\s+)?\d+\s+(?:minute|hour|day|week|month)s?\s+ago\b/i) || [])[0] ?? null);
+  const posted_days = raw.posted_days ?? daysFromText(posted_text);
+  const applicants = raw.applicants ?? (() => { const m = text.match(/(?:over\s+)?(\d[\d,]*)\+?\s*(?:applicants|people clicked apply)/i); return m ? Number(m[1].replace(/,/g, "")) : null; })();
+  const locParts = location.split(/\s*(?:\/|\||·|;)\s*/).map((s) => s.trim()).filter(Boolean);
+  const locations_count = Math.max(1, new Set(locParts.map((s) => s.toLowerCase())).size + (/\bremote\b/i.test(location) && !/remote/i.test(locParts.join()) ? 1 : 0));
+  const pay_stated = /(?:₹|rs\.?|inr|\$|usd|eur|£)\s?\d[\d,.]*\s*(?:k|l|lpa|lakhs?|cr)?(?:\s*(?:-|–|to)\s*(?:₹|rs\.?|inr|\$)?\s?\d[\d,.]*\s*(?:k|l|lpa|lakhs?|cr)?)?|\b\d{1,3}(?:\.\d)?\s*(?:lpa|lakhs?\b|lacs?\b)|\bctc\s*[:\-]?\s*\d|per annum\s*[:\-]?\s*\d/i.test(text);
+  const evergreen = /talent (?:community|pool|network)|future opportunit|always looking|multiple openings|across (?:all )?levels|open pipeline|ongoing requirement|evergreen/i.test(low);
+  const specific = /\b(?:you will|you'll|responsib|our team|the team|this role|reporting to|manager|product|platform|customers?|stakeholders?|roadmap|own the|lead the)\b/i;
+  const templated = text.length < 250 || !specific.test(text);
+  const yrs = low.match(/(\d{1,2})\s*(?:\+|-|–|to)?\s*(?:\d{1,2})?\s*\+?\s*(?:years?|yrs?)/); const minYears = yrs ? Number(yrs[1]) : null;
+  const senior = /\b(senior|sr\.?|lead|principal|staff|director|head|vp|manager)\b/i.test(title);
+  const musts = (text.match(/\bmust\b|\brequired\b|\bmandatory\b/gi) || []).length;
+  const kitchen_sink = (senior && minYears != null && minYears <= 2) || musts >= 15;
+  const email = text.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/); const form = text.match(/https?:\/\/(?:forms\.gle|docs\.google\.com\/forms|[\w.-]*typeform\.com|[\w.-]*jotform\.com)[^\s"')]*/i);
+  const dm = /\b(?:whatsapp|telegram)\b[^.\n]{0,40}\b(?:\+?\d[\d\s-]{8,})/i.test(text) || /\b(?:dm|message) (?:me|us) (?:on|at|via)\b/i.test(low);
+  const sendCv = /\b(?:send|share|mail|email|forward)\b[^.\n]{0,40}\b(?:cv|resume|résumé|profile)\b/i.test(text);
+  const apply_route: PostingFacts["apply_route"] = raw.apply_url ? "system" : form ? "external_form" : dm ? "dm" : email && sendCv ? "email" : /\bapply\b/i.test(text) ? "system" : "unknown";
+  const apply_domain = raw.apply_url ? safeHost(raw.apply_url) : form ? safeHost(form[0]) : email ? email[0].split("@")[1].toLowerCase() : null;
+  const agency = /\b(?:our client|leading client|a leading (?:mnc|company|organisation|organization)|client of ours|hiring for (?:a|an|our) (?:client|reputed)|staffing|consultancy|recruitment (?:firm|agency))\b/i.test(low);
+  const scam_tells: string[] = [];
+  if (/\b(?:registration|processing|security|training|joining|document(?:ation)?)\s+(?:fee|charge|deposit|amount)\b|\bpay(?:ment)? (?:to|before) (?:apply|join)|\brefundable (?:deposit|amount)\b/i.test(low)) scam_tells.push("a fee or deposit is asked for");
+  if (/\bguaranteed (?:job|placement|selection)\b|\bno interview\b|\bdirect joining\b/i.test(low)) scam_tells.push("guaranteed job / no interview");
+  if (/\b(?:earn|income) (?:from|at) home\b|\bwork from home\b[^.\n]{0,60}\b(?:daily|weekly) (?:payout|payment)\b|\bpart[- ]time\b[^.\n]{0,40}\b(?:earn|per day)\b/i.test(low) && !company) scam_tells.push("earn-from-home pitch with no employer");
+  if (/\b(?:bank|account) details\b|\botp\b|\baadhaar\b[^.\n]{0,30}\bupload\b|\bpan card\b[^.\n]{0,30}\bupload\b/i.test(low)) scam_tells.push("asks for bank/OTP/ID details");
+  if (dm && !raw.apply_url) scam_tells.push("WhatsApp/Telegram-only contact");
+  const poster = raw.poster ? { name: raw.poster.name, is_recruiter_account: /\b(talent acquisition|recruit|staffing|hiring)\b/i.test(raw.poster.name ?? "") ? true : null, account_age_months: null } : null;
+  void url;
+  return { title, company, location, locations_count, posted_text, posted_days, applicants, pay_stated, templated, evergreen, kitchen_sink, apply_route, apply_domain, contact_present: !!(email || dm), agency, scam_tells, poster };
+}
+
+export async function extractFacts(raw: RawRead, url: string): Promise<Extracted> {
   const r = await json<any>(
     `You read a job posting (text extracted from a page; may contain navigation noise) and report only what is literally present. Never guess. Answer every field.
 - posted_days: convert "1 month ago"→30, "3 weeks ago"→21, "Reposted 2 days ago"→2, a date→days since; null if not stated.
