@@ -11,7 +11,7 @@ export async function recordFeed(e: Employer, feed: Feed) {
   // Circuit breaker: a read that comes back empty (or collapses to under a fifth) where roles were live is far more
   // likely a refusal, a maintenance page or a broken pager than a hiring freeze. Keep what we have, say so, retry
   // on the next cycle; accept the drop only once it has held for three consecutive reads.
-  const { count: liveBefore } = await db.from("sightings").select("*", { count: "exact", head: true }).eq("employer_key", e.key).eq("source", feed.system).is("gone_at", null);
+  const { count: liveBefore } = await db.from("sightings").select("*", { count: "exact", head: true }).eq("source", feed.system).like("source_id", `${feed.ref}:%`).is("gone_at", null);
   const before = liveBefore ?? 0;
   if (before > 0 && (feed.jobs.length === 0 || (before >= 50 && feed.jobs.length < before / 5))) {
     const { data: prev } = await db.from("employers").select("read_error").eq("key", e.key).maybeSingle();
@@ -32,10 +32,11 @@ export async function recordFeed(e: Employer, feed: Feed) {
     const { error } = await db.from("sightings").upsert(rows.slice(i, i + 500), { onConflict: "source,source_id" });
     if (error) throw new Error(`sightings upsert: ${error.message}`);
   }
-  // anything from this employer+system not seen this run is gone
-  const { data: gone } = await db.from("sightings").update({ gone_at: now }).eq("employer_key", e.key).eq("source", feed.system).is("gone_at", null).lt("last_seen", now).select("id");
+  // anything from this feed not seen this run is gone (by feed, not employer row: several rows may share one feed)
+  const { data: gone } = await db.from("sightings").update({ gone_at: now }).eq("source", feed.system).like("source_id", `${feed.ref}:%`).is("gone_at", null).lt("last_seen", now).select("id");
   const blr = rows.filter((r) => r.blr).length;
-  await db.from("employers").update({ read_at: now, read_error: null, openings: rows.length, blr_openings: blr }).eq("key", e.key);
+  // every employer row on this feed is now read
+  await db.from("employers").update({ read_at: now, read_error: null, openings: rows.length, blr_openings: blr }).eq("ats", feed.system).eq("ats_ref", feed.ref);
   return { jobs: rows.length, blr, gone: gone?.length ?? 0, held: false };
 }
 
@@ -52,7 +53,10 @@ export async function readEmployer(e: Employer) {
 export async function readDue(limit = 200, staleHours = 20, concurrency = 3) {
   const since = new Date(Date.now() - staleHours * 3600e3).toISOString();
   const { data } = await db.from("employers").select("key, name, ats, ats_ref").not("ats", "is", null).not("ats", "in", '("none")').or(`read_at.is.null,read_at.lt.${since}`).order("read_at", { ascending: true, nullsFirst: true }).limit(limit);
-  const q = [...(data ?? [])]; const stats = { employers: 0, jobs: 0, blr: 0, gone: 0, errors: 0 };
+  // one read per distinct feed: rows that share a system + ref are satisfied by the same read
+  const seenFeed = new Set<string>();
+  const q = (data ?? []).filter((e) => { const k = `${e.ats}|${e.ats_ref}`; if (seenFeed.has(k)) return false; seenFeed.add(k); return true; });
+  const stats = { employers: 0, jobs: 0, blr: 0, gone: 0, errors: 0 };
   async function worker() {
     for (;;) {
       const e = q.shift(); if (!e) return;

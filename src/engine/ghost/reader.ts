@@ -18,7 +18,14 @@ export interface ReaderFacts {
 
 /** Look the employer up in the reader; match the title against its live sightings. Unknown employers are queued for the resolver. */
 export async function readerFacts(ckey: string, company: string, title: string, url: string | null): Promise<ReaderFacts> {
-  const { data: e } = await db.from("employers").select("key, name, ats, ats_ref, careers_url, openings, blr_openings, resolved_at").eq("key", ckey).maybeSingle();
+  const cols = "key, name, ats, ats_ref, careers_url, openings, blr_openings, resolved_at";
+  let { data: e } = await db.from("employers").select(cols).eq("key", ckey).maybeSingle();
+  // "Amazon" may be held as "Amazon India" / "Amazon Development Center India" / …: when the exact key has no readable
+  // system, take the best-resolved row whose key starts with the name (most Bengaluru openings wins)
+  if (ckey.length >= 4 && (!e || !e.ats || e.ats === "none")) {
+    const { data: alts } = await db.from("employers").select(cols).like("key", `${ckey} %`).not("ats", "is", null).neq("ats", "none").order("blr_openings", { ascending: false, nullsFirst: false }).limit(1);
+    if (alts?.[0]) e = alts[0];
+  }
   if (!e) {
     // first time anyone pasted this company: the worker resolves it (priority 1, within the research budget); next check is free
     await db.from("employers").upsert({ key: ckey, name: company, source: "check", priority: 1 }, { onConflict: "key", ignoreDuplicates: true });
@@ -27,8 +34,9 @@ export async function readerFacts(ckey: string, company: string, title: string, 
   if (!e.resolved_at || !e.ats) return { known: true, system: null, ats: null, openings: null, blr_openings: null, live: 0, by_url: false, evidence: "company queued for the reader; system not identified yet" };
   if (e.ats === "none") return { known: true, system: "none", ats: null, openings: null, blr_openings: null, live: 0, by_url: false, evidence: "company publishes no readable hiring list" };
 
+  // the feed is the identity, not the employer row: several rows can share one hiring-system feed
   const { data: rows } = await db.from("sightings").select("source_id, title, location, url, posted_at, first_seen, last_seen, gone_at, blr")
-    .eq("employer_key", ckey).order("gone_at", { ascending: true, nullsFirst: true }).order("last_seen", { ascending: false }).limit(3000);
+    .eq("source", e.ats).like("source_id", `${e.ats_ref}:%`).order("gone_at", { ascending: true, nullsFirst: true }).order("last_seen", { ascending: false }).limit(3000);
   const all = rows ?? [];
   const live = all.filter((s) => !s.gone_at);
   const jobs: AtsJob[] = live.map((s) => ({ id: s.source_id, title: s.title ?? "", location: s.location ?? "", created_at: s.posted_at ?? s.first_seen, updated_at: s.last_seen, url: s.url ?? "" }));

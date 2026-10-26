@@ -119,8 +119,8 @@ export function extractFactsRules(raw: RawRead, url: string): Extracted {
   const templated = text.length < 250 || !specific.test(text);
   const yrs = low.match(/(\d{1,2})\s*(?:\+|-|–|to)?\s*(?:\d{1,2})?\s*\+?\s*(?:years?|yrs?)/); const minYears = yrs ? Number(yrs[1]) : null;
   const senior = /\b(senior|sr\.?|lead|principal|staff|director|head|vp|manager)\b/i.test(title);
-  const musts = (text.match(/\bmust\b|\brequired\b|\bmandatory\b/gi) || []).length;
-  const kitchen_sink = (senior && minYears != null && minYears <= 2) || musts >= 15;
+  // only the unambiguous case without a model: a senior title asking for two years or less
+  const kitchen_sink = senior && minYears != null && minYears <= 2;
   const email = text.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/); const form = text.match(/https?:\/\/(?:forms\.gle|docs\.google\.com\/forms|[\w.-]*typeform\.com|[\w.-]*jotform\.com)[^\s"')]*/i);
   const dm = /\b(?:whatsapp|telegram)\b[^.\n]{0,40}\b(?:\+?\d[\d\s-]{8,})/i.test(text) || /\b(?:dm|message) (?:me|us) (?:on|at|via)\b/i.test(low);
   const sendCv = /\b(?:send|share|mail|email|forward)\b[^.\n]{0,40}\b(?:cv|resume|résumé|profile)\b/i.test(text);
