@@ -5,7 +5,7 @@ import { findAts, matchTitle } from "./ats.js";
 import { research } from "./research.js";
 import { score } from "./score.js";
 import { readerFacts } from "./reader.js";
-import { jobKey, strip, companyKey, fingerprint, hamming } from "./canon.js";
+import { jobKey, strip, companyKey, fingerprint, hamming, stripFurniture } from "./canon.js";
 import type { PostingFacts, Scored } from "./types.js";
 
 const DAY = 86400e3;
@@ -36,6 +36,7 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   const raw = url && input.text && input.text.length >= 80
     ? { text: input.text, source: jobKey(url).source, title: input.page?.title ?? null, company: input.page?.company ?? null, location: input.page?.location ?? null, posted_text: input.page?.posted_text ?? null, applicants: input.page?.applicants ?? null, apply_url: input.page?.apply_url ?? null, posted_days: daysFromText(input.page?.posted_text ?? null) }
     : url ? await readPosting(url) : { text: input.text!, source: "pasted" as const };
+  raw.text = stripFurniture(raw.text);   // the job, not the job board's panels around it
   // quick = the ₹0 reading: rules + the reader, no model, no web research. The default for every free check.
   const quick = opts.quick !== false;
   const a = quick ? extractFactsRules(raw, url ?? "pasted") : await extractFacts(raw, url ?? "pasted");
@@ -51,7 +52,9 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   // 3. same text under other companies (signal 7) — our own index
   if (ckey) {
     const { data: sims } = await db.from("postings").select("company_key, fingerprint").neq("company_key", ckey).not("fingerprint", "is", null).limit(2000);
-    facts.same_text_companies = [...new Set((sims ?? []).filter((s) => s.fingerprint && hamming(s.fingerprint, fp) <= 16).map((s) => s.company_key as string))].slice(0, 5);
+    const same = [...new Set((sims ?? []).filter((s) => s.fingerprint && hamming(s.fingerprint, fp) <= 16).map((s) => s.company_key as string))];
+    // a text shared by a handful of employers is an agency's; one shared by many is the job board's own furniture leaking through — not a signal
+    facts.same_text_companies = same.length > 8 ? [] : same.slice(0, 5);
   }
 
   // 4. company-level facts. Layer B comes from the reader (free). Research (paid, cached per company) runs only where the reader cannot answer.

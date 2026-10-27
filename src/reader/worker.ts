@@ -10,6 +10,7 @@ import { isBlr } from "./blr.js";
 import { seedTier1, checkTier1, type Tier1Row } from "./tier1.js";
 import { probeUrl } from "./probe.js";
 import { enrichDue } from "./enrich.js";
+import { fingerprint, stripFurniture } from "../engine/ghost/canon.js";
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), "[reader]", ...a);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -153,6 +154,22 @@ async function setPriorities() {
     }
     log("restore", `${restored} sightings across ${employers} employers`);
     await setControl("restore_v1", { at: new Date().toISOString(), restored, employers });
+  });
+  // 27 Oct: LinkedIn's split view leaked its "compare / Premium / about the company" panels into the stored postings; every
+  // such posting then looked like a near-copy of every other and signal 7 fired on all of them. Re-fingerprint from the
+  // posting alone, and let any row whose fingerprint moved be re-scored on its next check.
+  await onceOnly("refingerprint-furniture-v1", async () => {
+    let changed = 0, seen = 0;
+    const { data: rows } = await db.from("postings").select("id, raw_text, fingerprint").not("raw_text", "is", null).limit(5000);
+    for (const p of rows ?? []) {
+      seen++;
+      const clean = stripFurniture(p.raw_text);
+      const fp = fingerprint(clean);
+      if (fp === p.fingerprint) continue;
+      changed++;
+      await db.from("postings").update({ raw_text: clean, fingerprint: fp, scored_at: null, next_check: null }).eq("id", p.id);
+    }
+    log("refingerprint", `${changed} of ${seen} postings changed`);
   });
   await onceOnly("enrich-retry-workday-v1", async () => { const { error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).eq("source", "workday").is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null); if (error) log("enrich retry", error.message); });
 }

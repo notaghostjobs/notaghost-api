@@ -1,5 +1,7 @@
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
+import { db } from "../lib/db.js";
+import { jobKey, stripFurniture } from "./ghost/canon.js";
 
 /** Plain text out of a PDF or DOCX résumé. No AI here. */
 export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number }> {
@@ -21,6 +23,13 @@ function clean(s: string) {
 
 /** Fetch a posting URL and reduce it to readable text. Pasted text goes straight through. */
 export async function fetchPosting(url: string): Promise<string> {
+  // the user's own browser usually read this posting seconds ago (the card) and sent it to us; that copy beats any
+  // server fetch — and job boards like Naukri refuse the server outright
+  try {
+    const { key } = jobKey(url);
+    const { data: seen } = await db.from("postings").select("raw_text").eq("job_key", key).not("raw_text", "is", null).order("last_seen_at", { ascending: false }).limit(1).maybeSingle();
+    if (seen?.raw_text && seen.raw_text.length >= 200) return stripFurniture(seen.raw_text);
+  } catch { /* fall through to a fetch */ }
   // LinkedIn: the guest endpoint returns the posting without a login wall and rarely rate-limits
   const li = url.match(/linkedin\.com\/jobs\/view\/(?:[^/?]*-)?(\d{6,})/i);
   if (li) {

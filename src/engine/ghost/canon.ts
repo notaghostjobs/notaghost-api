@@ -38,6 +38,24 @@ export function companyKey(name: string) {
     .replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * The posting without the job board's furniture. LinkedIn's split view puts "see how you compare", the Premium
+ * module, "about the company" and the footer inside the job pane; read as part of the description they make every
+ * posting look like every other. Cut from the first such heading after the description starts.
+ */
+const FURNITURE_END = /\n\s*(?:About the company|See how you compare(?: to other applicants)?|Applicants for this job|Premium\s*\n|Explore Premium|People you can reach out to|Set alert for similar jobs|Looking for talent\??|Similar jobs|More jobs for you|Jobs you might be interested in|Referrals increase your chances|Skills match|Job search faster|Requirements added by the job poster|How you match|Get personalized tips)/i;
+const FURNITURE_LINES = /^\s*(?:Premium|Determine your fit and how to stand out|Job match is \w+, we can help you stand out|Your profile and resume match.*|Show match details|Tailor my resume|Help me stand out|Create cover letter|BETA\s*·.*|Is this information helpful\??|No response insights available yet|Responses managed off LinkedIn|Promoted by hirer|Easy Apply|Apply|Save|Show all|more|…see more|See more|Show less)\s*$/gim;
+export function stripFurniture(text: string) {
+  if (!text) return text;
+  const start = text.search(/About the job/i);
+  // the head is our own five lines (title, company, location, posted, applicants); anything else before "About the job" is the board's
+  const head = start > 0 ? text.slice(0, start).split("\n").slice(0, 6).join("\n").trimEnd() + "\n\n" : "";
+  let body = start >= 0 ? text.slice(start) : text;
+  const end = body.slice(14).search(FURNITURE_END);
+  if (end >= 0) body = body.slice(0, 14 + end);
+  return (head + body).replace(FURNITURE_LINES, "").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 /** 64-bit simhash over word shingles; near-duplicate descriptions share most bits. */
 export function fingerprint(text: string) {
   const words = text.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2);
