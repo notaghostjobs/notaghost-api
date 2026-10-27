@@ -23,7 +23,9 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
 
   // 1. existing, current score → return as-is (this is the stability rule)
   const { data: existing } = await db.from("postings").select("*").eq("job_key", key).maybeSingle();
-  if (existing?.scored_at && !opts.force) {
+  // a stored verdict carrying the retired signal 7 is re-scored on sight, whatever its age
+  const tainted = Array.isArray(existing?.signals) && (existing!.signals as any[]).some((s) => s?.n === 7);
+  if (existing?.scored_at && !opts.force && !tainted) {
     const age = Date.now() - new Date(existing.scored_at).getTime();
     if (age < TTL.userRecheck || (existing.next_check && new Date(existing.next_check).getTime() > Date.now())) {
       await db.from("postings").update({ checks: (existing.checks ?? 0) + 1 }).eq("id", existing.id);

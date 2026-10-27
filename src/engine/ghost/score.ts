@@ -21,7 +21,9 @@ export function score(f: PostingFacts): Scored {
   if (f.kitchen_sink) bad(5, 4, "Kitchen-sink requirements —", "unrelated stacks or an unrealistic must-have list");
   if (f.apply_route === "email" || f.apply_route === "dm") bad(6, 8, "Off-system apply route —", f.apply_route === "dm" ? "“DM me” / WhatsApp" : "email your CV to a personal address");
   else if (f.apply_route === "external_form" && f.apply_domain) bad(6, 8, "Apply form on an unrelated domain —", f.apply_domain);
-  if ((f.same_text_companies?.length ?? 0) >= 1) bad(7, 4, "Same description posted under", `${f.same_text_companies!.length + 1} employers`, "— agency boilerplate");
+  // signal 7 (same text under other employers) is OFF until the posting index is clean: 27 Oct split-view reads cross-filed
+  // text between jobs, and a duplicate check over a polluted index accuses honest postings. Turn back on with SIGNAL7=on.
+  if (process.env.SIGNAL7 === "on" && (f.same_text_companies?.length ?? 0) >= 1) bad(7, 4, "Same description posted under", `${f.same_text_companies!.length + 1} employers`, "— agency boilerplate");
 
   // ---------- B. the company's own hiring system ----------
   if (f.ats && f.ats.system !== "unknown" && f.ats.system !== "none") {
