@@ -171,6 +171,14 @@ async function setPriorities() {
     }
     log("refingerprint", `${changed} of ${seen} postings changed`);
   });
+  // 27 Oct: the extension read LinkedIn's split view before the pane repainted, filing one job's text under another job's id.
+  // Those rows (LinkedIn, first seen today IST) cannot be trusted at all: blank their text and fingerprint so they neither
+  // match other postings nor feed the panel; the next check on each re-reads the page properly.
+  await onceOnly("purge-crossfiled-splitview-v1", async () => {
+    const { data, error } = await db.from("postings").update({ raw_text: "", fingerprint: null, scored_at: null, next_check: null, signals: null, score: null, verdict: null })
+      .eq("source", "linkedin").gte("first_seen_at", "2026-10-26T18:30:00Z").select("id");
+    log("purge cross-filed", error ? error.message : `${data?.length ?? 0} rows`);
+  });
   await onceOnly("enrich-retry-workday-v1", async () => { const { error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).eq("source", "workday").is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null); if (error) log("enrich retry", error.message); });
 }
 
