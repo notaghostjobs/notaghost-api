@@ -1,7 +1,7 @@
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import { db } from "../lib/db.js";
-import { jobKey, stripFurniture } from "./ghost/canon.js";
+import { jobKey, stripFurniture, CLEAN_SINCE } from "./ghost/canon.js";
 
 /** Plain text out of a PDF or DOCX résumé. No AI here. */
 export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number }> {
@@ -27,8 +27,9 @@ export async function fetchPosting(url: string): Promise<string> {
   // server fetch — and job boards like Naukri refuse the server outright
   try {
     const { key } = jobKey(url);
-    const { data: seen } = await db.from("postings").select("raw_text").eq("job_key", key).not("raw_text", "is", null).order("last_seen_at", { ascending: false }).limit(1).maybeSingle();
-    if (seen?.raw_text && seen.raw_text.length >= 200) return stripFurniture(seen.raw_text);
+    const { data: seen } = await db.from("postings").select("raw_text, source, scored_at").eq("job_key", key).not("raw_text", "is", null).order("last_seen_at", { ascending: false }).limit(1).maybeSingle();
+    const trusted = !!seen?.raw_text && seen.raw_text.length >= 200 && !(seen.source === "linkedin" && (!seen.scored_at || seen.scored_at < CLEAN_SINCE));
+    if (trusted) return stripFurniture(seen!.raw_text);
   } catch { /* fall through to a fetch */ }
   // LinkedIn: the guest endpoint returns the posting without a login wall and rarely rate-limits
   const li = url.match(/linkedin\.com\/jobs\/view\/(?:[^/?]*-)?(\d{6,})/i);

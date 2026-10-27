@@ -38,6 +38,9 @@ export function companyKey(name: string) {
     .replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** LinkedIn rows scored before this instant may hold another job's text (split-view misread); nothing stored before it is trusted. */
+export const CLEAN_SINCE = "2026-10-27T08:20:00.000Z";
+
 /**
  * The posting without the job board's furniture. LinkedIn's split view puts "see how you compare", the Premium
  * module, "about the company" and the footer inside the job pane; read as part of the description they make every

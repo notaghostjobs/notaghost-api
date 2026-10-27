@@ -5,7 +5,7 @@ import { findAts, matchTitle } from "./ats.js";
 import { research } from "./research.js";
 import { score } from "./score.js";
 import { readerFacts } from "./reader.js";
-import { jobKey, strip, companyKey, fingerprint, hamming, stripFurniture } from "./canon.js";
+import { jobKey, strip, companyKey, fingerprint, hamming, stripFurniture, CLEAN_SINCE } from "./canon.js";
 import type { PostingFacts, Scored } from "./types.js";
 
 const DAY = 86400e3;
@@ -23,8 +23,10 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
 
   // 1. existing, current score → return as-is (this is the stability rule)
   const { data: existing } = await db.from("postings").select("*").eq("job_key", key).maybeSingle();
-  // a stored verdict carrying the retired signal 7 is re-scored on sight, whatever its age
-  const tainted = Array.isArray(existing?.signals) && (existing!.signals as any[]).some((s) => s?.n === 7);
+  // Every LinkedIn verdict scored before the split-view misread was fixed (extension 0.3.3, 27 Oct 08:20Z) may carry another
+  // job's text. Such a row is re-read and re-scored on sight, with its history started afresh — the old entries were wrong.
+  const tainted = (Array.isArray(existing?.signals) && (existing!.signals as any[]).some((s) => s?.n === 7))
+    || (existing?.source === "linkedin" && !!existing?.scored_at && existing.scored_at < CLEAN_SINCE);
   if (existing?.scored_at && !opts.force && !tainted) {
     const age = Date.now() - new Date(existing.scored_at).getTime();
     if (age < TTL.userRecheck || (existing.next_check && new Date(existing.next_check).getTime() > Date.now())) {
@@ -111,7 +113,7 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   const s = score(facts);
   const prev = existing?.score;
   const why = existing?.scored_at ? diffWhy(existing.signals ?? [], s.signals) : "first check";
-  const history = [...(existing?.history ?? [])];
+  const history = tainted ? [] : [...(existing?.history ?? [])];
   if (!existing?.scored_at || prev !== s.score || existing.verdict !== s.verdict) history.push({ at: new Date().toISOString(), score: s.score, verdict: s.verdict, why });
   await db.from("postings").update({
     company: facts.company, title: facts.title, company_key: ckey, fingerprint: fp, raw_text: raw.text,
