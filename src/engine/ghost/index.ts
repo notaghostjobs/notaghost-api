@@ -16,8 +16,25 @@ export interface CheckResult extends Scored {
   scored_at: string; history: { at: string; score: number; verdict: string; why: string }[]; note: string; fresh: boolean;
 }
 
+/**
+ * One row per view. The extension hands us what the board showed the user today — applicant count, "posted" text, whether the
+ * board says it's closed — and that series (not the first view alone) is where applicants-per-day and board-closed dates come from.
+ */
+async function observe(postingId: string, page: { posted_text?: string; applicants?: number; closed?: boolean; source?: string } | undefined, extra: { posted_text?: string | null; applicants?: number | null; hash?: string } = {}) {
+  if (!page && !extra.hash) return;
+  const closed = page?.closed === true;
+  const row: Record<string, unknown> = { posting_id: postingId, present: !closed, posted_text: page?.posted_text ?? extra.posted_text ?? null, applicants: page?.applicants ?? extra.applicants ?? null, hash: extra.hash ?? null, status: closed ? "closed" : "open", source: page?.source ?? (page ? "extension" : "site") };
+  let { error } = await db.from("observations").insert(row);
+  if (error && /column/i.test(error.message)) { delete row.status; delete row.source; ({ error } = await db.from("observations").insert(row)); }  // before migration 0009
+  if (error) console.error("[check] observe", error.message);
+  if (closed) {
+    const { error: e2 } = await db.from("postings").update({ closed_at: new Date().toISOString() }).eq("id", postingId).is("closed_at", null);
+    if (e2 && !/column/i.test(e2.message)) console.error("[check] closed", e2.message);
+  }
+}
+
 /** Check a link (or pasted text). Returns the stored score if it's current; computes and stores otherwise. */
-export async function ghostCheck(input: { url?: string; text?: string; page?: { title?: string; company?: string; location?: string; posted_text?: string; applicants?: number; apply_url?: string } }, opts: { force?: boolean; quick?: boolean } = {}): Promise<CheckResult> {
+export async function ghostCheck(input: { url?: string; text?: string; page?: { title?: string; company?: string; location?: string; posted_text?: string; applicants?: number; apply_url?: string; closed?: boolean; source?: string } }, opts: { force?: boolean; quick?: boolean } = {}): Promise<CheckResult> {
   const url = input.url ? (/^https?:\/\//i.test(input.url) ? input.url.trim() : `https://${input.url.trim()}`) : null;
   const key = url ? jobKey(url).key : `text:${fingerprint(input.text ?? "").slice(0, 24)}`;
 
@@ -31,6 +48,7 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
     const age = Date.now() - new Date(existing.scored_at).getTime();
     if (age < TTL.userRecheck || (existing.next_check && new Date(existing.next_check).getTime() > Date.now())) {
       await db.from("postings").update({ checks: (existing.checks ?? 0) + 1 }).eq("id", existing.id);
+      await observe(existing.id, input.page);
       return present(existing, false);
     }
   }
@@ -51,7 +69,7 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
 
   // upsert the posting row early so observations can attach
   const row = existing ?? (await db.from("postings").insert({ job_key: key, url: url ? strip(url) : null, url_hash: key, source: raw.source, raw_text: raw.text, company: facts.company, title: facts.title, company_key: ckey, fingerprint: fp }).select("*").single()).data!;
-  if (!existing) await db.from("observations").insert({ posting_id: row.id, present: true, posted_text: facts.posted_text, applicants: facts.applicants, hash: fp });
+  await observe(row.id, input.page, { posted_text: facts.posted_text, applicants: facts.applicants, hash: fp });
 
   // 3. same text under other companies (signal 7) — our own index
   if (ckey) {
@@ -65,6 +83,12 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   if (ckey) {
     const rf = await readerFacts(ckey, facts.company, facts.title, url);
     facts.reader = { known: rf.known, system: rf.system, blr_openings: rf.blr_openings, live: rf.live, by_url: rf.by_url, evidence: rf.evidence };
+    // the board posting ↔ the role on the employer's own system: kept, with both dates, so "seen on the system N days before the board" is measurable
+    if (rf.ats?.found && rf.ats.req_id) {
+      const link = { sighting_source: rf.ats.system, sighting_id: rf.ats.req_id, system_first_seen: rf.ats.created_at, system_linked_at: existing?.system_linked_at ?? new Date().toISOString() };
+      const { error } = await db.from("postings").update(link).eq("id", row.id);
+      if (error && !/column/i.test(error.message)) console.error("[check] link", error.message);
+    }
     const company = await loadCompany(ckey, facts.company);
     const stale = (t?: string | null, ttl = DAY) => !t || Date.now() - new Date(t).getTime() > ttl;
     const readable = !!rf.ats;                                                                    // the employer's own system, read by us
