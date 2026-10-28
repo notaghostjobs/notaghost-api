@@ -179,6 +179,26 @@ async function setPriorities() {
       .eq("source", "linkedin").gte("first_seen_at", "2026-10-26T18:30:00Z").select("id");
     log("purge cross-filed", error ? error.message : `${data?.length ?? 0} rows`);
   });
+  // 28 Oct: employers that real checks hit today, which the resolver either timed out on (cheap path) or guessed with no
+  // sightings. Priority 1 so the browser path runs; resolution cleared so they are retried; a careers URL where we know it.
+  await onceOnly("reresolve-checked-employers-v1", async () => {
+    const hints: Record<string, string | null> = {
+      "myntra": "https://careers.myntra.com/", "zepto": "https://www.zeptonow.com/careers", "takeda": "https://jobs.takeda.com/",
+      "takeda pharmaceutical india": "https://jobs.takeda.com/", "harman connected services": "https://jobs.harman.com/",
+      "pine labs": "https://www.pinelabs.com/careers", "april": null, "zeiss india": "https://www.zeiss.com/corporate/en/careers.html",
+      "carl zeiss india": "https://www.zeiss.com/corporate/en/careers.html", "godrej industries": "https://careers.godrejindustries.com/",
+      "scapia": "https://scapia.app/careers", "curefoods": "https://curefoods.in/careers", "the souled store": "https://www.thesouledstore.com/careers",
+      "klay": null, "alpha school": "https://alpha.school/careers", "godrej consumer products": "https://www.godrejcp.com/careers",
+    };
+    let n = 0;
+    for (const [key, url] of Object.entries(hints)) {
+      const patch: Record<string, unknown> = { priority: 1, resolved_at: null, resolve_error: null, ats: null, ats_ref: null, confidence: null };
+      if (url) patch.careers_url = url;
+      const { data } = await db.from("employers").update(patch).eq("key", key).select("key");
+      n += data?.length ?? 0;
+    }
+    log("reresolve", `${n} employers queued at priority 1`);
+  });
   await onceOnly("enrich-retry-workday-v1", async () => { const { error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).eq("source", "workday").is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null); if (error) log("enrich retry", error.message); });
 }
 
