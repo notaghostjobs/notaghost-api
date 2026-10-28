@@ -42,8 +42,10 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   const { data: existing } = await db.from("postings").select("*").eq("job_key", key).maybeSingle();
   // Every LinkedIn verdict scored before the split-view misread was fixed (extension 0.3.3, 27 Oct 08:20Z) may carry another
   // job's text. Such a row is re-read and re-scored on sight, with its history started afresh — the old entries were wrong.
+  const claimsSystem = Array.isArray(existing?.signals) && (existing!.signals as any[]).some((s) => s?.n === 9 && s?.kind === "ok");
   const tainted = (Array.isArray(existing?.signals) && (existing!.signals as any[]).some((s) => s?.n === 7))
-    || (existing?.source === "linkedin" && !!existing?.scored_at && existing.scored_at < CLEAN_SINCE);
+    || (existing?.source === "linkedin" && !!existing?.scored_at && existing.scored_at < CLEAN_SINCE)
+    || (claimsSystem && !existing?.sighting_id);   // scored before the link was stored: re-score once so the link lands
   if (existing?.scored_at && !opts.force && !tainted) {
     const age = Date.now() - new Date(existing.scored_at).getTime();
     if (age < TTL.userRecheck || (existing.next_check && new Date(existing.next_check).getTime() > Date.now())) {
@@ -59,6 +61,9 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
     ? { text: input.text, source: jobKey(url).source, title: input.page?.title ?? null, company: input.page?.company ?? null, location: input.page?.location ?? null, posted_text: input.page?.posted_text ?? null, applicants: input.page?.applicants ?? null, apply_url: input.page?.apply_url ?? null, posted_days: daysFromText(input.page?.posted_text ?? null) }
     : url ? await readPosting(url) : { text: input.text!, source: "pasted" as const };
   raw.text = stripFurniture(raw.text);   // the job, not the job board's panels around it
+  // a page that gave us no posting (board furniture, a collapsed pane, a login wall) gets no verdict — a score here would be about nothing
+  const bodyLen = raw.text.replace(/^[^\n]*\n[^\n]*\n[^\n]*\n[^\n]*\n?/, "").trim().length;
+  if (bodyLen < 300) throw Object.assign(new Error("Couldn’t read the posting on this page. Open the job in its own tab, or paste the posting text."), { status: 422 });
   // quick = the ₹0 reading: rules + the reader, no model, no web research. The default for every free check.
   const quick = opts.quick !== false;
   const a = quick ? extractFactsRules(raw, url ?? "pasted") : await extractFacts(raw, url ?? "pasted");

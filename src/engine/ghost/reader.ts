@@ -35,9 +35,24 @@ export async function readerFacts(ckey: string, company: string, title: string, 
   if (e.ats === "none") return { known: true, system: "none", ats: null, openings: null, blr_openings: null, live: 0, by_url: false, evidence: "company publishes no readable hiring list" };
 
   // the feed is the identity, not the employer row: several rows can share one hiring-system feed
-  const { data: rows } = await db.from("sightings").select("source_id, title, location, url, posted_at, first_seen, last_seen, gone_at, blr")
-    .eq("source", e.ats).like("source_id", `${e.ats_ref}:%`).order("gone_at", { ascending: true, nullsFirst: true }).order("last_seen", { ascending: false }).limit(3000);
-  const all = rows ?? [];
+  // Big feeds (Amazon ≈ 8k live rows) outrun any single-page fetch, and a cap silently drops the row we need. Narrow the
+  // query to titles sharing a word with the posting's title (plus the exact URL match), then page through whatever is left.
+  const scols = "source_id, title, location, url, posted_at, first_seen, last_seen, gone_at, blr";
+  const stop = new Set(["and", "the", "for", "with", "senior", "sr", "junior", "jr", "lead", "manager", "head", "director", "associate", "assistant", "specialist", "analyst", "engineer", "executive", "officer", "india", "bengaluru", "bangalore"]);
+  const words = [...new Set(title.toLowerCase().replace(/\(.*?\)/g, " ").replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !stop.has(w)))].slice(0, 6);
+  const orTitle = words.length ? words.map((w) => `title.ilike.%${w}%`).join(",") : null;
+  const all: any[] = [];
+  for (let from = 0; from < 20000; from += 1000) {
+    let q = db.from("sightings").select(scols).eq("source", e.ats).like("source_id", `${e.ats_ref}:%`);
+    if (orTitle) q = q.or(orTitle);
+    const { data: page } = await q.order("gone_at", { ascending: true, nullsFirst: true }).order("last_seen", { ascending: false }).range(from, from + 999);
+    all.push(...(page ?? []));
+    if (!page || page.length < 1000) break;
+  }
+  if (url) {   // the posting's own link may be one of ours even when the title shares no word
+    const { data: byUrl } = await db.from("sightings").select(scols).eq("source", e.ats).like("source_id", `${e.ats_ref}:%`).eq("url", strip(url)).limit(1);
+    for (const r of byUrl ?? []) if (!all.some((x) => x.source_id === r.source_id)) all.push(r);
+  }
   const live = all.filter((s) => !s.gone_at);
   const jobs: AtsJob[] = live.map((s) => ({ id: s.source_id, title: s.title ?? "", location: s.location ?? "", created_at: s.posted_at ?? s.first_seen, updated_at: s.last_seen, url: s.url ?? "" }));
 
