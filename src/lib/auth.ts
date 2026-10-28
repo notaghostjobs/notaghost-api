@@ -19,13 +19,16 @@ export async function sendOtp(phone: string) {
   if (cerr) throw new Error(`db: ${cerr.message}`);
   if ((count ?? 0) >= 3) throw Object.assign(new Error("Too many codes. Wait ten minutes."), { status: 429 });
 
-  const code = env.otpProvider === "dev" && process.env.OTP_DEV_CODE ? process.env.OTP_DEV_CODE : String(randomInt(100000, 999999));
+  // test phones (ours) always get the fixed dev code, whatever the provider, so the flow can be walked without a real send
+  const testPhone = env.otpTestPhones.split(",").map((x) => x.trim()).filter(Boolean).includes(phone);
+  const code = (env.otpProvider === "dev" || testPhone) && process.env.OTP_DEV_CODE ? process.env.OTP_DEV_CODE : String(randomInt(100000, 999999));
   const { error } = await db.from("otp_codes").insert({
     phone,
     code_hash: sha(phone + code),
     expires_at: new Date(Date.now() + 5 * 60e3).toISOString(),
   });
   if (error) throw new Error(`db: ${error.message}`);
+  if (testPhone) { console.log(`[otp] test phone ${phone} -> dev code`); return; }
   await deliverOtp(phone, code);
 }
 
@@ -35,10 +38,34 @@ async function deliverOtp(phone: string, code: string) {
     return;
   }
   if (env.otpProvider === "msg91") {
+    // WhatsApp first (Meta "authentication" template: body {{1}} = code, URL button {{1}} = code), SMS (DLT) as the fallback
+    if (env.msg91WaNumber && env.msg91WaTemplate) {
+      try {
+        const r = await fetch("https://control.msg91.com/api/v5/whatsapp/whatsapp-outbound-message/bulk/", {
+          method: "POST",
+          headers: { authkey: env.msg91AuthKey, "content-type": "application/json" },
+          body: JSON.stringify({
+            integrated_number: env.msg91WaNumber, content_type: "template",
+            payload: {
+              messaging_product: "whatsapp", type: "template",
+              template: {
+                name: env.msg91WaTemplate, language: { code: "en", policy: "deterministic" }, namespace: env.msg91WaNamespace || undefined,
+                to_and_components: [{ to: [phone.replace("+", "")], components: { body_1: { type: "text", value: code }, button_1: { subtype: "url", type: "text", value: code } } }],
+              },
+            },
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (r.ok) return;
+        console.error(`[otp] whatsapp ${r.status} ${(await r.text()).slice(0, 200)}; falling back to sms`);
+      } catch (e) { console.error(`[otp] whatsapp failed: ${(e as Error).message}; falling back to sms`); }
+    }
+    if (!env.msg91TemplateId) throw new Error("OTP provider not configured (no SMS template)");
     const r = await fetch("https://control.msg91.com/api/v5/otp", {
       method: "POST",
       headers: { authkey: env.msg91AuthKey, "content-type": "application/json" },
       body: JSON.stringify({ template_id: env.msg91TemplateId, mobile: phone.replace("+", ""), otp: code }),
+      signal: AbortSignal.timeout(10000),
     });
     if (!r.ok) throw new Error(`msg91 ${r.status}`);
     return;

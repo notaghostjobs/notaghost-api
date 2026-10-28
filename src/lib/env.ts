@@ -16,7 +16,11 @@ export const env = {
   razorpayWebhookSecret: opt("RAZORPAY_WEBHOOK_SECRET"),
   otpProvider: opt("OTP_PROVIDER", "dev") as "msg91" | "email" | "dev",
   msg91AuthKey: opt("MSG91_AUTHKEY"),
-  msg91TemplateId: opt("MSG91_TEMPLATE_ID"),
+  msg91TemplateId: opt("MSG91_TEMPLATE_ID"),               // SMS (DLT) template id
+  msg91WaNumber: opt("MSG91_WA_NUMBER"),                     // WhatsApp sender, e.g. 919xxxxxxxxx; empty = SMS only
+  msg91WaTemplate: opt("MSG91_WA_TEMPLATE"),                 // WhatsApp authentication template name
+  msg91WaNamespace: opt("MSG91_WA_NAMESPACE"),               // template namespace from Meta
+  otpTestPhones: opt("OTP_TEST_PHONES", ""),                 // comma-separated +91 numbers that always get OTP_DEV_CODE
   resendKey: opt("RESEND_API_KEY"),
 };
 
