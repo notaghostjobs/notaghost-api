@@ -93,6 +93,19 @@ on.get("/reader/employers", async (c) => {
   const { data } = await q; return c.json(data ?? []);
 });
 
+/** Every scored posting since a time, for audits: verdict, score, signals, company, title, what was read. */
+on.get("/postings", async (c) => {
+  const since = c.req.query("since") ?? new Date(Date.now() - 86400e3).toISOString();
+  let q = db.from("postings").select("id, job_key, source, company, title, url, score, verdict, signals, scored_at, checks, closed_at, sighting_source, sighting_id, system_first_seen, raw_text, first_seen_at")
+    .not("scored_at", "is", null).gte("scored_at", since).order("scored_at", { ascending: false }).limit(Number(c.req.query("limit") ?? 500));
+  if (c.req.query("source")) q = q.eq("source", c.req.query("source")!);
+  if (c.req.query("verdict")) q = q.eq("verdict", c.req.query("verdict")!);
+  const { data, error } = await q;
+  if (error) return c.json({ error: error.message }, 500);
+  const full = c.req.query("text") === "1";
+  return c.json((data ?? []).map((p) => ({ ...p, raw_chars: p.raw_text?.length ?? 0, raw_text: full ? p.raw_text : undefined })));
+});
+
 /** A sample of live Bengaluru sightings, newest first; filter by source. */
 on.get("/reader/sightings", async (c) => {
   let q = db.from("sightings").select("source, company_name, title, location, url, posted_at, posted_text, first_seen").is("gone_at", null).eq("blr", true).order("first_seen", { ascending: false }).limit(Number(c.req.query("limit") ?? 100));
