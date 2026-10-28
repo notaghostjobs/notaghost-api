@@ -2,6 +2,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { ghostCheck, snapshotDue } from "../engine/ghost/index.js";
 import { db } from "../lib/db.js";
+import { identify, gate } from "../lib/quota.js";
+import { jobKey } from "../engine/ghost/canon.js";
+import { fingerprint } from "../engine/ghost/canon.js";
 
 export const check = new Hono();
 
@@ -12,9 +15,25 @@ check.post("/", async (c) => {
     page: z.object({ title: z.string().optional(), company: z.string().optional(), location: z.string().optional(), posted_text: z.string().optional(), applicants: z.number().optional(), apply_url: z.string().optional(), closed: z.boolean().optional(), source: z.enum(["extension", "site"]).optional() }).optional() })
     .refine((b) => b.url || b.text, "Paste a job link or the posting text.").safeParse(await c.req.json());
   if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
+  // the gate: who is asking, and have they used today's free checks (admin header bypasses, for audits)
+  const admin = !!process.env.ADMIN_SECRET && c.req.header("x-admin") === process.env.ADMIN_SECRET;
+  let quota: { used: number; limit: number | null } | undefined;
+  if (!admin) {
+    const url = body.data.url ? (/^https?:\/\//i.test(body.data.url) ? body.data.url.trim() : `https://${body.data.url.trim()}`) : null;
+    const key = url ? jobKey(url).key : `text:${fingerprint(body.data.text ?? "").slice(0, 24)}`;
+    const caller = await identify(c);
+    const g = await gate(caller, key);
+    if (!g.allowed) {
+      return c.json({
+        error: g.gate === "otp" ? "That’s your free check for today. Sign in — it’s free — to keep checking." : `You’ve checked ${g.limit} postings today. Sharpen gives you unlimited checks, or let Radar read them for you.`,
+        gate: g.gate, used: g.used, limit: g.limit,
+      }, 429);
+    }
+    quota = { used: g.used, limit: g.limit };
+  }
   try {
     const r = await ghostCheck({ url: body.data.url, text: body.data.text, page: body.data.page }, { force: !!body.data.force && c.req.header("x-admin") === process.env.ADMIN_SECRET, quick: !(body.data.full && c.req.header("x-admin") === process.env.ADMIN_SECRET) });
-    return c.json(r);
+    return c.json(quota ? { ...r, quota } : r);
   } catch (e) {
     const status = (e as { status?: number }).status ?? 500;
     const msg = (e as Error).message ?? "";
