@@ -36,6 +36,16 @@ const who = (caller: Caller) => (caller.kind === "anon" ? caller.id : `u:${calle
 
 export type Gate = { allowed: true; used: number; limit: number | null } | { allowed: false; gate: "otp" | "limit"; used: number; limit: number };
 
+/** A check that failed on our side (couldn't read the posting) must not cost the slot it was granted. */
+export async function refund(caller: Caller, jobKey: string) {
+  if (caller.kind === "plan") return;
+  const key = `quota:${who(caller)}:${dayKey()}`;
+  const { data } = await db.from("reader_control").select("value").eq("key", key).maybeSingle();
+  const keys: string[] = Array.isArray((data?.value as any)?.keys) ? (data!.value as any).keys : [];
+  if (!keys.includes(jobKey)) return;
+  await db.from("reader_control").upsert({ key, value: { keys: keys.filter((k) => k !== jobKey) }, updated_at: new Date().toISOString() });
+}
+
 /** May this caller check this posting today? Counts a new distinct posting when allowed. */
 export async function gate(caller: Caller, jobKey: string): Promise<Gate> {
   if (caller.kind === "plan") return { allowed: true, used: 0, limit: null };

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { ghostCheck, snapshotDue } from "../engine/ghost/index.js";
 import { db } from "../lib/db.js";
-import { identify, gate } from "../lib/quota.js";
+import { identify, gate, refund, type Caller } from "../lib/quota.js";
 import { jobKey } from "../engine/ghost/canon.js";
 import { fingerprint } from "../engine/ghost/canon.js";
 
@@ -18,6 +18,7 @@ check.post("/", async (c) => {
   // the gate: who is asking, and have they used today's free checks (admin header bypasses, for audits)
   const admin = !!process.env.ADMIN_SECRET && c.req.header("x-admin") === process.env.ADMIN_SECRET;
   let quota: { used: number; limit: number | null } | undefined;
+  let granted: { caller: Caller; key: string } | undefined;
   if (!admin) {
     const url = body.data.url ? (/^https?:\/\//i.test(body.data.url) ? body.data.url.trim() : `https://${body.data.url.trim()}`) : null;
     const key = url ? jobKey(url).key : `text:${fingerprint(body.data.text ?? "").slice(0, 24)}`;
@@ -30,11 +31,13 @@ check.post("/", async (c) => {
       }, 429);
     }
     quota = { used: g.used, limit: g.limit };
+    granted = { caller, key };
   }
   try {
     const r = await ghostCheck({ url: body.data.url, text: body.data.text, page: body.data.page }, { force: !!body.data.force && c.req.header("x-admin") === process.env.ADMIN_SECRET, quick: !(body.data.full && c.req.header("x-admin") === process.env.ADMIN_SECRET) });
     return c.json(quota ? { ...r, quota } : r);
   } catch (e) {
+    if (granted) await refund(granted.caller, granted.key).catch(() => {});   // our failure, not their check
     const status = (e as { status?: number }).status ?? 500;
     const msg = (e as Error).message ?? "";
     // a failure of OUR service (model credits, rate limit, outage) is never shown as the user's fault, and never verbatim
