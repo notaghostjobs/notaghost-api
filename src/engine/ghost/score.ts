@@ -11,10 +11,12 @@ export function score(f: PostingFacts): Scored {
   const bad = (n: number, pts: number, text: string, strong?: string, tail?: string) => fired.push({ n, pts, kind: "bad", text, strong, tail });
   const ok = (n: number, text: string, strong?: string, tail?: string) => ctx.push({ n, pts: 0, kind: "ok", text, strong, tail });
   const na = (n: number, text: string) => ctx.push({ n, pts: 0, kind: "na", text });
+  const note = (n: number, text: string) => ctx.push({ n, pts: 0, kind: "warn", text });   // true of the posting, not held against it
 
   // ---------- A. the posting itself ----------
   evaluated += 7;
-  if (!f.pay_stated) bad(1, 8, "No pay band anywhere in the posting"); else ok(1, "Pay band stated");
+  // a missing pay band is true of almost every Indian posting, so it separates nothing: shown, not scored. A stated one is rare and counts for the posting.
+  if (!f.pay_stated) note(1, "No pay band shown"); else ok(1, "Pay band stated");
   if (f.templated) bad(2, 4, "Templated description —", "no team, manager or specifics about the work"); else ok(2, "Describes a specific team and work");
   if (f.locations_count >= 3) bad(3, 4, "Catch-all location —", `${f.locations_count} cities or remote on one posting`);
   if (f.evergreen) bad(4, 8, "Evergreen language —", "“talent community”, “future opportunities”, “always looking”");
@@ -127,8 +129,11 @@ export function score(f: PostingFacts): Scored {
   else verdict = "Real";
 
   const copy = COPY[verdict](total, uniq, f);
-  const signals = [...uniq.sort((a, b) => b.pts - a.pts), ...ctx.filter((c) => c.kind === "ok").slice(0, 3), ...ctx.filter((c) => c.kind === "na").slice(0, 2)];
-  return { score: total, verdict, signals, ...copy, checked: evaluated, coverage: `${evaluated} checks ran` };
+  const signals = [...uniq.sort((a, b) => b.pts - a.pts), ...ctx.filter((c) => c.kind === "ok").slice(0, 3), ...ctx.filter((c) => c.kind === "warn").slice(0, 1), ...ctx.filter((c) => c.kind === "na").slice(0, 2)];
+  // the footer says what could and couldn't run: the employer-system checks need a system we read
+  const systemRead = !!f.ats && f.ats.system !== "unknown" && f.ats.system !== "none";
+  const coverage = systemRead ? `${evaluated} checks ran` : `${evaluated} checks ran · the employer’s own hiring system isn’t one we read yet, so those checks couldn’t run`;
+  return { score: total, verdict, signals, ...copy, checked: evaluated, coverage };
 }
 
 /** Copy is built from the signals that fired — never a template that could contradict the list. */

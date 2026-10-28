@@ -162,7 +162,7 @@ function present(row: any, fresh: boolean): CheckResult {
   return { posting_id: row.id, job_key: row.job_key, link: (row.url ?? "").replace(/^https?:\/\//, ""), title: row.title ?? g.title ?? "", company: row.company ?? "", location: g.location ?? "",
     score: row.score ?? 0, verdict: row.verdict === "Can’t verify" ? "Caution" : (row.verdict ?? "Caution"), signals: row.signals ?? [],
     // the count the card shows: flags raised over checks run. A flag is a fired signal that counts against the posting.
-    flags: (row.signals ?? []).filter((x: any) => x?.kind === "bad").length, checks_run: g.checked ?? (row.signals ?? []).filter((x: any) => x?.kind !== "na").length,
+    flags: (row.signals ?? []).filter((x: any) => x?.kind === "bad").length, checks_run: (row.signals ?? []).filter((x: any) => x?.kind === "bad" || x?.kind === "ok").length,
     headline: g.headline ?? "", body: g.body ?? "", adviceLabel: g.adviceLabel ?? "", advice: g.advice ?? "",
     checked: g.checked ?? 0, coverage: g.coverage ?? "", scored_at: row.scored_at, history: row.history ?? [], fresh,
     note: "Scores change only when a fact changes — a repost, a careers-page update, company news, or what members report. Re-checked weekly." };
