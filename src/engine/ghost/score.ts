@@ -119,8 +119,11 @@ export function score(f: PostingFacts): Scored {
   else if (total >= 60 && has15) verdict = "Ghost";
   else if (total >= 25) verdict = "Caution";
   else if (!anchored && uniq.length >= 2) verdict = "Caution";
-  else if (total < 25 && f.ats?.found === false && (f.boards?.listings.length ?? 1) <= 1 && evaluated < 14) verdict = "Can’t verify";
-  else if (evaluated < 9) verdict = "Can’t verify";
+  // three words on a card. A role we looked for on the employer's own system and did not find is never Real, whatever else
+  // the text says; an employer we cannot read at all is Caution with the reason stated, never a fourth word.
+  else if (f.ats?.found === false) verdict = "Caution";
+  else if (!f.ats || f.ats.system === "unknown" || f.ats.system === "none") verdict = "Caution";
+  else if (evaluated < 9) verdict = "Caution";
   else verdict = "Real";
 
   const copy = COPY[verdict](total, uniq, f);
@@ -135,11 +138,19 @@ const COPY: Record<Verdict, (s: number, f: FiredSignal[], p: PostingFacts) => Pi
     body: `Not because of you. ${sentence(f.filter((x) => x.pts >= 8).slice(0, 3))} Nobody is reading applications here.`,
     adviceLabel: "Our advice:", advice: "don’t spend a shot on the apply button. Check another listing — or, if you must, find one person on the team and use the message we’ve written.",
   }),
-  Caution: (s, f) => ({
-    headline: "Something’s off.",
-    body: `${sentence(f.filter((x) => x.pts > 0).slice(0, 3))} Nothing here proves it’s fake — but these are the things we see on postings that never reply.`,
-    adviceLabel: "Our advice:", advice: "apply only with a referral, or sharpen first so you’re not one of the pile.",
-  }),
+  Caution: (s, f, p) => {
+    // the first line names the reason that decided it: not found on the employer's system, or an employer we can't read yet
+    const unreadable = !p.ats || p.ats.system === "unknown" || p.ats.system === "none";
+    const notFound = p.ats?.found === false;
+    const headline = notFound ? "Not on their own hiring system." : unreadable ? "We can’t see this employer yet." : "Something’s off.";
+    const lead = notFound ? "The company publishes its openings on its own system and this role isn’t among them today. " : unreadable ? "We don’t read this company’s hiring system yet, so we can’t confirm the role is open — we’ll watch it from here. " : "";
+    const rest = sentence(f.filter((x) => x.pts > 0 && x.n !== 9).slice(0, 3));
+    return {
+      headline,
+      body: `${lead}${rest ? rest + " " : ""}Nothing here proves it’s fake — but these are the things we see on postings that never reply.`,
+      adviceLabel: "Our advice:", advice: "apply only with a referral, or sharpen first so you’re not one of the pile.",
+    };
+  },
   Real: (s, f, p) => ({
     headline: "Worth your shot.",
     // the anchor leads; at most one caveat, and only a weighty one — the rest stay in the signal list
