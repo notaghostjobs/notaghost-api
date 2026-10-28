@@ -62,8 +62,10 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
     : url ? await readPosting(url) : { text: input.text!, source: "pasted" as const };
   raw.text = stripFurniture(raw.text);   // the job, not the job board's panels around it
   // a page that gave us no posting (board furniture, a collapsed pane, a login wall) gets no verdict — a score here would be about nothing
-  const bodyLen = raw.text.replace(/^[^\n]*\n[^\n]*\n[^\n]*\n[^\n]*\n?/, "").trim().length;
-  if (bodyLen < 300) throw Object.assign(new Error("Couldn’t read the posting on this page. Open the job in its own tab, or paste the posting text."), { status: 422 });
+  // the description is everything after "About the job" (LinkedIn) or after the header block (others); the whole text as a fallback
+  const about = raw.text.search(/about the (job|role|position)/i);
+  const body = about >= 0 ? raw.text.slice(about) : raw.text.split("\n\n").slice(1).join("\n\n") || raw.text;
+  if (body.trim().length < 200 && raw.text.trim().length < 600) throw Object.assign(new Error("Couldn’t read the posting on this page. Open the job in its own tab, or paste the posting text."), { status: 422 });
   // quick = the ₹0 reading: rules + the reader, no model, no web research. The default for every free check.
   const quick = opts.quick !== false;
   const a = quick ? extractFactsRules(raw, url ?? "pasted") : await extractFacts(raw, url ?? "pasted");
