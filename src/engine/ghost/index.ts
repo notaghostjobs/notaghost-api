@@ -12,6 +12,7 @@ const DAY = 86400e3;
 const TTL = { ats: 7 * DAY, boards: 7 * DAY, news: 7 * DAY, size: 30 * DAY, recheck: 7 * DAY, userRecheck: 1 * DAY };
 
 export interface CheckResult extends Scored {
+  flags: number; checks_run: number;
   posting_id: string; job_key: string; link: string; title: string; company: string; location: string;
   scored_at: string; history: { at: string; score: number; verdict: string; why: string }[]; note: string; fresh: boolean;
 }
@@ -159,7 +160,10 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
 function present(row: any, fresh: boolean): CheckResult {
   const g = row.ghost ?? {};
   return { posting_id: row.id, job_key: row.job_key, link: (row.url ?? "").replace(/^https?:\/\//, ""), title: row.title ?? g.title ?? "", company: row.company ?? "", location: g.location ?? "",
-    score: row.score ?? 0, verdict: row.verdict ?? "Can’t verify", signals: row.signals ?? [], headline: g.headline ?? "", body: g.body ?? "", adviceLabel: g.adviceLabel ?? "", advice: g.advice ?? "",
+    score: row.score ?? 0, verdict: row.verdict === "Can’t verify" ? "Caution" : (row.verdict ?? "Caution"), signals: row.signals ?? [],
+    // the count the card shows: flags raised over checks run. A flag is a fired signal that counts against the posting.
+    flags: (row.signals ?? []).filter((x: any) => x?.kind === "bad").length, checks_run: g.checked ?? (row.signals ?? []).filter((x: any) => x?.kind !== "na").length,
+    headline: g.headline ?? "", body: g.body ?? "", adviceLabel: g.adviceLabel ?? "", advice: g.advice ?? "",
     checked: g.checked ?? 0, coverage: g.coverage ?? "", scored_at: row.scored_at, history: row.history ?? [], fresh,
     note: "Scores change only when a fact changes — a repost, a careers-page update, company news, or what members report. Re-checked weekly." };
 }
