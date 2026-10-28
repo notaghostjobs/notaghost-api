@@ -3,7 +3,7 @@ import { extractText, fetchPosting } from "./extract.js";
 import { parseResume, runSharpen, type ResumeProfile, type PostingProfile, type Match } from "./sharpen.js";
 import { resumePdf } from "./pdf.js";
 import { createHash } from "node:crypto";
-import { scores } from "../routes/preview.js";
+import { fit, target } from "../engine/fit.js";
 
 /** Called right after upload. Extracts + parses once; stores text and profile. */
 export async function processResume(resumeId: string) {
@@ -62,7 +62,8 @@ export async function runShot(shotId: string) {
     const up = await db.storage.from("outputs").upload(pdf_path, pdf, { contentType: "application/pdf" });
     if (up.error) throw up.error;
 
-    const before = scores(out.matches).before, after = scores(out.after_matches).before, promised = scores(out.matches).after;
+    // one scorer for all three numbers: what the résumé scored, what we promised, what the document scores now
+    const before = fit(out.matches), after = fit(out.after_matches), promised = target(out.matches);
     // the number we delivered is below the number we promised at preview: the document still goes out, the shot comes back
     const short = after < promised;
     if (short) await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});

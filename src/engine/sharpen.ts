@@ -1,5 +1,6 @@
 import { json, FAST, MODEL } from "./claude.js";
 import { checkRules, tidy } from "./rules.js";
+import { fit, target } from "./fit.js";
 
 // ---------- types ----------
 export interface ResumeProfile {
@@ -206,18 +207,25 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     return rank[r.bucket] >= rank[m.bucket] ? { ...m, bucket: r.bucket, evidence: r.evidence || m.evidence } : m;   // never lower than before
   });
   let after_matches = merge(rescored);
-  // The promise made at preview must hold. If quoted-line strengths are still unsaid after the rewrite, one targeted
-  // pass states each of them in the employer's words (verified again), then the result is rescored.
-  const unsaid = after_matches.filter((m) => m.bucket === "have_not_said" && m.evidence_kind !== "keyword" && m.evidence);
-  if (unsaid.length && verification.ok) {
-    t0 = t("Saying what you’ve done");
+  // The promise made at preview must hold: the delivered document is scored by the same function that set the promise.
+  // While it falls short and quoted-line strengths remain unsaid, state them in the employer's words — verified each
+  // time — and rescore. Up to three passes; the material, not the model, decides where it stops.
+  const promised = target(matches);
+  for (let pass = 0; pass < 3 && verification.ok && fit(after_matches) < promised; pass++) {
+    const unsaid = after_matches.filter((m) => m.bucket === "have_not_said" && m.evidence);
+    if (!unsaid.length) break;
+    t0 = t(pass ? "Closing the gap" : "Saying what you’ve done");
     const pushed = tidy(await json<Rewrite>(
       `A résumé rewrite leaves some of the candidate's real strengths unsaid. For EACH item below, add or reword ONE line so a screener searching for the requirement would tick it: use the quoted evidence, in the employer's words, placed in the role where the evidence lives (or the relevant block). Never add a fact, number, tool or outcome the evidence does not contain. Change nothing else. Same JSON shape.`,
       `REWRITE:\n${JSON.stringify(rewrite)}\n\nSTILL UNSAID:\n${JSON.stringify(unsaid.map((m) => ({ requirement: m.requirement, evidence: m.evidence, how: m.suggestion })))}`, 16000, FAST));
     const v = await verifyRewrite(resume, pushed);
     const b = checkRules(pushed, resume, posting);
-    if (v.ok && !b.length) { rewrite = pushed; verification = v; broken = b; ({ matches: rescored } = await rescore(matches, rewrite)); after_matches = merge(rescored); }
-    timing.push = Date.now() - t0;
+    if (!v.ok || b.length) break;                       // the push introduced a problem: keep the last clean draft
+    const { matches: rs } = await rescore(matches, pushed);
+    const next = merge(rs);
+    if (fit(next) <= fit(after_matches)) break;         // no progress: stop
+    rewrite = pushed; verification = v; broken = b; after_matches = next;
+    timing.push = (timing.push ?? 0) + (Date.now() - t0);
   }
   timing.rescore = Date.now() - t0;
   return { posting, matches, after_matches, rewrite, verification, broken, needs_review, timing, first_pass };

@@ -4,28 +4,17 @@ import { createHash } from "node:crypto";
 import { db, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
 import { fetchPosting } from "../engine/extract.js";
+import { assess, fit } from "../engine/fit.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../engine/sharpen.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(u.trim().toLowerCase()).digest("hex");
 export const preview = new Hono<{ Variables: { user: User } }>();
 preview.use("*", requireUser);
 
-/** Language-match score from the buckets. before = what they can see now; after = if the hidden proof were said. */
+/** Kept for the worker's import; the numbers now come from engine/fit.ts, one scorer for before, promise and delivered. */
 export function scores(matches: Match[]) {
-  // before = what a screener ticks today. "said" counts fully; a strength the résumé has but under-writes ("line")
-  // counts half, because screeners (and the model) often disagree on where "said" ends; a keyword-only mention counts a fifth.
-  // after = what the rewrite can make a screener tick: every line strength, a third of keyword ones; missing stays missing.
-  let tot = 0, before = 0, after = 0;
-  for (const m of matches) {
-    const w = m.kind === "must" ? 2 : 1; tot += w;
-    if (m.bucket === "said") { before += w; after += w; }
-    else if (m.bucket === "have_not_said") { const kw = m.evidence_kind === "keyword"; before += w * (kw ? 0.2 : 0.5); after += w * (kw ? 0.35 : 1); }
-  }
-  if (!tot) return { before: 0, after: 0 };
-  // Promise only 70% of the lift (not every strength survives the verifier); never promise 100 unless nothing is missing.
-  const b = before / tot, a = after / tot;
-  const promised = b + (a - b) * 0.7;
-  return { before: Math.round(b * 100), after: Math.min(Math.round(promised * 100), 96 + (matches.some((m) => m.bucket === "missing") ? 0 : 4)) };
+  const a = assess(matches);
+  return { before: a.current, after: a.promised };
 }
 
 /** Free step: read the posting, match against the current résumé. No shot spent. */
@@ -54,15 +43,26 @@ preview.post("/", async (c) => {
   const posting = parsed ?? (await parsePosting(postingText));
   if (postingId && !parsed) await db.from("postings").update({ company: posting.company, title: posting.title, parsed: posting }).eq("id", postingId);
   const [{ matches, fits }, similar_open] = await Promise.all([matchAndGrade(resume.parsed as ResumeProfile, posting), similarOpen(posting.title)]);
-  const s = scores(matches);
+  const a = assess(matches);
   // remember this exact match so the paid run scores against the same list the user saw
-  const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting, matches, score_before: s.before, score_after: s.after }).select("id").single();
-  // the three reasons the verdict page shows: strongest have_not_said, a missing must, and another have_not_said/said-weak
+  const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting, matches, score_before: a.current, score_after: a.promised }).select("id").single();
+  // the change list: what's unsaid (we can say it), what's buried (a keyword only), what's missing (we won't claim it)
+  const unsaid = matches.filter((m) => m.bucket === "have_not_said" && m.evidence_kind !== "keyword");
+  const buried = matches.filter((m) => m.bucket === "have_not_said" && m.evidence_kind === "keyword");
+  const missing = matches.filter((m) => m.bucket === "missing" && m.kind === "must");
+  const changes = [
+    ...unsaid.slice(0, 3).map((m) => ({ kind: "unsaid", requirement: m.requirement, evidence: m.evidence, how: m.suggestion })),
+    ...buried.slice(0, 2).map((m) => ({ kind: "buried", requirement: m.requirement, evidence: m.evidence, how: m.suggestion })),
+    ...missing.slice(0, 2).map((m) => ({ kind: "missing", requirement: m.requirement, how: m.suggestion })),
+  ];
   const reasons = [
-    ...matches.filter((m) => m.bucket === "have_not_said").slice(0, 2).map((m) => ({ tone: "ok", label: "You have it, you just didn’t say it", title: m.requirement, body: m.suggestion, evidence: m.evidence })),
-    ...matches.filter((m) => m.bucket === "missing" && m.kind === "must").slice(0, 1).map((m) => ({ tone: "bad", label: "Genuinely missing", title: m.requirement, body: m.suggestion })),
+    ...unsaid.slice(0, 2).map((m) => ({ tone: "ok", label: "You have it, you just didn’t say it", title: m.requirement, body: m.suggestion, evidence: m.evidence })),
+    ...missing.slice(0, 1).map((m) => ({ tone: "bad", label: "Genuinely missing", title: m.requirement, body: m.suggestion })),
   ].slice(0, 3);
-  return c.json({ similar_open, preview_id: pv?.id ?? null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location }, score_before: s.before, score_after: s.after, reasons, matches, fits: fits ?? null });
+  return c.json({ similar_open, preview_id: pv?.id ?? null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location },
+    score_before: a.current, score_after: a.promised, band: a.band, reachable: a.reachable, can_lift: a.can_lift,
+    counts: { said: matches.filter((m) => m.bucket === "said").length, unsaid: unsaid.length, buried: buried.length, missing: matches.filter((m) => m.bucket === "missing").length, total: matches.length },
+    changes, reasons, matches, fits: fits ?? null });
 });
 
 
