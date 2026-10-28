@@ -33,6 +33,12 @@ export async function readerFacts(ckey: string, company: string, title: string, 
   }
   if (!e.resolved_at || !e.ats) return { known: true, system: null, ats: null, openings: null, blr_openings: null, live: 0, by_url: false, evidence: "company queued for the reader; system not identified yet" };
   if (e.ats === "none") return { known: true, system: "none", ats: null, openings: null, blr_openings: null, live: 0, by_url: false, evidence: "company publishes no readable hiring list" };
+  // a guessed feed that has never produced a sighting is not a read employer: saying "not on their careers page" against it
+  // would accuse a posting on the strength of nothing. Treat it as unresolved until the reader actually sees roles there.
+  if ((e.openings ?? 0) === 0 && (e.blr_openings ?? 0) === 0) {
+    const { count } = await db.from("sightings").select("*", { count: "exact", head: true }).eq("source", e.ats).like("source_id", `${e.ats_ref}:%`);
+    if (!count) return { known: true, system: null, ats: null, openings: null, blr_openings: null, live: 0, by_url: false, evidence: `company's hiring system guessed (${e.ats}) but nothing read from it yet` };
+  }
 
   // the feed is the identity, not the employer row: several rows can share one hiring-system feed
   // Big feeds (Amazon ≈ 8k live rows) outrun any single-page fetch, and a cap silently drops the row we need. Narrow the
