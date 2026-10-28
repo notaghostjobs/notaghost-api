@@ -10,7 +10,16 @@ type H = (c: Context) => Response | Promise<Response>;
 const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any)[method](path, h); if (path.startsWith("/reader/")) (admin as any)[method](path.replace("/reader/", "/r/:secret/"), h); return admin; };
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
-admin.use("*", async (c, next) => { const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1]; const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath; if (!process.env.ADMIN_SECRET || k !== process.env.ADMIN_SECRET) return c.json({ error: "no" }, 403); await next(); });
+// AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
+const READ_ONLY = /^\/admin\/(postings|reader\/(stats|status|probe|employers|sightings))$/;
+admin.use("*", async (c, next) => {
+  const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
+  const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
+  const full = !!process.env.ADMIN_SECRET && k === process.env.ADMIN_SECRET;
+  const audit = !!process.env.AUDIT_SECRET && k === process.env.AUDIT_SECRET && c.req.method === "GET" && READ_ONLY.test(c.req.path);
+  if (!full && !audit) return c.json({ error: "no" }, 403);
+  await next();
+});
 
 admin.post("/snapshot", async (c) => c.json({ rechecked: await snapshotDue(Number(c.req.query("limit") ?? 200)) }));
 
