@@ -11,7 +11,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|reader\/(stats|status|probe|employers|sightings))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|payments|reader\/(stats|status|probe|employers|sightings))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -127,4 +127,11 @@ on.get("/reader/sightings", async (c) => {
 admin.get("/unreadable", async (c) => {
   const { data } = await db.from("reader_control").select("key,value,updated_at").like("key", "unreadable:%").order("updated_at", { ascending: false }).limit(40);
   return c.json(data ?? []);
+});
+
+/** The last payments and plans, for checking a test or live payment end to end (no card data is ever stored). */
+admin.get("/payments", async (c) => {
+  const { data: pays } = await db.from("payments").select("id, user_id, product, amount_paise, status, razorpay_order_id, razorpay_payment_id, created_at, paid_at").order("created_at", { ascending: false }).limit(10);
+  const { data: plans } = await db.from("plans").select("id, user_id, product, shots_total, shots_used, expires_at, created_at").order("created_at", { ascending: false }).limit(10);
+  return c.json({ payments: (pays ?? []).map((p: any) => ({ ...p, user_id: String(p.user_id).slice(0, 8) })), plans: (plans ?? []).map((p: any) => ({ ...p, user_id: String(p.user_id).slice(0, 8) })) });
 });
