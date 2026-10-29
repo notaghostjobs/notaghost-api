@@ -59,18 +59,30 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   }
 
   // 2. read the posting (facts layer A)
-  // a URL with the page text already supplied (the extension) is read as-is; a bare URL is fetched; bare text is "pasted"
-  const raw = url && input.text && input.text.length >= 80
+  // a URL with the page text already supplied (the extension) is read as-is; a bare URL is fetched; bare text is "pasted".
+  // The board's page layout is the one thing in this flow we don't control, so a page the extension couldn't read is never the
+  // end: the posting is read again here, from the board's own public copy (LinkedIn's guest API, the careers page, …), which
+  // doesn't depend on how the page on screen is laid out. Only when that fails too does the user see "couldn't read".
+  const readable = (t: string) => { const about = t.search(/about the (job|role|position)/i); const body = about >= 0 ? t.slice(about) : t.split("\n\n").slice(1).join("\n\n") || t; return { ok: !(body.trim().length < 200 && t.trim().length < 600), body_len: body.trim().length }; };
+  let raw = url && input.text && input.text.length >= 80
     ? { text: input.text, source: jobKey(url).source, title: input.page?.title ?? null, company: input.page?.company ?? null, location: input.page?.location ?? null, posted_text: input.page?.posted_text ?? null, applicants: input.page?.applicants ?? null, apply_url: input.page?.apply_url ?? null, posted_days: daysFromText(input.page?.posted_text ?? null) }
     : url ? await readPosting(url) : { text: input.text!, source: "pasted" as const };
   raw.text = stripFurniture(raw.text);   // the job, not the job board's panels around it
-  // a page that gave us no posting (board furniture, a collapsed pane, a login wall) gets no verdict — a score here would be about nothing
-  // the description is everything after "About the job" (LinkedIn) or after the header block (others); the whole text as a fallback
-  const about = raw.text.search(/about the (job|role|position)/i);
-  const body = about >= 0 ? raw.text.slice(about) : raw.text.split("\n\n").slice(1).join("\n\n") || raw.text;
-  if (body.trim().length < 200 && raw.text.trim().length < 600) {
-    // keep what we were given, so an unreadable page can be looked at afterwards (last 40, ₹0; read via GET /admin/unreadable)
-    try { await db.from("reader_control").upsert({ key: `unreadable:${key}`, value: { url, at: new Date().toISOString(), sent_chars: input.text?.length ?? 0, sent_head: (input.text ?? "").slice(0, 1500), stripped: raw.text.slice(0, 800), body_len: body.trim().length }, updated_at: new Date().toISOString() }); } catch { /* diagnostics only */ }
+  let check = readable(raw.text);
+  let recovered = false;
+  if (!check.ok && url && input.text) {
+    const sent = { sent_chars: input.text.length, sent_head: input.text.slice(0, 1500), stripped: raw.text.slice(0, 800), body_len: check.body_len };
+    try {
+      const again = await readPosting(url);
+      again.text = stripFurniture(again.text);
+      const c2 = readable(again.text);
+      if (c2.ok) { raw = { ...again, title: again.title ?? input.page?.title ?? null, company: again.company ?? input.page?.company ?? null, posted_text: again.posted_text ?? input.page?.posted_text ?? null, applicants: again.applicants ?? input.page?.applicants ?? null } as typeof raw; check = c2; recovered = true; }
+    } catch { /* the board's own copy wasn't reachable either */ }
+    // keep what the extension sent, so an unreadable page layout can be looked at afterwards (₹0; GET /admin/unreadable)
+    try { await db.from("reader_control").upsert({ key: `unreadable:${key}`, value: { url, at: new Date().toISOString(), recovered, ...sent }, updated_at: new Date().toISOString() }); } catch { /* diagnostics only */ }
+  }
+  if (!check.ok) {
+    if (!input.text) { try { await db.from("reader_control").upsert({ key: `unreadable:${key}`, value: { url, at: new Date().toISOString(), recovered: false, sent_chars: 0, stripped: raw.text.slice(0, 800), body_len: check.body_len }, updated_at: new Date().toISOString() }); } catch { /* diagnostics only */ } }
     throw Object.assign(new Error("Couldn’t read the posting on this page. Open the job in its own tab, or paste the posting text."), { status: 422 });
   }
   // quick = the ₹0 reading: rules + the reader, no model, no web research. The default for every free check.

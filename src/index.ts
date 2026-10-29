@@ -27,7 +27,13 @@ app.get("/health", async (c) => {
     const r = await fetch(`${env.supabaseUrl}/rest/v1/users?select=id&limit=1`, { headers: { apikey: env.supabaseServiceKey, authorization: `Bearer ${env.supabaseServiceKey}` }, signal: AbortSignal.timeout(8000) });
     raw = `${r.status} ${(await r.text()).slice(0, 200)}`;
   } catch (e) { raw = `fetch failed: ${(e as Error).message} ${(e as any)?.cause?.code ?? ""}`; }
-  return c.json({ ok: !error, v: "0.1.2", db: error ? JSON.stringify(error) : "ok", raw, url: env.supabaseUrl, keylen: env.supabaseServiceKey.length, otp: env.otpProvider, dev_code: !!process.env.OTP_DEV_CODE });
+  // the reader's last three hours: pages the extension couldn't read, and how many of those were recovered from the board's own copy.
+  // "failed" > 0 means users saw "couldn't read" — the canary for a board changing its page under us.
+  const since = new Date(Date.now() - 3 * 3600e3).toISOString();
+  const { data: ur } = await db.from("reader_control").select("value").like("key", "unreadable:%").gt("updated_at", since);
+  const rows = (ur ?? []).map((r: any) => r.value ?? {});
+  const reader = { window_h: 3, unreadable: rows.length, recovered: rows.filter((v: any) => v.recovered).length, failed: rows.filter((v: any) => !v.recovered).length };
+  return c.json({ ok: !error, v: "0.1.3", db: error ? JSON.stringify(error) : "ok", raw, url: env.supabaseUrl, keylen: env.supabaseServiceKey.length, otp: env.otpProvider, dev_code: !!process.env.OTP_DEV_CODE, reader });
 });
 app.route("/auth", auth);
 app.route("/resumes", resumes);
