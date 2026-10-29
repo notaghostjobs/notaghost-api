@@ -14,36 +14,46 @@ export function score(f: PostingFacts): Scored {
   const note = (n: number, text: string) => ctx.push({ n, pts: 0, kind: "warn", text });   // true of the posting, not held against it
 
   // ---------- A. the posting itself ----------
-  evaluated += 7;
+  const signal7 = process.env.SIGNAL7 === "on";
+  evaluated += signal7 ? 7 : 6;
   // a missing pay band is true of almost every Indian posting, so it separates nothing: shown, not scored. A stated one is rare and counts for the posting.
   if (!f.pay_stated) note(1, "No pay band shown"); else ok(1, "Pay band stated");
   if (f.templated) bad(2, 4, "Templated description —", "no team, manager or specifics about the work"); else ok(2, "Describes a specific team and work");
-  if (f.locations_count >= 3) bad(3, 4, "Catch-all location —", `${f.locations_count} cities or remote on one posting`);
-  if (f.evergreen) bad(4, 8, "Evergreen language —", "“talent community”, “future opportunities”, “always looking”");
-  if (f.kitchen_sink) bad(5, 4, "Kitchen-sink requirements —", "unrelated stacks or an unrealistic must-have list");
+  if (f.locations_count >= 3) bad(3, 4, "Catch-all location —", `${f.locations_count} cities or remote on one posting`); else ok(3, "One location, not a catch-all");
+  if (f.evergreen) bad(4, 8, "Evergreen language —", "“talent community”, “future opportunities”, “always looking”"); else ok(4, "No “talent community” or “future opportunities” language");
+  if (f.kitchen_sink) bad(5, 4, "Kitchen-sink requirements —", "unrelated stacks or an unrealistic must-have list"); else ok(5, "Requirements read like one real role");
   if (f.apply_route === "email" || f.apply_route === "dm") bad(6, 8, "Off-system apply route —", f.apply_route === "dm" ? "“DM me” / WhatsApp" : "email your CV to a personal address");
   else if (f.apply_route === "external_form" && f.apply_domain) bad(6, 8, "Apply form on an unrelated domain —", f.apply_domain);
+  else ok(6, "No off-system apply route", undefined, "(no email, DM or outside form)");
   // signal 7 (same text under other employers) is OFF until the posting index is clean: 27 Oct split-view reads cross-filed
   // text between jobs, and a duplicate check over a polluted index accuses honest postings. Turn back on with SIGNAL7=on.
-  if (process.env.SIGNAL7 === "on" && (f.same_text_companies?.length ?? 0) >= 1) bad(7, 4, "Same description posted under", `${f.same_text_companies!.length + 1} employers`, "— agency boilerplate");
+  if (signal7 && (f.same_text_companies?.length ?? 0) >= 1) bad(7, 4, "Same description posted under", `${f.same_text_companies!.length + 1} employers`, "— agency boilerplate");
+  else if (signal7) ok(7, "Description not posted under other employers");
 
   // ---------- B. the company's own hiring system ----------
   if (f.ats && f.ats.system !== "unknown" && f.ats.system !== "none") {
-    evaluated += 5;
     if (f.ats.found) {
+      evaluated += 5;
       ok(9, "On the company’s own hiring system", undefined, f.reader?.blr_openings != null ? `(${f.ats.system}; ${f.reader.blr_openings} Bengaluru roles open there today)` : `(${f.ats.system})`);
       if (f.ats.created_at && f.posted_days != null) {
         const createdDays = daysAgo(f.ats.created_at);
         if (createdDays - f.posted_days >= 30) bad(8, 15, "Created", `${createdDays} days ago`, `in ${f.ats.system} — the page says “${f.posted_text ?? `${f.posted_days} days ago`}”`);
         else ok(8, "Creation date matches the page");
-      }
+      } else na(8, "Creation date not exposed by their system");
       if (f.ats.copies >= 5) bad(10, 8, "Many copies of one title —", `${f.ats.copies} open “${f.title}” requisitions`);
+      else ok(10, f.ats.copies > 1 ? `${f.ats.copies} open requisitions under this title — within normal` : "One requisition under this title");
       if (f.ats.updated_at && daysAgo(f.ats.updated_at) >= 60) bad(11, 8, "Stale in their system —", `not updated in ${daysAgo(f.ats.updated_at)} days`);
-      if (f.ats.req_reopened) bad(12, 8, "Same requisition ID closed and reopened");
+      else if (f.ats.updated_at) ok(11, "Updated in their system within 60 days");
+      else na(11, "Last-updated date not exposed by their system");
+      if (f.ats.req_reopened) bad(12, 8, "Same requisition ID closed and reopened"); else ok(12, "Requisition not closed and reopened");
     } else if (f.reader && f.reader.live >= 20) {
       // we read their system today and it has a real list; the role is simply not there
+      evaluated += 1;
+      na(8, "Requisition checks (creation date, copies, staleness, reopening) couldn’t run — the role isn’t listed there");
       bad(9, 15, "Not on the company’s own hiring system —", `${f.reader.blr_openings ?? f.reader.live} roles open there today, this title not among them`, "— listed on boards only");
     } else {
+      evaluated += 1;
+      na(8, "Requisition checks (creation date, copies, staleness, reopening) couldn’t run — the role isn’t listed there");
       bad(9, 8, "Not on the company’s own careers page —", "listed on boards only");
     }
   } else if (!f.company) {
@@ -59,14 +69,18 @@ export function score(f: PostingFacts): Scored {
   if (f.boards) {
     evaluated += 5;
     if (f.boards.distinct_dates >= 2) bad(13, 15, "Reposted —", `${f.boards.listings.length} listings with ${f.boards.distinct_dates} different dates`, "across boards");
+    else ok(13, "Not reposted", undefined, f.boards.listings.length > 1 ? `— ${f.boards.listings.length} listings, one posting date` : "— one listing, one date");
     const age = Math.max(f.posted_days ?? 0, f.boards.oldest_days ?? 0, f.observation?.days_seen ?? 0);
     if (age > 90) bad(14, 15, "Open for", `${age} days`, "— real Bengaluru roles fill in 3–6 weeks");
     else if (age >= 45) bad(14, 10, "Open for", `${age} days`);
     else if (f.posted_days != null) ok(14, "Posted", f.posted_text ?? `${f.posted_days} days ago`);
-    if (f.agency) bad(15, 8, "Posted by an agency —", "“leading client”, employer not named");
+    else na(14, "Posting date not shown");
+    if (f.agency) bad(15, 8, "Posted by an agency —", "“leading client”, employer not named"); else ok(15, "Posted by the employer, not an agency");
     if ((f.applicants ?? 0) >= 200 && age >= 60) bad(16, 4, `${f.applicants}+ applicants and still open after ${age} days`);
-    else if (f.applicants != null) ok(16, `${f.applicants}+ applicants`);
+    else if (f.applicants != null) ok(16, `${f.applicants}+ applicants`, undefined, "— not piling up on a stale posting");
+    else na(16, "Applicant count not shown");
     if (f.boards.never_heard_back) bad(17, 4, "Public “never heard back” record —", "reviews cite no response from this company");
+    else ok(17, "No public “never heard back” record for this company");
   } else {
     // posting-level age still counts even without board research
     evaluated += 2;
@@ -75,7 +89,7 @@ export function score(f: PostingFacts): Scored {
       else if (f.posted_days >= 45) bad(14, 10, "Open for", `${f.posted_days} days`);
       else ok(14, "Posted", f.posted_text ?? `${f.posted_days} days ago`);
     } else na(14, "Posting date not shown");
-    if (f.agency) bad(15, 8, "Posted by an agency —", "employer not named");
+    if (f.agency) bad(15, 8, "Posted by an agency —", "employer not named"); else ok(15, "Posted by the employer, not an agency");
   }
 
   // ---------- D. the company's situation ----------
@@ -87,15 +101,18 @@ export function score(f: PostingFacts): Scored {
   if (f.headcount != null && f.openings != null) {
     evaluated += 1;
     if (f.headcount > 0 && f.openings / f.headcount >= 0.5 && f.openings >= 20) bad(19, 8, "Openings out of proportion —", `${f.openings} open roles for ~${f.headcount} employees`);
+    else ok(19, "Openings in proportion to headcount");
   }
   evaluated += 1;
   const scam = f.scam_tells.length > 0;
-  if (scam) fired.push({ n: 20, pts: 0, kind: "bad", text: "Scam tell —", strong: f.scam_tells[0] });
+  if (scam) fired.push({ n: 20, pts: 0, kind: "bad", text: "Asks for money or personal documents —", strong: f.scam_tells[0] });
+  else ok(20, "No request for money, fees or documents");
 
   // ---------- E. our own observation ----------
   if (f.observation) {
     evaluated += 1;
     if (f.observation.vanished_and_returned) bad(21, 15, "Disappeared, then came back with a fresh date");
+    else ok(21, f.observation.days_seen != null && f.observation.days_seen > 0 ? `Seen continuously since we first read it ${f.observation.days_seen} days ago` : "First read by us today — we watch it from here");
     if (f.observation.claimed_vs_seen_gap_days != null && f.observation.claimed_vs_seen_gap_days >= 14)
       bad(8, 15, "We first saw this", `${f.observation.days_seen} days ago`, `— the page says “${f.posted_text}”`);
   }
@@ -129,7 +146,14 @@ export function score(f: PostingFacts): Scored {
   else verdict = "Real";
 
   const copy = COPY[verdict](total, uniq, f);
-  const signals = [...uniq.sort((a, b) => b.pts - a.pts), ...ctx.filter((c) => c.kind === "ok").slice(0, 3), ...ctx.filter((c) => c.kind === "warn").slice(0, 1), ...ctx.filter((c) => c.kind === "na").slice(0, 2)];
+  // every check that ran gets exactly one line: what fired, then what passed, then what is true but not held against it,
+  // then what couldn't run. A signal that fired never also appears as passed (signal 8 can come from two places).
+  const firedN = new Set(uniq.map((s) => s.n));
+  const seenCtx = new Set<number>();
+  const rest = ctx.filter((c) => !firedN.has(c.n) && (seenCtx.has(c.n) ? false : (seenCtx.add(c.n), true)));
+  const signals = [...uniq.sort((a, b) => b.pts - a.pts), ...rest.filter((c) => c.kind === "ok"), ...rest.filter((c) => c.kind === "warn"), ...rest.filter((c) => c.kind === "na")];
+  // the number on the card: checks that reached a verdict (fired, passed, or noted). "na" lines are listed but not counted.
+  evaluated = signals.filter((s) => s.kind !== "na").length;
   // the footer says what could and couldn't run: the employer-system checks need a system we read
   const systemRead = !!f.ats && f.ats.system !== "unknown" && f.ats.system !== "none";
   const coverage = systemRead ? `${evaluated} checks ran` : `${evaluated} checks ran · the employer’s own hiring system isn’t one we read yet, so those checks couldn’t run`;
@@ -169,7 +193,7 @@ const COPY: Record<Verdict, (s: number, f: FiredSignal[], p: PostingFacts) => Pi
   }),
   Scam: (s, f) => ({
     headline: "Don’t apply. Don’t pay.",
-    body: `This posting ${f.find((x) => x.n === 20)?.strong ? `shows a scam tell — ${f.find((x) => x.n === 20)!.strong}` : "asks for money or moves you off the company’s own channels"}. Real employers never do that.`,
+    body: `This posting ${f.find((x) => x.n === 20)?.strong ? `asks for ${f.find((x) => x.n === 20)!.strong}` : "asks for money or moves you off the company’s own channels"}. Real employers never do that.`,
     adviceLabel: "Our advice:", advice: "close it. If it came from a message, report the sender.",
   }),
 };

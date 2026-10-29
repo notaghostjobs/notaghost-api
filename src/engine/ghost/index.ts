@@ -5,7 +5,7 @@ import { findAts, matchTitle } from "./ats.js";
 import { research } from "./research.js";
 import { score } from "./score.js";
 import { readerFacts } from "./reader.js";
-import { jobKey, strip, companyKey, fingerprint, hamming, stripFurniture, CLEAN_SINCE } from "./canon.js";
+import { jobKey, strip, companyKey, fingerprint, hamming, stripFurniture, CLEAN_SINCE, FULL_LIST_SINCE } from "./canon.js";
 import type { PostingFacts, Scored } from "./types.js";
 
 const DAY = 86400e3;
@@ -47,7 +47,9 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   const tainted = (Array.isArray(existing?.signals) && (existing!.signals as any[]).some((s) => s?.n === 7))
     || (existing?.source === "linkedin" && !!existing?.scored_at && existing.scored_at < CLEAN_SINCE)
     || (claimsSystem && !existing?.sighting_id);   // scored before the link was stored: re-score once so the link lands
-  if (existing?.scored_at && !opts.force && !tainted) {
+  // scored before every check became a line: re-score so the card shows the whole list (₹0 — rules and the reader), history kept
+  const partial = !!existing?.scored_at && existing.scored_at < FULL_LIST_SINCE;
+  if (existing?.scored_at && !opts.force && !tainted && !partial) {
     const age = Date.now() - new Date(existing.scored_at).getTime();
     if (age < TTL.userRecheck || (existing.next_check && new Date(existing.next_check).getTime() > Date.now())) {
       await db.from("postings").update({ checks: (existing.checks ?? 0) + 1 }).eq("id", existing.id);
@@ -160,9 +162,9 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
 function present(row: any, fresh: boolean): CheckResult {
   const g = row.ghost ?? {};
   return { posting_id: row.id, job_key: row.job_key, link: (row.url ?? "").replace(/^https?:\/\//, ""), title: row.title ?? g.title ?? "", company: row.company ?? "", location: g.location ?? "",
-    score: row.score ?? 0, verdict: row.verdict === "Can’t verify" ? "Caution" : (row.verdict ?? "Caution"), signals: row.signals ?? [],
+    score: row.score ?? 0, verdict: row.verdict === "Can’t verify" ? "Caution" : row.verdict === "Scam" ? "Ghost" : (row.verdict ?? "Caution"), signals: row.signals ?? [],
     // the count the card shows: flags raised over checks run. A flag is a fired signal that counts against the posting.
-    flags: (row.signals ?? []).filter((x: any) => x?.kind === "bad").length, checks_run: (row.signals ?? []).filter((x: any) => x?.kind === "bad" || x?.kind === "ok").length,
+    flags: (row.signals ?? []).filter((x: any) => x?.kind === "bad").length, checks_run: (row.signals ?? []).filter((x: any) => x?.kind && x.kind !== "na").length,
     headline: g.headline ?? "", body: g.body ?? "", adviceLabel: g.adviceLabel ?? "", advice: g.advice ?? "",
     checked: g.checked ?? 0, coverage: g.coverage ?? "", scored_at: row.scored_at, history: row.history ?? [], fresh,
     note: "Scores change only when a fact changes — a repost, a careers-page update, company news, or what members report. Re-checked weekly." };
