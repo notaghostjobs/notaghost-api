@@ -57,7 +57,9 @@ export async function refund(caller: Caller, jobKey: string) {
 /** May this caller check this posting? Counts a new distinct posting when allowed; a posting already counted in the window is free. */
 export async function gate(caller: Caller, jobKey: string): Promise<Gate> {
   if (caller.kind === "plan") return { allowed: true, used: 0, limit: null };
-  const limit = caller.kind === "anon" ? LIMITS.anon : LIMITS.user;
+  // launch-week audits: signed-in checks are effectively unlimited until the date below, then the normal limit returns on its own
+  const AUDIT_UNTIL = "2026-11-05T18:30:00.000Z";   // 6 Nov, 00:00 IST
+  const limit = caller.kind === "anon" ? LIMITS.anon : Date.now() < Date.parse(AUDIT_UNTIL) ? 500 : LIMITS.user;
   const { key, entries } = await recent(caller);
   if (entries.some((e) => e.k === jobKey)) return { allowed: true, used: entries.length, limit };
   if (entries.length >= limit) return { allowed: false, gate: caller.kind === "anon" ? "otp" : "limit", used: entries.length, limit };
