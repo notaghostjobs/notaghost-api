@@ -41,7 +41,8 @@ async function selfTest() {
 let resolvedThisRun = 0;
 async function runResolve(n: number) {
   await status("resolve", { batch: n, done_since_boot: resolvedThisRun });
-  const r = await resolveBatch(n, 6,
+  // 3 at a time, not 6: six big feeds (thousands of jobs each) decoding at once pushed the worker past its memory on 29 Oct
+  const r = await resolveBatch(n, 3,
     async (key, res) => { if (res.feed && res.ats !== "none") { const { data: e } = await db.from("employers").select("key, name, ats, ats_ref").eq("key", key).single(); if (e) await recordFeed(e, res.feed).catch((err) => log("record", key, err.message)); } },
     (name, res, err) => { resolvedThisRun++; const last = err ? `${name} → error: ${err.slice(0, 80)}` : `${name} → ${res!.ats}${res!.feed ? ` (${res!.feed.jobs.length} jobs)` : ""}`; log("resolved", last); void status("resolve", { batch: n, done_since_boot: resolvedThisRun, last }); });
   log("resolve", JSON.stringify(r)); return r;

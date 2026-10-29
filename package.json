@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node --max-old-space-size=384 dist/index.js",
     "typecheck": "tsc --noEmit",
-    "worker": "node dist/reader/worker.js"
+    "worker": "node --max-old-space-size=320 dist/reader/worker.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",
