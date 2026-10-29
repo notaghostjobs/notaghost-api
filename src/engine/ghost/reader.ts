@@ -47,8 +47,10 @@ export async function readerFacts(ckey: string, company: string, title: string, 
   const stop = new Set(["and", "the", "for", "with", "senior", "sr", "junior", "jr", "lead", "manager", "head", "director", "associate", "assistant", "specialist", "analyst", "engineer", "executive", "officer", "india", "bengaluru", "bangalore"]);
   const words = [...new Set(title.toLowerCase().replace(/\(.*?\)/g, " ").replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !stop.has(w)))].slice(0, 6);
   const orTitle = words.length ? words.map((w) => `title.ilike.%${w}%`).join(",") : null;
+  // Live rows come first (gone_at nulls first), so a cap keeps every live posting of a big feed and drops only the oldest
+  // gone ones. 20,000 rows of titles and URLs per check was enough to push the API past its memory on a busy afternoon (29 Oct).
   const all: any[] = [];
-  for (let from = 0; from < 20000; from += 1000) {
+  for (let from = 0; from < 5000; from += 1000) {
     let q = db.from("sightings").select(scols).eq("source", e.ats).like("source_id", `${e.ats_ref}:%`);
     if (orTitle) q = q.or(orTitle);
     const { data: page } = await q.order("gone_at", { ascending: true, nullsFirst: true }).order("last_seen", { ascending: false }).range(from, from + 999);
