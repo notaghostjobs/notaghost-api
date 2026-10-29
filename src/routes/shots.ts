@@ -3,14 +3,26 @@ import { z } from "zod";
 import { db, activePlan, type User, type Product } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
 import { runShot } from "../engine/worker.js";
+import { env } from "../lib/env.js";
 
 export const shots = new Hono<{ Variables: { user: User } }>();
 shots.use("*", requireUser);
 
+const isTestUser = (u: User) => env.otpTestPhones.split(",").map((p) => p.trim()).filter(Boolean).includes(u.phone);
+
 shots.get("/plan", async (c) => {
   const u = c.get("user");
   const [sharpen, build] = await Promise.all([activePlan(u.id, "sharpen"), activePlan(u.id, "build")]);
-  return c.json({ sharpen, build });
+  return c.json({ sharpen, build, test_user: isTestUser(u) });
+});
+
+// Test phones only: end every active plan so the whole flow — fit page, checkout, Razorpay, delivery — can be walked from zero.
+shots.post("/reset", async (c) => {
+  const u = c.get("user");
+  if (!isTestUser(u)) return c.json({ error: "Not available on this account." }, 403);
+  const now = new Date().toISOString();
+  const { data } = await db.from("plans").update({ expires_at: now }).eq("user_id", u.id).gt("expires_at", now).select("id");
+  return c.json({ ended: data?.length ?? 0 });
 });
 
 // Spend one shot. Body: { product, posting_url? , posting_text? }
