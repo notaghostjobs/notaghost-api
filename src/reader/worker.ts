@@ -1,4 +1,6 @@
 // The reader worker: its own process. Resolves employers, reads feeds, harvests boards. Reports what it is doing in reader_control.
+import { NAUKRI_SALES_BLR } from "./data/naukri-sales-blr.js";
+import { companyKey } from "../engine/ghost/canon.js";
 import { db } from "../lib/db.js";
 import { resolveBatch } from "./resolve.js";
 import { readDue, recordFeed } from "./read.js";
@@ -198,6 +200,28 @@ async function setPriorities() {
       n += data?.length ?? 0;
     }
     log("reresolve", `${n} employers queued at priority 1`);
+  });
+  // 29 Oct: Naukri's own "top companies" for Bengaluru sales & BD — 295 employers, 1,771 open postings, of which we could read
+  // the employer for 320. Every one we can't read is queued: known rows re-resolved at priority 1 (resolution cleared so the
+  // browser path runs), unknown ones inserted, and a careers URL given where we know it. The resolver verifies every hint.
+  await onceOnly("reresolve-naukri-sales-blr-v1", async () => {
+    const list = NAUKRI_SALES_BLR;
+    let updated = 0, inserted = 0;
+    for (const e of list) {
+      if (e.found && e.ats && e.ats !== "none") continue;   // already readable
+      if (e.found && e.match) {
+        const patch: Record<string, unknown> = { priority: 1, resolved_at: null, resolve_error: null, ats: null, ats_ref: null, confidence: null };
+        if (e.careers_url) patch.careers_url = e.careers_url;
+        const { data } = await db.from("employers").update(patch).eq("name", e.match).select("key");
+        updated += data?.length ?? 0;
+      } else {
+        const row: Record<string, unknown> = { key: companyKey(e.name), name: e.name, source: "naukri:top-companies sales-bd blr", priority: 1 };
+        if (e.careers_url) row.careers_url = e.careers_url;
+        const { error } = await db.from("employers").upsert(row, { onConflict: "key", ignoreDuplicates: true });
+        if (!error) inserted++;
+      }
+    }
+    log("reresolve naukri", `${updated} employers re-queued, ${inserted} added, all at priority 1`);
   });
   await onceOnly("enrich-retry-workday-v1", async () => { const { error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).eq("source", "workday").is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null); if (error) log("enrich retry", error.message); });
 }
