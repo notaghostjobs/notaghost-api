@@ -11,7 +11,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|reader\/(stats|status|probe|employers|sightings))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|reader\/(stats|status|probe|employers|sightings))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -121,4 +121,10 @@ on.get("/reader/sightings", async (c) => {
   if (c.req.query("source")) q = q.eq("source", c.req.query("source")!);
   if (c.req.query("q")) q = q.or(`company_name.ilike.%${c.req.query("q")}%,title.ilike.%${c.req.query("q")}%`);
   const { data } = await q; return c.json(data ?? []);
+});
+
+/** The last pages the reader refused as unreadable: what the extension sent, and what was left after furniture stripping. */
+admin.get("/unreadable", async (c) => {
+  const { data } = await db.from("reader_control").select("key,value,updated_at").like("key", "unreadable:%").order("updated_at", { ascending: false }).limit(40);
+  return c.json(data ?? []);
 });

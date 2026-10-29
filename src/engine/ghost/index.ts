@@ -68,7 +68,11 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   // the description is everything after "About the job" (LinkedIn) or after the header block (others); the whole text as a fallback
   const about = raw.text.search(/about the (job|role|position)/i);
   const body = about >= 0 ? raw.text.slice(about) : raw.text.split("\n\n").slice(1).join("\n\n") || raw.text;
-  if (body.trim().length < 200 && raw.text.trim().length < 600) throw Object.assign(new Error("Couldn’t read the posting on this page. Open the job in its own tab, or paste the posting text."), { status: 422 });
+  if (body.trim().length < 200 && raw.text.trim().length < 600) {
+    // keep what we were given, so an unreadable page can be looked at afterwards (last 40, ₹0; read via GET /admin/unreadable)
+    try { await db.from("reader_control").upsert({ key: `unreadable:${key}`, value: { url, at: new Date().toISOString(), sent_chars: input.text?.length ?? 0, sent_head: (input.text ?? "").slice(0, 1500), stripped: raw.text.slice(0, 800), body_len: body.trim().length }, updated_at: new Date().toISOString() }); } catch { /* diagnostics only */ }
+    throw Object.assign(new Error("Couldn’t read the posting on this page. Open the job in its own tab, or paste the posting text."), { status: 422 });
+  }
   // quick = the ₹0 reading: rules + the reader, no model, no web research. The default for every free check.
   const quick = opts.quick !== false;
   const a = quick ? extractFactsRules(raw, url ?? "pasted") : await extractFacts(raw, url ?? "pasted");
