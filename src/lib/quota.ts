@@ -1,6 +1,6 @@
 // The free check is free at the door and gated by use (playbook: "Free check gating").
-//   anonymous → 1 distinct posting a day, then sign in
-//   signed in → 3 distinct postings a day
+//   anonymous → 3 distinct postings a day, then sign in
+//   signed in → 5 distinct postings a day
 //   a plan with shots left → unlimited
 // Re-opening a posting already counted today never costs anything. Counters live in reader_control (a KV table we
 // already have) as quota:<who>:<day> → { keys: [job_key, …] }, so no migration stands between this and launch.
@@ -8,7 +8,7 @@ import type { Context } from "hono";
 import { db, activePlan, type User } from "./db.js";
 import { createHash } from "node:crypto";
 
-export const LIMITS = { anon: 1, user: 3 } as const;
+export const LIMITS = { anon: 3, user: 5 } as const;
 const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 32);
 
 export type Caller = { kind: "plan"; user: User } | { kind: "user"; user: User } | { kind: "anon"; id: string };
