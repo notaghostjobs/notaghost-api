@@ -51,7 +51,7 @@ export function checkRules(r: Rewrite, orig: ResumeProfile, posting: PostingProf
     if (new RegExp(`\\b${w.replace("-", "[- ]")}\\b`, "i").test(text)) bad.push(`R11 banned word: ${w}`);
 
   // 19. numbers preserved exactly: every number in the rewrite must appear in the original
-  const nums = (s: string) => new Set((s.replace(/\$\s+/g, "$").replace(/(\d)\s+([kKmM]\b)/g, "$1$2").match(/\d[\d,.]*%?|\$\d[\d,.]*[kKmM]?/g) ?? []).map((x) => x.replace(/[\s,]/g, "").replace(/\.0+$/, "").toLowerCase()));
+  const nums = (s: string) => new Set((s.replace(/\$\s+/g, "$").replace(/(\d)\s+([kKmM]\b)/g, "$1$2").match(/\d[\d,.]*%?|\$\d[\d,.]*[kKmM]?/g) ?? []).map((x) => x.replace(/[\s,]/g, "").replace(/\.0+$/, "").replace(/[.,]+$/, "").toLowerCase()));
   const origNums = nums(JSON.stringify(orig));
   for (const n of nums(JSON.stringify({ s: r.summary, rel: r.relevant, roles: r.roles })))
     if (!origNums.has(n) && !/^(19|20)\d\d$/.test(n) && n.length > 1) bad.push(`R19 number not in original: ${n}`);
