@@ -248,7 +248,9 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   let after_matches: Match[];
   if (v2) {
     // v2: the preview's list with each unsaid item checked narrowly against the rewrite — never a fresh free grade
-    after_matches = apply(await saidNow(matches.filter((m) => m.bucket === "have_not_said"), rewrite), matches);
+    // only audited (sayable) lines count towards the number: what was promised is exactly what is measured, so the same
+    // input gives the same delivered number, run after run
+    after_matches = apply(await saidNow(matches.filter((m) => m.bucket === "have_not_said" && m.sayable), rewrite), matches);
   } else {
     if (rewrite !== rescoredDraft) { rescoredDraft = rewrite; rescoreP = rescore(matches, rewrite); }   // only re-run when a repair changed the text
     const { matches: rescored } = await rescoreP!;
