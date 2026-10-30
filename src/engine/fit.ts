@@ -36,11 +36,9 @@ export function fit(matches: Match[]): number {
   return Math.max(FLOOR, Math.min(cap, Math.round(raw)));
 }
 
-/** The most a rewrite can reach from this résumé: every have_not_said that rests on a quoted LINE of the same work becomes
- *  said; a bare keyword stays where it is (there is no fact to state); missing stays missing. The promise is built on this,
- *  so it only ever counts lines the auditor will let through. */
+/** The most a rewrite can reach from this résumé: every have_not_said becomes said; missing stays missing. */
 export function reachable(matches: Match[]): number {
-  return fit(matches.map((m) => (m.bucket === "have_not_said" && m.evidence_kind !== "keyword" ? { ...m, bucket: "said" as const } : m)));
+  return fit(matches.map((m) => (m.bucket === "have_not_said" ? { ...m, bucket: "said" as const } : m)));
 }
 
 /** The number we promise before payment. Pro-rata lift, bounded by what the material allows. */
