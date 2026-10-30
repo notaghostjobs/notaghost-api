@@ -33,6 +33,7 @@ export interface Match {
   evidence: string;               // quote from résumé, or "" if missing
   evidence_kind?: "line" | "keyword"; // have_not_said only: a line of the same work, or just a skill/competency word
   suggestion: string;             // how to surface it, or what to do about the gap
+  line?: string;                  // have_not_said only: the finished bullet we would write — résumé text, not advice — built only from facts in the résumé
   sayable?: boolean;              // have_not_said only (v2): the suggested line was audited at preview — supported by the résumé and satisfies the requirement
   vet_reason?: string;            // the auditor's one-line reason (kept for audits and the self-test; never shown to users)
 }
@@ -85,8 +86,9 @@ export function matchResume(resume: ResumeProfile, posting: PostingProfile) {
 - "missing": nothing in the résumé points to this specific requirement — no same-activity line, no same-activity keyword. Test: if asked "where does your résumé mention this?", the candidate could not point to a line that a screener would accept.
 Do not stretch across kinds of work: SAP enhancement delivery is not product management; building a dashboard is not category management. A missing must-have is useful information, not a failure.
 Grade "said" the way a fair screener would: a plain equivalent anywhere in the résumé counts ("lead a team through 1:1s" satisfies "mentor engineers"; "directly accountable for category P&L" satisfies "owned a category P&L"). Only call it have_not_said when a screener searching for the requirement would genuinely not connect the line.
-Evidence must be a verbatim quote from the résumé. suggestion: for said/have_not_said, how to phrase it in the employer's words; for missing, one honest line (adjacent experience to mention, or "don't claim this").`,
-    `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nReturn: {matches:[{requirement, kind:"must"|"nice", bucket, evidence, evidence_kind, suggestion}], fits}. fits = one plain sentence, under 18 words, naming the kind of role this résumé is actually built for (e.g. "Salesforce technical lead roles on enterprise CRM programmes"). Based on the résumé alone, not this posting.`,
+Evidence must be a verbatim quote from the résumé. suggestion: for said/have_not_said, how to phrase it in the employer's words; for missing, one honest line (adjacent experience to mention, or "don't claim this").
+line: for have_not_said ONLY — the finished résumé bullet we would actually write, at most 28 words, starting with a verb, in the requirement's words, built ONLY from facts already in the résumé (the quoted evidence and anything else the résumé states). Résumé text, never advice: not "Reword X as…" but the bullet itself. Numbers exactly as the résumé has them; add no scope, stage, seniority, tool or outcome the résumé does not state. If no honest bullet can satisfy the requirement, write "".`,
+    `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nReturn: {matches:[{requirement, kind:"must"|"nice", bucket, evidence, evidence_kind, suggestion, line}], fits}. fits = one plain sentence, under 18 words, naming the kind of role this résumé is actually built for (e.g. "Salesforce technical lead roles on enterprise CRM programmes"). Based on the résumé alone, not this posting.`,
     6000
   );
 }
@@ -137,14 +139,14 @@ export function grade(matches: Match[], doc: unknown, label: "ORIGINAL RÉSUMÉ"
  *  audited against the résumé — supported (adds no fact) AND satisfies the whole requirement. Only such lines go into the
  *  promise. The same auditor checks the delivered document, so what is promised is what will pass. */
 export async function vetLines(resume: ResumeProfile, matches: Match[]): Promise<Match[]> {
-  const items = matches.filter((m) => m.bucket === "have_not_said" && m.suggestion);
+  const items = matches.filter((m) => m.bucket === "have_not_said" && (m.line ?? "").trim().length > 0);
   if (!items.length) return matches;
   const r = await json<{ checks: { id: number; supported: boolean; satisfies: boolean; reason: string }[] }>(
     `You are an auditor. For EACH numbered proposed résumé line answer two things.
 supported: does the ORIGINAL résumé fully support the line — every fact in it (activity, object, scope, stage, number, tool, seniority, outcome, employer) is already in the original? Rewording and the employer's vocabulary are fine; a broader scope or a new fact is not ("negotiated terms" does not support "managed deals through closing"; "led 6 associates" does not support "led a team of managers").
 satisfies: would a screener reading ONLY that line tick the REQUIREMENT as met — the whole requirement, not a part of it? ("MBA, Christ University" does not satisfy "MBA from a Tier 1 B-school"; "negotiated annual terms" does not satisfy "plan, manage and close competitive deals"; "ran selection for 1,200 SKUs" does satisfy "identify selection gaps".)
 Be strict on both. Answer every id.`,
-    `ORIGINAL:\n${JSON.stringify(resume)}\n\nPROPOSED LINES:\n${JSON.stringify(items.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.suggestion, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
+    `ORIGINAL:\n${JSON.stringify(resume)}\n\nPROPOSED LINES:\n${JSON.stringify(items.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
     3000, FAST);
   const ok = new Set<string>(); const why = new Map<string, string>();
   for (const c of r.checks ?? []) { const m = items[Number(c.id) - 1]; if (!m) continue; if (c.supported && c.satisfies) ok.add(m.requirement); why.set(m.requirement, `${c.supported ? "supported" : "NOT supported"} · ${c.satisfies ? "satisfies" : "does NOT satisfy"} · ${c.reason ?? ""}`.slice(0, 220)); }
@@ -268,7 +270,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
       v2
         ? `A résumé rewrite leaves some of the candidate's real strengths unsaid. For EACH item below, insert the given LINE (already audited against the original — use it as written, or trim it; never widen it) as a bullet in the role where the evidence lives, or in the "relevant" block. If a bullet already covers the same fact, replace that bullet rather than adding a near-duplicate. Change nothing else. Same JSON shape.`
         : `A résumé rewrite leaves some of the candidate's real strengths unsaid. For EACH item below, add or reword ONE line so a screener searching for the requirement would tick it: use the quoted evidence, in the employer's words, placed in the role where the evidence lives (or the relevant block). Never add a fact, number, tool or outcome the evidence does not contain. Change nothing else. Same JSON shape.`,
-      `REWRITE:\n${JSON.stringify(rewrite)}\n\nSTILL UNSAID:\n${JSON.stringify(unsaid.map((m) => ({ requirement: m.requirement, evidence: m.evidence, line: m.suggestion })))}`, 16000, FAST));
+      `REWRITE:\n${JSON.stringify(rewrite)}\n\nSTILL UNSAID:\n${JSON.stringify(unsaid.map((m) => ({ requirement: m.requirement, evidence: m.evidence, line: v2 ? (m.line || m.suggestion) : m.suggestion })))}`, 16000, FAST));
     let v = await verifyRewrite(resume, pushed);
     let b = checkRules(pushed, resume, posting);
     if ((!v.ok || b.length) && v2) {

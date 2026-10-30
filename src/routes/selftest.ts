@@ -52,7 +52,7 @@ async function run(runs: number, postingUrlPart: string) {
     const preview = { current: a.current, promised: a.promised, reachable: a.reachable, band: a.band, can_lift: a.can_lift,
       said: matches.filter((m) => m.bucket === "said").length, unsaid: matches.filter((m) => m.bucket === "have_not_said").length,
       sayable: matches.filter((m) => m.bucket === "have_not_said" && m.sayable).length, missing: matches.filter((m) => m.bucket === "missing").length, total: matches.length,
-      unsaid_lines: matches.filter((m) => m.bucket === "have_not_said").map((m) => ({ requirement: m.requirement.slice(0, 80), evidence: m.evidence.slice(0, 100), line: m.suggestion.slice(0, 140), kind: m.evidence_kind, sayable: !!m.sayable, why: m.vet_reason })) };
+      unsaid_lines: matches.filter((m) => m.bucket === "have_not_said").map((m) => ({ requirement: m.requirement.slice(0, 80), evidence: m.evidence.slice(0, 100), line: (m.line ?? "").slice(0, 160), kind: m.evidence_kind, sayable: !!m.sayable, why: m.vet_reason })) };
     await save({ status: "running", preview });
     const results: unknown[] = [];
     for (let i = 1; i <= runs; i++) {
