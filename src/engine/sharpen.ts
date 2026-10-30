@@ -34,6 +34,7 @@ export interface Match {
   evidence_kind?: "line" | "keyword"; // have_not_said only: a line of the same work, or just a skill/competency word
   suggestion: string;             // how to surface it, or what to do about the gap
   sayable?: boolean;              // have_not_said only (v2): the suggested line was audited at preview — supported by the résumé and satisfies the requirement
+  vet_reason?: string;            // the auditor's one-line reason (kept for audits and the self-test; never shown to users)
 }
 
 export interface Rewrite {
@@ -145,9 +146,9 @@ satisfies: would a screener reading ONLY that line tick the REQUIREMENT as met �
 Be strict on both. Answer every id.`,
     `ORIGINAL:\n${JSON.stringify(resume)}\n\nPROPOSED LINES:\n${JSON.stringify(items.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.suggestion, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
     3000, FAST);
-  const ok = new Set<string>();
-  for (const c of r.checks ?? []) { const m = items[Number(c.id) - 1]; if (m && c.supported && c.satisfies) ok.add(m.requirement); }
-  return matches.map((m) => (m.bucket === "have_not_said" ? { ...m, sayable: ok.has(m.requirement) } : m));
+  const ok = new Set<string>(); const why = new Map<string, string>();
+  for (const c of r.checks ?? []) { const m = items[Number(c.id) - 1]; if (!m) continue; if (c.supported && c.satisfies) ok.add(m.requirement); why.set(m.requirement, `${c.supported ? "supported" : "NOT supported"} · ${c.satisfies ? "satisfies" : "does NOT satisfy"} · ${c.reason ?? ""}`.slice(0, 220)); }
+  return matches.map((m) => (m.bucket === "have_not_said" ? { ...m, sayable: ok.has(m.requirement), vet_reason: why.get(m.requirement) } : m));
 }
 
 /** v2 delivered score: not a free re-grade (that read moves ±10 between runs) but the preview's own list, each unsaid item
