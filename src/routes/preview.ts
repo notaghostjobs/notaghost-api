@@ -42,10 +42,25 @@ preview.post("/", async (c) => {
 
   const posting = parsed ?? (await parsePosting(postingText));
   if (postingId && !parsed) await db.from("postings").update({ company: posting.company, title: posting.title, parsed: posting }).eq("id", postingId);
-  const [{ matches, fits }, similar_open] = await Promise.all([matchAndGrade(resume.parsed as ResumeProfile, posting), similarOpen(posting.title)]);
+  // The same résumé against the same posting is the same fit: the first read is kept and returned again, to the digit, for 30
+  // days or until the résumé changes. A number that moved between two looks at one posting was never a promise.
+  const since = new Date(Date.now() - 30 * 86400e3).toISOString();
+  const { data: prior } = postingId
+    ? await db.from("previews").select("id, matches").eq("user_id", u.id).eq("resume_id", resume.id).eq("posting_id", postingId).gt("created_at", since).order("created_at", { ascending: false }).limit(1).maybeSingle()
+    : { data: null };
+  let matches: Match[], fits: string | null, previewId: string | null;
+  const similar_open = await similarOpen(posting.title);
+  if (prior?.matches) { matches = prior.matches as Match[]; fits = null; previewId = prior.id; }
+  else {
+    const g = await matchAndGrade(resume.parsed as ResumeProfile, posting);
+    matches = g.matches; fits = g.fits ?? null;
+    const a0 = assess(matches);
+    // remember this exact match so the paid run scores against the same list the user saw
+    const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting, matches, score_before: a0.current, score_after: a0.promised }).select("id").single();
+    previewId = pv?.id ?? null;
+  }
   const a = assess(matches);
-  // remember this exact match so the paid run scores against the same list the user saw
-  const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting, matches, score_before: a.current, score_after: a.promised }).select("id").single();
+  const pv = { id: previewId };
   // the change list: what's unsaid (we can say it), what's buried (a keyword only), what's missing (we won't claim it)
   const unsaid = matches.filter((m) => m.bucket === "have_not_said" && m.evidence_kind !== "keyword");
   const buried = matches.filter((m) => m.bucket === "have_not_said" && m.evidence_kind === "keyword");
