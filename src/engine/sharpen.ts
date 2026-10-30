@@ -1,6 +1,6 @@
 import { json, FAST, MODEL } from "./claude.js";
 import { checkRules, tidy } from "./rules.js";
-import { fit, target } from "./fit.js";
+import { fit, target, v2On } from "./fit.js";
 
 // ---------- types ----------
 export interface ResumeProfile {
@@ -33,6 +33,7 @@ export interface Match {
   evidence: string;               // quote from résumé, or "" if missing
   evidence_kind?: "line" | "keyword"; // have_not_said only: a line of the same work, or just a skill/competency word
   suggestion: string;             // how to surface it, or what to do about the gap
+  sayable?: boolean;              // have_not_said only (v2): the suggested line was audited at preview — supported by the résumé and satisfies the requirement
 }
 
 export interface Rewrite {
@@ -77,7 +78,7 @@ export function matchResume(resume: ResumeProfile, posting: PostingProfile) {
     `You compare a candidate against a posting, requirement by requirement. For each requirement pick ONE bucket:
 - "said": the résumé states it with specifics — a bullet or line that shows the work (what, where, with what result).
 - "have_not_said": the résumé NAMES it but does not show it. Two kinds, and you must say which in evidence_kind:
-  "line" — a line a screener would accept as this requirement MET once it is reworded: same activity, same object, same scale class ("Negotiated annual terms with 40 suppliers" for "vendor negotiation"; "led a team of 25 across ops" is NOT "led 5+ category managers"). Quote it verbatim.
+  "line" — a line a screener would accept as this requirement MET once it is reworded: same activity, same object, same scale class ("Negotiated annual terms with 40 suppliers" for "vendor negotiation"; "led a team of 25 across ops" is NOT "led 5+ category managers"). Quote it verbatim. The test: the line can be restated in the requirement's words WITHOUT adding a fact. Same activity on the same kind of object is a line even if the words differ ("ran selection for 1,200 SKUs" IS a line for "identify selection gaps"; "negotiated annual terms with 40 suppliers" IS a line for "seller negotiations"). It is "keyword" when the requirement needs a scope, stage, seniority, scale or outcome the line does not have ("negotiated" is not "managed deals through closing and delivery"; "led 6 associates" is not "led a team of managers").
   "keyword" — a competency or skills entry naming the SAME specific activity or tool ("Vendor Negotiations & Contracting", "Mixpanel"), or a line that is only ADJACENT or PARTIAL (right activity, different object or scale). Quote it. If you hesitate between line and keyword, it is keyword.
   Generic words are NOT a mention of a specific requirement: "Communication" is not "writes PRDs", "Data-Driven Decision Making" is not "runs experiments", "Leadership" is not "built a team of 5". Those are missing.
 - "missing": nothing in the résumé points to this specific requirement — no same-activity line, no same-activity keyword. Test: if asked "where does your résumé mention this?", the candidate could not point to a line that a screener would accept.
@@ -131,17 +132,51 @@ export function grade(matches: Match[], doc: unknown, label: "ORIGINAL RÉSUMÉ"
     4000, FAST
   );
 }
-/** Re-bucket the matches against the REWRITE: which requirements does the sharpened text now say? */
+/** v2, at preview, before anything is promised: for each unsaid item, the exact line we would write (its suggestion) is
+ *  audited against the résumé — supported (adds no fact) AND satisfies the whole requirement. Only such lines go into the
+ *  promise. The same auditor checks the delivered document, so what is promised is what will pass. */
+export async function vetLines(resume: ResumeProfile, matches: Match[]): Promise<Match[]> {
+  const items = matches.filter((m) => m.bucket === "have_not_said" && m.suggestion);
+  if (!items.length) return matches;
+  const r = await json<{ checks: { id: number; supported: boolean; satisfies: boolean; reason: string }[] }>(
+    `You are an auditor. For EACH numbered proposed résumé line answer two things.
+supported: does the ORIGINAL résumé fully support the line — every fact in it (activity, object, scope, stage, number, tool, seniority, outcome, employer) is already in the original? Rewording and the employer's vocabulary are fine; a broader scope or a new fact is not ("negotiated terms" does not support "managed deals through closing"; "led 6 associates" does not support "led a team of managers").
+satisfies: would a screener reading ONLY that line tick the REQUIREMENT as met — the whole requirement, not a part of it? ("MBA, Christ University" does not satisfy "MBA from a Tier 1 B-school"; "negotiated annual terms" does not satisfy "plan, manage and close competitive deals"; "ran selection for 1,200 SKUs" does satisfy "identify selection gaps".)
+Be strict on both. Answer every id.`,
+    `ORIGINAL:\n${JSON.stringify(resume)}\n\nPROPOSED LINES:\n${JSON.stringify(items.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.suggestion, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
+    3000, FAST);
+  const ok = new Set<string>();
+  for (const c of r.checks ?? []) { const m = items[Number(c.id) - 1]; if (m && c.supported && c.satisfies) ok.add(m.requirement); }
+  return matches.map((m) => (m.bucket === "have_not_said" ? { ...m, sayable: ok.has(m.requirement) } : m));
+}
+
+/** v2 delivered score: not a free re-grade (that read moves ±10 between runs) but the preview's own list, each unsaid item
+ *  checked one at a time — does the rewrite now state THIS requirement? A narrow yes/no per numbered line is stable. */
+export async function saidNow(items: Match[], rewrite: Rewrite): Promise<Record<string, { said: boolean; quote: string }>> {
+  if (!items.length) return {};
+  const doc = { headline: rewrite.headline, summary: rewrite.summary, relevant: rewrite.relevant, roles: rewrite.roles, skills: rewrite.skills, extra_sections: rewrite.extra_sections };
+  const r = await json<{ checks: { id: number; said: boolean; quote: string }[] }>(
+    `You check a rewritten résumé against a short numbered list of requirements. For EACH requirement, answer whether a screener searching for it would now tick it from the rewrite — the requirement is stated in plain words (the requirement's own words or an obvious equivalent) somewhere in the headline, summary, "relevant" block, a bullet, a skill or an extra section. Quote the exact line. Judge only presence: is it said, yes or no. Do not re-grade anything else and do not invent. Answer every id.`,
+    `REWRITE:\n${JSON.stringify(doc)}\n\nREQUIREMENTS:\n${JSON.stringify(items.map((m, i) => ({ id: i + 1, requirement: m.requirement, evidence_it_should_rest_on: m.evidence })))}\n\nReturn: {checks:[{id, said, quote}]}`,
+    2500, FAST);
+  const out: Record<string, { said: boolean; quote: string }> = {};
+  for (const c of r.checks ?? []) { const m = items[Number(c.id) - 1]; if (m) out[m.requirement] = { said: !!c.said, quote: c.quote ?? "" }; }
+  return out;
+}
+
+/** Re-bucket the matches against the REWRITE: which requirements does the sharpened text now say? (v1 delivery path) */
 export function rescore(matches: Match[], rewrite: Rewrite) {
   return grade(matches, { headline: rewrite.headline, summary: rewrite.summary, relevant: rewrite.relevant, roles: rewrite.roles, skills: rewrite.skills, extra_sections: rewrite.extra_sections }, "REWRITE");
 }
 /** The before-picture: the matcher's requirements + evidence, with "said" decided by the same fair screener that grades the rewrite. */
 export async function matchAndGrade(resume: ResumeProfile, posting: PostingProfile) {
-  // the matcher now grades as the fair screener itself (rubric in its prompt): one call, ~8 s faster at preview
-  return matchResume(resume, posting);
+  // the matcher grades as the fair screener itself (rubric in its prompt); then every proposed line is audited, so a v2
+  // promise rests only on lines that will pass (v1 ignores the flag)
+  const r = await matchResume(resume, posting);
+  return { ...r, matches: await vetLines(resume, r.matches) };
 }
 
-export async function runSharpen(resume: ResumeProfile, postingText: string, onStage?: (s: string) => void, pre?: { posting: PostingProfile; matches: Match[] }) {
+export async function runSharpen(resume: ResumeProfile, postingText: string, onStage?: (s: string) => void, pre?: { posting: PostingProfile; matches: Match[] }, v2: boolean = v2On()) {
   const t = (label: string) => { onStage?.(label); return Date.now(); };
   const timing: Record<string, number> = {};
   let t0 = t("Reading the posting");
@@ -157,7 +192,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   t0 = t("Checking every claim");
   // the audit and the after-score are independent reads of the same draft: run them together
   let rescoredDraft: Rewrite = rewrite;
-  let rescoreP = rescore(matches, rewrite);
+  let rescoreP = v2 ? null : rescore(matches, rewrite);
   let verification = await verifyRewrite(resume, rewrite);
   let broken = checkRules(rewrite, resume, posting);
   timing.verify = Date.now() - t0;
@@ -198,32 +233,52 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   }
   const needs_review = !verification.ok || broken.length > 0;
   t0 = t("Scoring the result");
-  if (rewrite !== rescoredDraft) { rescoredDraft = rewrite; rescoreP = rescore(matches, rewrite); }   // only re-run when a repair changed the text
-  let { matches: rescored } = await rescoreP;
+  const promised = target(matches, v2);
   const rank = { missing: 0, have_not_said: 1, said: 2 } as const;
   const merge = (rs: Match[]) => matches.map((m) => {
     const r = rs.find((x) => x.requirement === m.requirement);
     if (!r || !(r.bucket in rank)) return m;
     return rank[r.bucket] >= rank[m.bucket] ? { ...m, bucket: r.bucket, evidence: r.evidence || m.evidence } : m;   // never lower than before
   });
-  let after_matches = merge(rescored);
-  // The promise made at preview must hold: the delivered document is scored by the same function that set the promise.
-  // While it falls short and quoted-line strengths remain unsaid, state them in the employer's words — verified each
-  // time — and rescore. Up to three passes; the material, not the model, decides where it stops.
-  const promised = target(matches);
+  const apply = (checks: Record<string, { said: boolean; quote: string }>, base: Match[]) => base.map((m) => {
+    if (m.bucket !== "have_not_said") return m;
+    const c = checks[m.requirement];
+    return c?.said ? { ...m, bucket: "said" as const, evidence: c.quote || m.evidence } : m;
+  });
+  let after_matches: Match[];
+  if (v2) {
+    // v2: the preview's list with each unsaid item checked narrowly against the rewrite — never a fresh free grade
+    after_matches = apply(await saidNow(matches.filter((m) => m.bucket === "have_not_said"), rewrite), matches);
+  } else {
+    if (rewrite !== rescoredDraft) { rescoredDraft = rewrite; rescoreP = rescore(matches, rewrite); }   // only re-run when a repair changed the text
+    const { matches: rescored } = await rescoreP!;
+    after_matches = merge(rescored);
+  }
+  // The promise made at preview must hold: while the document falls short and sayable (v2) / quoted (v1) strengths remain
+  // unsaid, state them — verified each time. v2 inserts the audited line itself and repairs an overreach instead of
+  // discarding the pass. Up to three passes; the material, not the model, decides where it stops.
   for (let pass = 0; pass < 3 && verification.ok && fit(after_matches) < promised; pass++) {
-    const unsaid = after_matches.filter((m) => m.bucket === "have_not_said" && m.evidence);
+    const unsaid = after_matches.filter((m) => m.bucket === "have_not_said" && m.evidence && (v2 ? m.sayable : true));
     if (!unsaid.length) break;
     t0 = t(pass ? "Closing the gap" : "Saying what you’ve done");
-    const pushed = tidy(await json<Rewrite>(
-      `A résumé rewrite leaves some of the candidate's real strengths unsaid. For EACH item below, add or reword ONE line so a screener searching for the requirement would tick it: use the quoted evidence, in the employer's words, placed in the role where the evidence lives (or the relevant block). Never add a fact, number, tool or outcome the evidence does not contain. Change nothing else. Same JSON shape.`,
-      `REWRITE:\n${JSON.stringify(rewrite)}\n\nSTILL UNSAID:\n${JSON.stringify(unsaid.map((m) => ({ requirement: m.requirement, evidence: m.evidence, how: m.suggestion })))}`, 16000, FAST));
-    const v = await verifyRewrite(resume, pushed);
-    const b = checkRules(pushed, resume, posting);
-    if (!v.ok || b.length) break;                       // the push introduced a problem: keep the last clean draft
-    const { matches: rs } = await rescore(matches, pushed);
-    const next = merge(rs);
-    if (fit(next) <= fit(after_matches)) break;         // no progress: stop
+    let pushed = tidy(await json<Rewrite>(
+      v2
+        ? `A résumé rewrite leaves some of the candidate's real strengths unsaid. For EACH item below, insert the given LINE (already audited against the original — use it as written, or trim it; never widen it) as a bullet in the role where the evidence lives, or in the "relevant" block. If a bullet already covers the same fact, replace that bullet rather than adding a near-duplicate. Change nothing else. Same JSON shape.`
+        : `A résumé rewrite leaves some of the candidate's real strengths unsaid. For EACH item below, add or reword ONE line so a screener searching for the requirement would tick it: use the quoted evidence, in the employer's words, placed in the role where the evidence lives (or the relevant block). Never add a fact, number, tool or outcome the evidence does not contain. Change nothing else. Same JSON shape.`,
+      `REWRITE:\n${JSON.stringify(rewrite)}\n\nSTILL UNSAID:\n${JSON.stringify(unsaid.map((m) => ({ requirement: m.requirement, evidence: m.evidence, line: m.suggestion })))}`, 16000, FAST));
+    let v = await verifyRewrite(resume, pushed);
+    let b = checkRules(pushed, resume, posting);
+    if ((!v.ok || b.length) && v2) {
+      // a line or two overreached: take back exactly those, keep every clean line the pass added
+      pushed = tidy(await json<Rewrite>(
+        `Some lines in this rewrite overreach the original. For each UNSUPPORTED claim and RULE BREAK below, restore the wording to what the original supports (or remove the added words) — change nothing else, keep every other line exactly as it is. Same JSON shape.`,
+        `ORIGINAL:\n${JSON.stringify(resume)}\n\nREWRITE:\n${JSON.stringify(pushed)}\n\nUNSUPPORTED CLAIMS:\n${JSON.stringify(v.problems)}\n\nRULE BREAKS:\n${JSON.stringify(b)}`, 16000, FAST));
+      v = await verifyRewrite(resume, pushed);
+      b = checkRules(pushed, resume, posting);
+    }
+    if (!v.ok || b.length) { if (v2) continue; else break; }   // not clean: keep the last clean draft
+    const next = v2 ? apply(await saidNow(unsaid, pushed), after_matches) : merge((await rescore(matches, pushed)).matches);
+    if (fit(next) <= fit(after_matches)) { if (v2) continue; else break; }   // nothing new verified
     rewrite = pushed; verification = v; broken = b; after_matches = next;
     timing.push = (timing.push ?? 0) + (Date.now() - t0);
   }

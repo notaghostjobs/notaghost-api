@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../lib/db.js";
+import { selftest } from "./selftest.js";
 import { snapshotDue } from "../engine/ghost/index.js";
 import { companyKey } from "../engine/ghost/canon.js";
 
@@ -11,7 +12,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|payments|reader\/(stats|status|probe|employers|sightings))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|payments|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -135,3 +136,5 @@ admin.get("/payments", async (c) => {
   const { data: plans } = await db.from("plans").select("id, user_id, product, shots_total, shots_used, expires_at, created_at").order("created_at", { ascending: false }).limit(10);
   return c.json({ payments: (pays ?? []).map((p: any) => ({ ...p, user_id: String(p.user_id).slice(0, 8) })), plans: (plans ?? []).map((p: any) => ({ ...p, user_id: String(p.user_id).slice(0, 8) })) });
 });
+
+admin.route("/sharpen/selftest", selftest);

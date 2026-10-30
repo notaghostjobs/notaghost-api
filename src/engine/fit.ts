@@ -36,16 +36,25 @@ export function fit(matches: Match[]): number {
   return Math.max(FLOOR, Math.min(cap, Math.round(raw)));
 }
 
-/** The most a rewrite can reach from this résumé: every have_not_said becomes said; missing stays missing. */
-export function reachable(matches: Match[]): number {
-  return fit(matches.map((m) => (m.bucket === "have_not_said" ? { ...m, bucket: "said" as const } : m)));
+/** Sharpen v2 (audited promise) is on for everyone when SHARPEN_V2=on; a caller can also force it (the server self-test). */
+export const v2On = (force?: boolean) => force ?? process.env.SHARPEN_V2 === "on";
+
+/** The most a rewrite can reach from this résumé.
+ *  v1: every have_not_said becomes said.
+ *  v2: only an unsaid item whose proposed line was audited at preview as supported by the résumé AND satisfying the
+ *      requirement (m.sayable) becomes said; everything else stays where it is; missing stays missing. */
+export function reachable(matches: Match[], v2 = v2On()): number {
+  return fit(matches.map((m) => (m.bucket === "have_not_said" && (!v2 || m.sayable) ? { ...m, bucket: "said" as const } : m)));
 }
 
-/** The number we promise before payment. Pro-rata lift, bounded by what the material allows. */
-export function target(matches: Match[]): number {
+/** The number we promise before payment.
+ *  v1: pro-rata lift (cur + 40% of the gap, at least +8), capped at 92 and by reachable.
+ *  v2: exactly what the audited lines reach, capped at 92 — promised and delivered are the same calculation. */
+export function target(matches: Match[], v2 = v2On()): number {
+  if (v2) return Math.min(TARGET_CAP, reachable(matches, true));
   const cur = fit(matches);
   const want = Math.min(TARGET_CAP, Math.max(cur + MIN_LIFT, Math.round(cur + (100 - cur) * TARGET_RATE)));
-  return Math.min(want, reachable(matches));
+  return Math.min(want, reachable(matches, false));
 }
 
 export type Band = "low" | "medium" | "high";
@@ -55,13 +64,13 @@ export function band(cur: number): Band {
 }
 
 /** Everything the fit page needs, in one place. */
-export function assess(matches: Match[]) {
+export function assess(matches: Match[], v2 = v2On()) {
   const current = fit(matches);
-  const max = reachable(matches);
-  const promised = target(matches);
+  const max = reachable(matches, v2);
+  const promised = target(matches, v2);
   const b = band(current);
-  // Sharpen is offered only where the résumé's own material gives a real lift: at least +5 to the promised number.
+  // Sharpen is offered only where the résumé's own material gives a real lift (v2: at least MIN_LIFT; v1: +5).
   // Medium with nothing unsaid (everything either said or missing) is honest to show and nothing to sell.
-  const canLift = b === "medium" && promised - current >= 5;
+  const canLift = b === "medium" && promised - current >= (v2 ? MIN_LIFT : 5);
   return { current, promised, reachable: max, band: b, can_lift: canLift };
 }

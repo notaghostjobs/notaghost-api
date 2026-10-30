@@ -34,9 +34,10 @@ export async function runShot(shotId: string) {
     // posting: fetch or pasted; cache by url hash
     const input = shot.input as { posting_url?: string; posting_text?: string; preview_id?: string };
     let pre: { posting: PostingProfile; matches: Match[] } | undefined;
+    let shownPromise: number | null = null;   // the number the user actually saw at preview — the one we are held to
     if (input.preview_id) {
-      const { data: pv } = await db.from("previews").select("posting, matches, posting_text").eq("id", input.preview_id).eq("user_id", shot.user_id).maybeSingle();
-      if (pv?.posting && pv?.matches) { pre = { posting: pv.posting as PostingProfile, matches: pv.matches as Match[] }; if (!input.posting_text && pv.posting_text) input.posting_text = pv.posting_text; }
+      const { data: pv } = await db.from("previews").select("posting, matches, posting_text, score_after").eq("id", input.preview_id).eq("user_id", shot.user_id).maybeSingle();
+      if (pv?.posting && pv?.matches) { pre = { posting: pv.posting as PostingProfile, matches: pv.matches as Match[] }; if (!input.posting_text && pv.posting_text) input.posting_text = pv.posting_text; shownPromise = typeof pv.score_after === "number" ? pv.score_after : null; }
     }
     let postingId: string | null = null;
     let postingText = input.posting_text ?? "";
@@ -63,7 +64,7 @@ export async function runShot(shotId: string) {
     if (up.error) throw up.error;
 
     // one scorer for all three numbers: what the résumé scored, what we promised, what the document scores now
-    const before = fit(out.matches), after = fit(out.after_matches), promised = target(out.matches);
+    const before = fit(out.matches), after = fit(out.after_matches), promised = shownPromise ?? target(out.matches);
     // the number we delivered is below the number we promised at preview: the document still goes out, the shot comes back
     const short = after < promised;
     if (short) await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
