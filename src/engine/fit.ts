@@ -39,7 +39,7 @@ export function fit(matches: Match[]): number {
 /** Sharpen v2 (audited promise) is on for everyone when SHARPEN_V2=on; a caller can also force it (the server self-test). */
 export const v2On = (force?: boolean) => force ?? process.env.SHARPEN_V2 === "on";
 /** Bumped whenever the matcher, the audit or the scorer changes meaning: cached previews from an older engine are not reused. */
-export const ENGINE_VERSION = "v2.4";
+export const ENGINE_VERSION = "v2.5";
 
 /** The most a rewrite can reach from this résumé.
  *  v1: every have_not_said becomes said.

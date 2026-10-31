@@ -112,7 +112,7 @@ export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, mo
 7. fit_line: one honest sentence to the candidate about their odds here (e.g. "Strong on the core stack; two of five must-haves are missing — apply, but expect questions on X").
 8. contact: if the résumé address is in a different country from the posting location, drop the street/area and keep only the country or nothing; note it in changes.
 9. changes: every meaningful edit with a one-line why, so the candidate can see exactly what moved.`,
-    `ORIGINAL:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nCHECKLIST:\n${JSON.stringify(matches.map((m) => ({ requirement: m.requirement, status: m.bucket, evidence: m.evidence, how: m.suggestion })))}\n\nReturn: {headline, summary, relevant[], roles[{company,title,start,end,bullets[]}], skills[], education[], extra_sections[{title,items[]}], changes[{what,why}], referral_note, fit_line}`,
+    `ORIGINAL:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nCHECKLIST:\n${JSON.stringify(matches.map((m) => ({ requirement: m.requirement, status: m.bucket, evidence: m.evidence, how: m.suggestion })))}${matches.some((m) => m.sayable && m.line) ? `\n\nMANDATORY BULLETS — these sentences were audited against the original and MUST appear in the rewrite word for word (you may only trim trailing words), each as a bullet in the role whose evidence it quotes, or in the "relevant" block if the evidence is from the profile. Do not paraphrase them; do not merge them into other bullets:\n${JSON.stringify(matches.filter((m) => m.sayable && m.line).map((m) => ({ requirement: m.requirement, bullet: m.line, evidence: m.evidence })))}` : ""}\n\nReturn: {headline, summary, relevant[], roles[{company,title,start,end,bullets[]}], skills[], education[], extra_sections[{title,items[]}], changes[{what,why}], referral_note, fit_line}`,
     16000, model
   );
 }
@@ -193,11 +193,23 @@ Answer every id; keep reason to one sentence.`,
 export async function saidNow(items: Match[], rewrite: Rewrite): Promise<Record<string, { said: boolean; quote: string }>> {
   if (!items.length) return {};
   const doc = { headline: rewrite.headline, summary: rewrite.summary, relevant: rewrite.relevant, roles: rewrite.roles, skills: rewrite.skills, extra_sections: rewrite.extra_sections };
+  // the promised sentence is in the document: that is a yes, no model needed. Only lines that were altered go to the checker.
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  const hay = norm(JSON.stringify(doc));
+  const out: Record<string, { said: boolean; quote: string }> = {};
+  const ask: Match[] = [];
+  for (const m of items) {
+    const l = (m.line ?? "").trim();
+    const core = l ? norm(l).split(" ").slice(0, 10).join(" ") : "";
+    if (core && core.split(" ").length >= 6 && hay.includes(core)) out[m.requirement] = { said: true, quote: l };
+    else ask.push(m);
+  }
+  if (!ask.length) return out;
+  items = ask;
   const r = await json<{ checks: { id: number; said: boolean; quote: string }[] }>(
     `You check a rewritten résumé against a short numbered list of requirements. For EACH requirement, answer whether a screener searching for it would now tick it from the rewrite — the requirement is stated in plain words (the requirement's own words or an obvious equivalent) somewhere in the headline, summary, "relevant" block, a bullet, a skill or an extra section. Quote the exact line. Judge only presence: is it said, yes or no. Do not re-grade anything else and do not invent. Answer every id.`,
     `REWRITE:\n${JSON.stringify(doc)}\n\nREQUIREMENTS:\n${JSON.stringify(items.map((m, i) => ({ id: i + 1, requirement: m.requirement, evidence_it_should_rest_on: m.evidence })))}\n\nReturn: {checks:[{id, said, quote}]}`,
     2500, FAST);
-  const out: Record<string, { said: boolean; quote: string }> = {};
   for (const c of r.checks ?? []) { const m = items[Number(c.id) - 1]; if (m) out[m.requirement] = { said: !!c.said, quote: c.quote ?? "" }; }
   return out;
 }
@@ -303,7 +315,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     t0 = t(pass ? "Closing the gap" : "Saying what you’ve done");
     let pushed = tidy(await json<Rewrite>(
       v2
-        ? `A résumé rewrite leaves some of the candidate's real strengths unsaid. For EACH item below, insert the given LINE (already audited against the original — use it as written, or trim it; never widen it) as a bullet in the role where the evidence lives, or in the "relevant" block. If a bullet already covers the same fact, replace that bullet rather than adding a near-duplicate. Change nothing else. Same JSON shape.`
+        ? `A résumé rewrite is missing bullets that were promised. For EACH item below, insert the given LINE EXACTLY as written (no paraphrase, no merging, no added words) as a bullet in the role where the evidence lives — or in the "relevant" block if the evidence is from the profile. If an existing bullet covers the same fact, replace that bullet with this exact line. Change nothing else. Same JSON shape.`
         : `A résumé rewrite leaves some of the candidate's real strengths unsaid. For EACH item below, add or reword ONE line so a screener searching for the requirement would tick it: use the quoted evidence, in the employer's words, placed in the role where the evidence lives (or the relevant block). Never add a fact, number, tool or outcome the evidence does not contain. Change nothing else. Same JSON shape.`,
       `REWRITE:\n${JSON.stringify(rewrite)}\n\nSTILL UNSAID:\n${JSON.stringify(unsaid.map((m) => ({ requirement: m.requirement, evidence: m.evidence, line: v2 ? (m.line || m.suggestion) : m.suggestion })))}`, 16000, FAST));
     let v = await verifyRewrite(resume, pushed);
