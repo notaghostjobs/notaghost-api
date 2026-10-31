@@ -34,13 +34,14 @@ Education: MBA, Christ University (2015); B.Com, Loyola College (2013)
 Skills: P&L ownership, vendor negotiation, assortment planning, SQL, Excel, Tableau, pricing, promotions, team leadership`;
 
 const KEY = "selftest:sharpen";
+const keyFor = (p: string) => `${KEY}:${p}`;
 let running = false;
 
 async function run(runs: number, postingUrlPart: string) {
   running = true;
   const started = new Date().toISOString();
   const log: unknown[] = [];
-  const save = (extra: Record<string, unknown>) => db.from("reader_control").upsert({ key: KEY, value: { started, runs, posting: postingUrlPart, log, ...extra }, updated_at: new Date().toISOString() });
+  const save = async (extra: Record<string, unknown>) => { const value = { started, runs, posting: postingUrlPart, log, ...extra }; await db.from("reader_control").upsert([{ key: KEY, value, updated_at: new Date().toISOString() }, { key: keyFor(postingUrlPart), value, updated_at: new Date().toISOString() }]); };
   try {
     const { data: p } = await db.from("postings").select("raw_text, url").ilike("url", `%${postingUrlPart}%`).not("raw_text", "is", null).limit(1).maybeSingle();
     if (!p?.raw_text) throw new Error(`no stored posting matching ${postingUrlPart}`);
@@ -72,12 +73,14 @@ async function run(runs: number, postingUrlPart: string) {
 
 selftest.get("/", (c) => {
   const runs = Math.min(5, Math.max(1, Number(c.req.query("runs") ?? 3)));
-  const posting = c.req.query("posting") ?? "4478516313";
+  const postings = (c.req.query("posting") ?? "4478516313").split(",").map((x) => x.trim()).filter(Boolean);
   if (running) return c.json({ ok: false, error: "a self-test is already running" }, 409);
-  void run(runs, posting);
-  return c.json({ ok: true, started: true, runs, posting });
+  void (async () => { for (const p of postings) { await run(runs, p); } })();
+  return c.json({ ok: true, started: true, runs, postings });
 });
 selftest.get("/result", async (c) => {
-  const { data } = await db.from("reader_control").select("value, updated_at").eq("key", KEY).maybeSingle();
+  const p = c.req.query("posting");
+  if (p === "all") { const { data } = await db.from("reader_control").select("key, value, updated_at").like("key", `${KEY}:%`).order("updated_at", { ascending: false }); return c.json(data ?? []); }
+  const { data } = await db.from("reader_control").select("value, updated_at").eq("key", p ? keyFor(p) : KEY).maybeSingle();
   return c.json(data ?? { status: "never run" });
 });
