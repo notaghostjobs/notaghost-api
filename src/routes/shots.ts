@@ -23,7 +23,7 @@ shots.post("/reset", async (c) => {
   const now = new Date().toISOString();
   const { data } = await db.from("plans").update({ expires_at: now }).eq("user_id", u.id).gt("expires_at", now).select("id");
   // a clean walk-through: every résumé, preview and shot on this test account is forgotten, so the next run is a first run
-  const { data: rs } = await db.from("resumes").update({ is_current: false }).eq("user_id", u.id).select("id");
+  const { data: rs } = await db.from("resumes").delete().eq("user_id", u.id).select("id");
   const { data: pv } = await db.from("previews").delete().eq("user_id", u.id).select("id");
   const { data: sh } = await db.from("shots").delete().eq("user_id", u.id).select("id");
   return c.json({ ended: data?.length ?? 0, resumes: rs?.length ?? 0, previews: pv?.length ?? 0, shots: sh?.length ?? 0 });
