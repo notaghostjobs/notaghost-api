@@ -73,6 +73,8 @@ export function assess(matches: Match[], v2 = v2On()) {
   const b = band(current);
   // Sharpen is offered only where the résumé's own material gives a real lift (v2: at least MIN_LIFT; v1: +5).
   // Medium with nothing unsaid (everything either said or missing) is honest to show and nothing to sell.
-  const canLift = b === "medium" && promised - current >= (v2 ? MIN_LIFT : 5);
+  // medium ALWAYS offers Sharpen (the promise may be modest; the user decides). high offers it only when something is left to say.
+  const anySayable = matches.some((m) => m.bucket === "have_not_said" && (!v2 || m.sayable));
+  const canLift = b === "medium" ? true : b === "high" ? anySayable && promised > current : false;
   return { current, promised, reachable: max, band: b, can_lift: canLift };
 }

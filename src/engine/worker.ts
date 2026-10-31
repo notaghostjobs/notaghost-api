@@ -38,6 +38,14 @@ export async function runShot(shotId: string) {
     if (input.preview_id) {
       const { data: pv } = await db.from("previews").select("posting, matches, posting_text, score_after").eq("id", input.preview_id).eq("user_id", shot.user_id).maybeSingle();
       if (pv?.posting && pv?.matches) { pre = { posting: pv.posting as PostingProfile, matches: pv.matches as Match[] }; if (!input.posting_text && pv.posting_text) input.posting_text = pv.posting_text; shownPromise = typeof pv.score_after === "number" ? pv.score_after : null; }
+      // the same résumé against the same posting was already sharpened: the document and its number are returned as they were.
+      // A second shot on the same pair is not a new roll of the dice; it is the same answer (and the shot comes back).
+      const { data: prev } = await db.from("shots").select("output").eq("user_id", shot.user_id).eq("status", "done").contains("input", { preview_id: input.preview_id }).neq("id", shotId).order("done_at", { ascending: false }).limit(1).maybeSingle();
+      if (prev?.output && (prev.output as any).pdf_path) {
+        await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
+        await db.from("shots").update({ status: "done", done_at: new Date().toISOString(), output: { ...(prev.output as any), shot_returned: true, repeat: true } }).eq("id", shotId);
+        return;
+      }
     }
     let postingId: string | null = null;
     let postingText = input.posting_text ?? "";

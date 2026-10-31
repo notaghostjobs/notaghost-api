@@ -46,11 +46,10 @@ preview.post("/", async (c) => {
   // days or until the résumé changes. A number that moved between two looks at one posting was never a promise.
   const since = new Date(Date.now() - 30 * 86400e3).toISOString();
   const { data: prior } = postingId
-    ? await db.from("previews").select("id, matches, posting").eq("user_id", u.id).eq("resume_id", resume.id).eq("posting_id", postingId).gt("created_at", since).order("created_at", { ascending: false }).limit(1).maybeSingle()
+    ? await db.from("previews").select("id, matches, posting").eq("user_id", u.id).eq("resume_id", resume.id).eq("posting_id", postingId).order("created_at", { ascending: false }).limit(1).maybeSingle()
     : { data: null };
-  // a preview made by an older engine is not reused: the number would not match what the engine promises and delivers today
-  const priorEngine = (prior as any)?.posting?.__engine as string | undefined;
-  if (prior && priorEngine !== ENGINE_VERSION) (prior as any).matches = null;
+  // The number is holy: once this résumé has been matched against this posting, the stored result is what the user sees,
+  // every time, whatever the engine does later. An engine change applies to pairs scored after it, never to one already shown.
   let matches: Match[], fits: string | null, previewId: string | null;
   const similar_open = await similarOpen(posting.title);
   if (prior?.matches) { matches = prior.matches as Match[]; fits = null; previewId = prior.id; }

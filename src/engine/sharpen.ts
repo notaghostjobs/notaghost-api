@@ -185,6 +185,15 @@ Answer every id; keep reason to one sentence.`,
     }
   }
   for (const [req, v] of verdicts) { if (v.supported && v.satisfies) ok.add(req); why.set(req, `${v.supported ? "supported" : "NOT supported"} · ${v.satisfies ? "satisfies" : "does NOT satisfy"} · ${v.reason}`.slice(0, 220)); }
+  // Floor: the matcher already graded these as a LINE of the same work (same activity, same object, same scale class). When the
+  // auditor's only objection is wording — "does not show X" where X is a qualifier, not a hard fact (tool, degree, number,
+  // seniority, stage, domain) — the line stands. Hard-fact objections keep the no.
+  const HARD = /\b(tool|degree|mba|tier|years?|\d+\+?|team of|seniority|c-level|executive|closing|close|marketplace|seller|excel|sql|tableau|python|certif)/i;
+  for (const m of items) {
+    if (ok.has(m.requirement) || m.evidence_kind !== "line") continue;
+    const v = verdicts.get(m.requirement); if (!v || !v.supported) continue;
+    if (!HARD.test(m.requirement) && !HARD.test(v.reason)) { ok.add(m.requirement); why.set(m.requirement, `supported · floor: same-work line, no hard fact missing · ${v.reason}`.slice(0, 220)); }
+  }
   return matches.map((m) => (m.bucket === "have_not_said" ? { ...m, line: fixedLine.get(m.requirement) ?? m.line, sayable: ok.has(m.requirement), vet_reason: why.get(m.requirement) } : m));
 }
 
