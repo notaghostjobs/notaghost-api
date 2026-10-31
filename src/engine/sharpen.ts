@@ -141,7 +141,7 @@ export function grade(matches: Match[], doc: unknown, label: "ORIGINAL RÉSUMÉ"
 /** Every unsaid item with a quoted LINE of evidence gets a finished bullet. The matcher sometimes leaves `line` blank; this
  *  writes exactly those, from the evidence alone, so nothing is left unaudited for want of a sentence. */
 export async function fillLines(resume: ResumeProfile, matches: Match[]): Promise<Match[]> {
-  const gaps = matches.filter((m) => m.bucket === "have_not_said" && m.evidence_kind !== "keyword" && !(m.line ?? "").trim());
+  const gaps = matches.filter((m) => m.bucket === "have_not_said" && !(m.line ?? "").trim());
   if (!gaps.length) return matches;
   const r = await json<{ lines: { id: number; line: string }[] }>(
     `For EACH numbered item, write the finished résumé bullet we would insert: at most 28 words, starts with a verb, in the requirement's own words where the facts allow, built ONLY from the quoted evidence and other facts stated in the ORIGINAL résumé. Numbers exactly as the résumé has them. Add no scope, stage, seniority, tool or outcome the résumé does not state. If no honest bullet can be written, return "". Résumé text, never advice.`,
@@ -163,9 +163,29 @@ satisfies: would a FAIR screener, scanning for this requirement, tick this line?
 Answer every id; keep reason to one sentence.`,
     `ORIGINAL:\n${JSON.stringify(resume)}\n\nPROPOSED LINES:\n${JSON.stringify(items.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
     3000, FAST);
-  const ok = new Set<string>(); const why = new Map<string, string>();
-  for (const c of r.checks ?? []) { const m = items[Number(c.id) - 1]; if (!m) continue; if (c.supported && c.satisfies) ok.add(m.requirement); why.set(m.requirement, `${c.supported ? "supported" : "NOT supported"} · ${c.satisfies ? "satisfies" : "does NOT satisfy"} · ${c.reason ?? ""}`.slice(0, 220)); }
-  return matches.map((m) => (m.bucket === "have_not_said" ? { ...m, sayable: ok.has(m.requirement), vet_reason: why.get(m.requirement) } : m));
+  const ok = new Set<string>(); const why = new Map<string, string>(); const fixedLine = new Map<string, string>();
+  const verdicts = new Map<string, { supported: boolean; satisfies: boolean; reason: string }>();
+  for (const c of r.checks ?? []) { const m = items[Number(c.id) - 1]; if (!m) continue; verdicts.set(m.requirement, { supported: !!c.supported, satisfies: !!c.satisfies, reason: c.reason ?? "" }); }
+  // a line that satisfies the requirement but overreaches the résumé is repaired once — cut back to the quoted evidence — and audited again.
+  // The fault was the sentence, not the fact; throwing the item away would hide a real strength.
+  const overreach = items.filter((m) => { const v = verdicts.get(m.requirement); return v && v.satisfies && !v.supported; });
+  if (overreach.length) {
+    const r2 = await json<{ lines: { id: number; line: string }[] }>(
+      `Each numbered line overreaches the ORIGINAL résumé in the way described. Rewrite it so it claims ONLY what the quoted evidence and the original state — remove the added tool, scope, number or outcome — while still stating the requirement's core activity in its own words. At most 28 words, starts with a verb. Return "" only if nothing honest remains.`,
+      `ORIGINAL:\n${JSON.stringify(resume)}\n\nLINES:\n${JSON.stringify(overreach.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, evidence: m.evidence, problem: verdicts.get(m.requirement)!.reason })))}\n\nReturn: {lines:[{id, line}]}`,
+      2500, FAST);
+    const retry: Match[] = [];
+    for (const l of r2.lines ?? []) { const m = overreach[Number(l.id) - 1]; if (m && (l.line ?? "").trim()) { fixedLine.set(m.requirement, l.line.trim()); retry.push({ ...m, line: l.line.trim() }); } }
+    if (retry.length) {
+      const r3 = await json<{ checks: { id: number; supported: boolean; satisfies: boolean; reason: string }[] }>(
+        `You are a fair auditor. For EACH numbered proposed résumé line: supported = every fact in the line is already in the ORIGINAL résumé (rewording and the employer's vocabulary are fine; a new tool, number, scope, stage or outcome is not). satisfies = a fair screener scanning for the requirement would tick this line on its core activity. Answer every id, one-sentence reason.`,
+        `ORIGINAL:\n${JSON.stringify(resume)}\n\nPROPOSED LINES:\n${JSON.stringify(retry.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
+        3000, FAST);
+      for (const c of r3.checks ?? []) { const m = retry[Number(c.id) - 1]; if (m) verdicts.set(m.requirement, { supported: !!c.supported, satisfies: !!c.satisfies, reason: `repaired · ${c.reason ?? ""}` }); }
+    }
+  }
+  for (const [req, v] of verdicts) { if (v.supported && v.satisfies) ok.add(req); why.set(req, `${v.supported ? "supported" : "NOT supported"} · ${v.satisfies ? "satisfies" : "does NOT satisfy"} · ${v.reason}`.slice(0, 220)); }
+  return matches.map((m) => (m.bucket === "have_not_said" ? { ...m, line: fixedLine.get(m.requirement) ?? m.line, sayable: ok.has(m.requirement), vet_reason: why.get(m.requirement) } : m));
 }
 
 /** v2 delivered score: not a free re-grade (that read moves ±10 between runs) but the preview's own list, each unsaid item
