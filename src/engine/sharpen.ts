@@ -138,13 +138,28 @@ export function grade(matches: Match[], doc: unknown, label: "ORIGINAL RÉSUMÉ"
 /** v2, at preview, before anything is promised: for each unsaid item, the exact line we would write (its suggestion) is
  *  audited against the résumé — supported (adds no fact) AND satisfies the whole requirement. Only such lines go into the
  *  promise. The same auditor checks the delivered document, so what is promised is what will pass. */
-export async function vetLines(resume: ResumeProfile, matches: Match[]): Promise<Match[]> {
+/** Every unsaid item with a quoted LINE of evidence gets a finished bullet. The matcher sometimes leaves `line` blank; this
+ *  writes exactly those, from the evidence alone, so nothing is left unaudited for want of a sentence. */
+export async function fillLines(resume: ResumeProfile, matches: Match[]): Promise<Match[]> {
+  const gaps = matches.filter((m) => m.bucket === "have_not_said" && m.evidence_kind !== "keyword" && !(m.line ?? "").trim());
+  if (!gaps.length) return matches;
+  const r = await json<{ lines: { id: number; line: string }[] }>(
+    `For EACH numbered item, write the finished résumé bullet we would insert: at most 28 words, starts with a verb, in the requirement's own words where the facts allow, built ONLY from the quoted evidence and other facts stated in the ORIGINAL résumé. Numbers exactly as the résumé has them. Add no scope, stage, seniority, tool or outcome the résumé does not state. If no honest bullet can be written, return "". Résumé text, never advice.`,
+    `ORIGINAL:\n${JSON.stringify(resume)}\n\nITEMS:\n${JSON.stringify(gaps.map((m, i) => ({ id: i + 1, requirement: m.requirement, evidence: m.evidence })))}\n\nReturn: {lines:[{id, line}]}`,
+    2500, FAST);
+  const by = new Map<string, string>();
+  for (const l of r.lines ?? []) { const m = gaps[Number(l.id) - 1]; if (m && (l.line ?? "").trim()) by.set(m.requirement, l.line.trim()); }
+  return matches.map((m) => (by.has(m.requirement) ? { ...m, line: by.get(m.requirement) } : m));
+}
+
+export async function vetLines(resume: ResumeProfile, matches0: Match[]): Promise<Match[]> {
+  const matches = await fillLines(resume, matches0);
   const items = matches.filter((m) => m.bucket === "have_not_said" && (m.line ?? "").trim().length > 0);
   if (!items.length) return matches;
   const r = await json<{ checks: { id: number; supported: boolean; satisfies: boolean; reason: string }[] }>(
     `You are a fair auditor. For EACH numbered proposed résumé line answer two things.
 supported: is every FACT in the line already in the ORIGINAL résumé? Facts are numbers, tools, employers, titles, dates, degrees, scope, stage, outcomes. Rewording, synonyms, the employer's vocabulary, and combining two facts from the same role into one sentence are all fine ("Led a team of 6, hiring and training 4, to deliver the FMCG P&L" is supported when the team, the hires and the P&L are all in that role). Fail it ONLY for a fact that is not there: a new number, a new tool, a wider scope or stage ("negotiated terms" → "managed deals through closing"), a higher seniority ("led 6 associates" → "led a team of managers").
-satisfies: would a FAIR screener reading that line tick the requirement? A plain equivalent counts: "reviewed vendor scorecards monthly with leadership and negotiated with 40 suppliers" DOES satisfy "work with senior stakeholders, internal and external"; "led a team of 6 to deliver the category P&L" DOES satisfy "lead a team to deliver org goals"; "cut stock-outs from 11% to 4% through inventory planning" DOES satisfy "make data-driven decisions". Fail it ONLY when the requirement asks for something the line does not show at all: a named tool or degree ("Tier 1 MBA"), a stage ("closing deals"), a scale ("teams of 50+"), a domain ("marketplace seller side").
+satisfies: would a FAIR screener, scanning for this requirement, tick this line? The bar is the requirement's CORE activity on the same kind of object — not every clause of a long requirement sentence. Employers write requirements as paragraphs ("identify gaps and track the brand's offline catalogue to ensure relevant selection is on Amazon"); a screener ticks "building selection" when they see assortment/selection ownership, and does not demand the words "offline catalogue" or "Amazon". So: "led development of product assortments aligned with customer demand" DOES satisfy a "building selection" requirement; "reviewed vendor scorecards monthly with leadership and negotiated with 40 suppliers" DOES satisfy "work with senior stakeholders"; "led a team of 6 to deliver the category P&L" DOES satisfy "lead a team to deliver org goals"; "cut stock-outs from 11% to 4% through inventory planning" DOES satisfy "make data-driven decisions". Fail it ONLY when the core activity itself is absent, or the requirement's defining qualifier is a hard fact the line cannot show: a named tool or degree ("3+ years of Excel" is not shown by "Microsoft Office Suite"; "Tier 1 MBA"), a stage ("closing deals" vs "negotiated"), a scale ("teams of 50+"), a distinct domain ("marketplace seller side" vs buying).
 Answer every id; keep reason to one sentence.`,
     `ORIGINAL:\n${JSON.stringify(resume)}\n\nPROPOSED LINES:\n${JSON.stringify(items.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
     3000, FAST);
