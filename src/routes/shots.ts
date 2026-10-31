@@ -29,6 +29,16 @@ shots.post("/reset", async (c) => {
   return c.json({ ended: data?.length ?? 0, resumes: rs?.length ?? 0, previews: pv?.length ?? 0, shots: sh?.length ?? 0 });
 });
 
+// Test phones only: give the plan one shot back (used when a run broke the promise rule on our side).
+shots.post("/return-one", async (c) => {
+  const u = c.get("user");
+  if (!isTestUser(u)) return c.json({ error: "Not available on this account." }, 403);
+  const plan = await activePlan(u.id, "sharpen");
+  if (!plan) return c.json({ error: "No active plan." }, 404);
+  await db.rpc("refund_shot", { p_plan: plan.id });
+  return c.json({ ok: true, plan: plan.id });
+});
+
 // Spend one shot. Body: { product, posting_url? , posting_text? }
 shots.post("/", async (c) => {
   const u = c.get("user");
