@@ -12,7 +12,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|payments|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|payments|previews|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -138,3 +138,10 @@ admin.get("/payments", async (c) => {
 });
 
 admin.route("/sharpen/selftest", selftest);
+
+/** The last previews: the matched list with the auditor's verdict on each proposed line. For tuning the audit; no résumé text beyond the quoted evidence. */
+admin.get("/previews", async (c) => {
+  const { data } = await db.from("previews").select("id, created_at, posting_id, score_before, score_after, matches").order("created_at", { ascending: false }).limit(Number(c.req.query("limit") ?? 5));
+  return c.json((data ?? []).map((p: any) => ({ id: p.id, at: p.created_at, before: p.score_before, promised: p.score_after,
+    lines: (p.matches ?? []).map((m: any) => ({ bucket: m.bucket, kind: m.kind, req: String(m.requirement).slice(0, 90), ev: String(m.evidence ?? "").slice(0, 120), line: String(m.line ?? "").slice(0, 160), sayable: m.sayable, why: m.vet_reason })) })));
+});
