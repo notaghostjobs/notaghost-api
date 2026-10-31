@@ -23,10 +23,15 @@ shots.post("/reset", async (c) => {
   const now = new Date().toISOString();
   const { data } = await db.from("plans").update({ expires_at: now }).eq("user_id", u.id).gt("expires_at", now).select("id");
   // a clean walk-through: every résumé, preview and shot on this test account is forgotten, so the next run is a first run
-  const { data: rs } = await db.from("resumes").delete().eq("user_id", u.id).select("id");
-  const { data: pv } = await db.from("previews").delete().eq("user_id", u.id).select("id");
-  const { data: sh } = await db.from("shots").delete().eq("user_id", u.id).select("id");
-  return c.json({ ended: data?.length ?? 0, resumes: rs?.length ?? 0, previews: pv?.length ?? 0, shots: sh?.length ?? 0 });
+  // children first: shots and previews point at résumés, so the résumé row can only go last
+  const sh = await db.from("shots").delete().eq("user_id", u.id).select("id");
+  const pv = await db.from("previews").delete().eq("user_id", u.id).select("id");
+  const rs = await db.from("resumes").delete().eq("user_id", u.id).select("id, storage_path");
+  const paths = (rs.data ?? []).map((r: any) => r.storage_path).filter(Boolean);
+  if (paths.length) await db.storage.from("resumes").remove(paths).then(() => {}, () => {});
+  const errors = [sh.error, pv.error, rs.error].filter(Boolean).map((e) => e!.message);
+  if (errors.length) return c.json({ error: `Reset incomplete: ${errors.join("; ")}` }, 500);
+  return c.json({ ended: data?.length ?? 0, resumes: rs.data?.length ?? 0, previews: pv.data?.length ?? 0, shots: sh.data?.length ?? 0 });
 });
 
 // Test phones only: give the plan one shot back (used when a run broke the promise rule on our side).
