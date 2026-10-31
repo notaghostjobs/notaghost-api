@@ -8,7 +8,7 @@ import { env } from "../lib/env.js";
 export const shots = new Hono<{ Variables: { user: User } }>();
 shots.use("*", requireUser);
 
-const isTestUser = (u: User) => env.otpTestPhones.split(",").map((p) => p.trim()).filter(Boolean).includes(u.phone);
+import { isTester as isTestUser } from "../lib/testers.js";
 
 shots.get("/plan", async (c) => {
   const u = c.get("user");

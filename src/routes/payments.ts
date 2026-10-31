@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { isTester } from "../lib/testers.js";
 import { z } from "zod";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import Razorpay from "razorpay";
@@ -94,10 +95,9 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
 
 /** Test grant, founder's phone only: retires every plan the user holds and issues a fresh 10-shot Sharpen plan without
  *  a payment, so the end-to-end flow can be walked from shot 1 before the gateway is used for real. */
-const TEST_PHONES = new Set(["9952037479"]);
 payments.post("/dummy", requireUser, async (c) => {
   const u = c.get("user");
-  if (!TEST_PHONES.has((u.phone ?? "").replace(/\D/g, "").slice(-10))) return c.json({ error: "Not available." }, 403);
+  if (!isTester(u)) return c.json({ error: "Not available." }, 403);
   const now = new Date().toISOString();
   await db.from("plans").update({ expires_at: now }).eq("user_id", u.id).gt("expires_at", now);
   const price = PRICES.sharpen;
