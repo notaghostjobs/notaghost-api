@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { db, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
 import { fetchPosting } from "../engine/extract.js";
-import { assess, fit } from "../engine/fit.js";
+import { assess, fit, ENGINE_VERSION } from "../engine/fit.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../engine/sharpen.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(u.trim().toLowerCase()).digest("hex");
@@ -46,8 +46,11 @@ preview.post("/", async (c) => {
   // days or until the résumé changes. A number that moved between two looks at one posting was never a promise.
   const since = new Date(Date.now() - 30 * 86400e3).toISOString();
   const { data: prior } = postingId
-    ? await db.from("previews").select("id, matches").eq("user_id", u.id).eq("resume_id", resume.id).eq("posting_id", postingId).gt("created_at", since).order("created_at", { ascending: false }).limit(1).maybeSingle()
+    ? await db.from("previews").select("id, matches, posting").eq("user_id", u.id).eq("resume_id", resume.id).eq("posting_id", postingId).gt("created_at", since).order("created_at", { ascending: false }).limit(1).maybeSingle()
     : { data: null };
+  // a preview made by an older engine is not reused: the number would not match what the engine promises and delivers today
+  const priorEngine = (prior as any)?.posting?.__engine as string | undefined;
+  if (prior && priorEngine !== ENGINE_VERSION) (prior as any).matches = null;
   let matches: Match[], fits: string | null, previewId: string | null;
   const similar_open = await similarOpen(posting.title);
   if (prior?.matches) { matches = prior.matches as Match[]; fits = null; previewId = prior.id; }
@@ -56,7 +59,7 @@ preview.post("/", async (c) => {
     matches = g.matches; fits = g.fits ?? null;
     const a0 = assess(matches);
     // remember this exact match so the paid run scores against the same list the user saw
-    const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting, matches, score_before: a0.current, score_after: a0.promised }).select("id").single();
+    const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting: { ...posting, __engine: ENGINE_VERSION }, matches, score_before: a0.current, score_after: a0.promised }).select("id").single();
     previewId = pv?.id ?? null;
   }
   const a = assess(matches);
