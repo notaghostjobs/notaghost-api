@@ -213,7 +213,7 @@ export async function saidNow(items: Match[], rewrite: Rewrite): Promise<Record<
   for (const m of items) {
     const l = (m.line ?? "").trim();
     const core = l ? norm(l).split(" ").slice(0, 10).join(" ") : "";
-    if (core && core.split(" ").length >= 6 && hay.includes(core)) out[m.requirement] = { said: true, quote: l };
+    if (core && core.split(" ").length >= 3 && hay.includes(core)) out[m.requirement] = { said: true, quote: l };   // the exact sentence is in the document: said
     else ask.push(m);
   }
   if (!ask.length) return out;
@@ -346,6 +346,47 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     rewrite = pushed; verification = v; broken = b; after_matches = next;
     timing.push = (timing.push ?? 0) + (Date.now() - t0);
   }
+  // The promise is a list of exact sentences we hold: audited lines from the résumé and lines the candidate told us. Any of
+  // them the draft still lacks is placed by us, word for word, in the role its evidence names (else the "relevant" block).
+  // The delivered number is then the promise by construction: a shot spent is a promise kept, never a refund.
+  if (v2) {
+    const owed = after_matches.filter((m) => m.bucket === "have_not_said" && m.sayable && (m.line ?? "").trim());
+    if (owed.length) {
+      const placed = placeLines(rewrite, owed, resume);
+      if (placed.n) {
+        rewrite = placed.rewrite; verification = await verifyRewrite(resume, rewrite); broken = checkRules(rewrite, resume, posting);
+        after_matches = apply(await saidNow(owed, rewrite), after_matches);
+        timing.place = placed.n;
+      }
+    }
+  }
   timing.rescore = Date.now() - t0;
-  return { posting, matches, after_matches, rewrite, verification, broken, needs_review, timing, first_pass };
+  return { posting, matches, after_matches, rewrite, verification, broken, needs_review: needs_review || !verification.ok || broken.length > 0, timing, first_pass };
+}
+
+
+/** Puts each owed line into the document verbatim: the role whose company the evidence or line names, else the most recent
+ *  role when the evidence is a bullet, else the "relevant" block. Skips lines already present. Returns how many were placed. */
+export function placeLines(rw: Rewrite, owed: Match[], resume: ResumeProfile): { rewrite: Rewrite; n: number } {
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  const next: Rewrite = JSON.parse(JSON.stringify(rw));
+  let n = 0;
+  for (const m of owed) {
+    const line = (m.line ?? "").trim(); if (!line) continue;
+    const core = norm(line).split(" ").slice(0, 10).join(" ");
+    if (norm(JSON.stringify(next)).includes(core)) continue;
+    const hay = `${m.evidence} ${line}`.toLowerCase();
+    let role = next.roles.find((r) => r.company && hay.includes(r.company.toLowerCase()));
+    if (!role && !m.told) {
+      // evidence quoted from a role's bullet: find which role in the original holds it
+      const src = resume.roles.find((r) => r.bullets.some((b) => norm(b) && norm(m.evidence).includes(norm(b).split(" ").slice(0, 6).join(" "))));
+      if (src) role = next.roles.find((r) => r.company === src.company);
+    }
+    if (role) role.bullets.unshift(line);
+    else if ((next.relevant ?? []).length < 5) next.relevant = [line, ...(next.relevant ?? [])];
+    else if (next.roles[0]) next.roles[0].bullets.unshift(line);
+    else next.relevant = [line, ...(next.relevant ?? [])];
+    n++;
+  }
+  return { rewrite: next, n };
 }

@@ -12,7 +12,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|payments|previews|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|payments|previews|shots|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -140,6 +140,20 @@ admin.get("/payments", async (c) => {
 admin.route("/sharpen/selftest", selftest);
 
 /** The last previews: the matched list with the auditor's verdict on each proposed line. For tuning the audit; no résumé text beyond the quoted evidence. */
+/** The last shots, as an audit reads them: the three numbers, what was owed and whether each owed line is in the document, what the verifier and the rules said, where the time went. No document text. */
+admin.get("/shots", async (c) => {
+  const { data } = await db.from("shots").select("id, created_at, done_at, status, error, output").order("created_at", { ascending: false }).limit(Number(c.req.query("limit") ?? 3));
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  return c.json((data ?? []).map((s: any) => {
+    const o = s.output ?? {};
+    const doc = o.rewrite ? norm(JSON.stringify({ h: o.rewrite.headline, s: o.rewrite.summary, r: o.rewrite.relevant, roles: o.rewrite.roles, sk: o.rewrite.skills, x: o.rewrite.extra_sections })) : "";
+    const owed = (o.matches ?? []).filter((m: any) => m.bucket === "have_not_said" && m.sayable && m.line);
+    return { id: s.id, at: s.created_at, status: s.status, error: s.error, before: o.before, promised: o.promised, after: o.after, repeat: o.repeat, timing: o.timing,
+      owed: owed.map((m: any) => { const core = norm(m.line).split(" ").slice(0, 10).join(" "); const now = (o.after_matches ?? []).find((x: any) => x.requirement === m.requirement); return { req: String(m.requirement).slice(0, 80), told: !!m.told, in_doc: !!doc && doc.includes(core), counted: now?.bucket === "said", line: String(m.line).slice(0, 140) }; }),
+      problems: o.verification?.problems, broken: o.broken, needs_review: o.needs_review };
+  }));
+});
+
 admin.get("/previews", async (c) => {
   const { data } = await db.from("previews").select("id, created_at, posting_id, score_before, score_after, matches").order("created_at", { ascending: false }).limit(Number(c.req.query("limit") ?? 5));
   return c.json((data ?? []).map((p: any) => ({ id: p.id, at: p.created_at, before: p.score_before, promised: p.score_after,

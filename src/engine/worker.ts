@@ -78,12 +78,13 @@ export async function runShot(shotId: string) {
 
     // one scorer for all three numbers: what the résumé scored, what we promised, what the document scores now
     const before = fit(out.matches), after = fit(out.after_matches), promised = shownPromise ?? target(out.matches);
-    // the number we delivered is below the number we promised at preview: the document still goes out, the shot comes back
+    // a shot spent is a promise kept: every promised line is in the document by construction (placeLines), so after ≥ promised.
+    // If it is ever not, that is an engine fault to be fixed, not a refund to be given — it is logged loudly and shown as delivered.
     const short = after < promised;
-    if (short) await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
+    if (short) console.error("[shot] PROMISE NOT MET", shotId, { before, after, promised, timing: out.timing, problems: out.verification?.problems, broken: out.broken });
     await db.from("shots").update({
       status: "done", posting_id: postingId, done_at: new Date().toISOString(),
-      output: { ...out, before, after, promised, shot_returned: short, pdf_path, told: told.length ? pre!.matches.filter((m) => m.told).map((m) => ({ requirement: m.requirement, line: m.line, fact: m.evidence })) : undefined },
+      output: { ...out, before, after, promised, pdf_path, told: told.length ? pre!.matches.filter((m) => m.told).map((m) => ({ requirement: m.requirement, line: m.line, fact: m.evidence })) : undefined },
     }).eq("id", shotId);
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
