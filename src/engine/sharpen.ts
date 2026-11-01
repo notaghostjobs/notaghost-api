@@ -202,9 +202,13 @@ Answer every id; keep reason to one sentence.`,
 
 /** v2 delivered score: not a free re-grade (that read moves ±10 between runs) but the preview's own list, each unsaid item
  *  checked one at a time — does the rewrite now state THIS requirement? A narrow yes/no per numbered line is stable. */
+/** The document as a screener reads it: the six fields that are printed. The change log, referral note and fit line are NOT the document
+ *  and never count as "said" — placement and scoring both read exactly this. */
+export const docOf = (r: Rewrite) => ({ headline: r.headline, summary: r.summary, relevant: r.relevant, roles: r.roles, skills: r.skills, extra_sections: r.extra_sections });
+
 export async function saidNow(items: Match[], rewrite: Rewrite): Promise<Record<string, { said: boolean; quote: string }>> {
   if (!items.length) return {};
-  const doc = { headline: rewrite.headline, summary: rewrite.summary, relevant: rewrite.relevant, roles: rewrite.roles, skills: rewrite.skills, extra_sections: rewrite.extra_sections };
+  const doc = docOf(rewrite);
   // the promised sentence is in the document: that is a yes, no model needed. Only lines that were altered go to the checker.
   const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
   const hay = norm(JSON.stringify(doc));
@@ -357,6 +361,8 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
         rewrite = placed.rewrite; verification = await verifyRewrite(resume, rewrite); broken = checkRules(rewrite, resume, posting);
         after_matches = apply(await saidNow(owed, rewrite), after_matches);
         timing.place = placed.n;
+        const still = after_matches.filter((m) => m.bucket === "have_not_said" && m.sayable && (m.line ?? "").trim());
+        if (still.length) console.error("[sharpen] PLACED BUT NOT COUNTED", still.map((m) => m.line));
       }
     }
   }
@@ -374,7 +380,7 @@ export function placeLines(rw: Rewrite, owed: Match[], resume: ResumeProfile): {
   for (const m of owed) {
     const line = (m.line ?? "").trim(); if (!line) continue;
     const core = norm(line).split(" ").slice(0, 10).join(" ");
-    if (norm(JSON.stringify(next)).includes(core)) continue;
+    if (norm(JSON.stringify(docOf(next))).includes(core)) continue;   // present in the DOCUMENT (not merely mentioned in the change log)
     const hay = `${m.evidence} ${line}`.toLowerCase();
     let role = next.roles.find((r) => r.company && hay.includes(r.company.toLowerCase()));
     if (!role && !m.told) {
