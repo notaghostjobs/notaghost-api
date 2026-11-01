@@ -4,7 +4,7 @@
 //
 // Rules (playbook, 28 Oct):
 //   floor 8   — something always transfers; a tech résumé against a business role is in the 10s–20s, not 0
-//   ceiling 97 — 100 only when every must-have is "said" with evidence
+//   ceiling 97 — always; nothing we show is ever 100
 //   target   — after = current + (100 − current) × 0.4, at least +8, capped at 92; and never above what the résumé's
 //              own material can reach (every have_not_said becomes said; missing stays missing)
 import type { Match } from "./sharpen.js";
@@ -31,9 +31,8 @@ export function fit(matches: Match[]): number {
   for (const m of matches) { const w = W[m.kind] ?? 1; tot += w; got += w * credit(m); }
   if (!tot) return FLOOR;
   const raw = (got / tot) * 100;
-  const everyMustSaid = matches.filter((m) => m.kind === "must").every((m) => m.bucket === "said");
-  const cap = everyMustSaid && matches.every((m) => m.bucket !== "missing") ? 100 : CEILING;
-  return Math.max(FLOOR, Math.min(cap, Math.round(raw)));
+  // nothing we show is ever 100 (rule book, non-negotiable 5): 97 is the ceiling for fit and delivered alike
+  return Math.max(FLOOR, Math.min(CEILING, Math.round(raw)));
 }
 
 /** Sharpen v2 (audited promise) is on for everyone when SHARPEN_V2=on; a caller can also force it (the server self-test). */
