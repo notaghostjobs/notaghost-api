@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { db, type User } from "../lib/db.js";
+import { db, currentResume, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
 import { fetchPosting } from "../engine/extract.js";
 import { assess, fit, ENGINE_VERSION } from "../engine/fit.js";
@@ -25,7 +25,7 @@ preview.post("/", async (c) => {
     .refine((b) => b.posting_url || b.posting_text, "Give a link or paste the posting.").safeParse(await c.req.json());
   if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
 
-  const { data: resume } = await db.from("resumes").select("id, parsed").eq("user_id", u.id).eq("is_current", true).maybeSingle();
+  const resume = await currentResume<{ id: string; parsed: any }>(u.id, "id, parsed");
   if (!resume?.parsed) return c.json({ error: "Upload your résumé first." }, 400);
 
   let postingText = body.data.posting_text ?? "", postingId: string | null = null, parsed: any = null;

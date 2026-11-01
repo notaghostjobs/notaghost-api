@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { db, activePlan, type User, type Product } from "../lib/db.js";
+import { db, activePlan, currentResume, type User, type Product } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
 import { runShot } from "../engine/worker.js";
 import { env } from "../lib/env.js";
@@ -62,8 +62,7 @@ shots.post("/", async (c) => {
   const plan = await activePlan(u.id, product);
   if (!plan) return c.json({ error: "No active plan.", pay: product }, 402);
 
-  const { data: resume } = await db
-    .from("resumes").select("id, parsed").eq("user_id", u.id).eq("is_current", true).maybeSingle();
+  const resume = await currentResume<{ id: string; parsed: any }>(u.id, "id, parsed");
   if (!resume?.parsed) return c.json({ error: "Upload your résumé first." }, 400);
 
   const { data: shot, error } = await db

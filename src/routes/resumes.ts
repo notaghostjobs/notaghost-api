@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { db, type User } from "../lib/db.js";
+import { db, currentResume, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
 import { processResume } from "../engine/worker.js";
 
@@ -29,6 +29,7 @@ resumes.post("/", async (c) => {
     .select("id, filename, created_at")
     .single();
   if (error) return c.json({ error: error.message }, 500);
+  await db.from("resumes").update({ is_current: false }).eq("user_id", user.id).neq("id", id);   // concurrent uploads: the one that landed last is the one on file
   try {
     const parsed = await processResume(id);
     // One login, one person. When LOCK_RESUME_NAME is on, a plan is tied to the name on the résumé it was bought with.
@@ -49,12 +50,7 @@ resumes.post("/", async (c) => {
 });
 
 resumes.get("/current", async (c) => {
-  const { data } = await db
-    .from("resumes")
-    .select("id, filename, parsed, created_at")
-    .eq("user_id", c.get("user").id)
-    .eq("is_current", true)
-    .maybeSingle();
+  const data = await currentResume(c.get("user").id, "id, filename, parsed, created_at");
   return c.json({ resume: data });
 });
 

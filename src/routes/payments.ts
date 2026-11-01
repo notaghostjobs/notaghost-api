@@ -3,7 +3,7 @@ import { isTester } from "../lib/testers.js";
 import { z } from "zod";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import Razorpay from "razorpay";
-import { db, type User } from "../lib/db.js";
+import { db, currentResume, type User } from "../lib/db.js";
 import { env, PRICES } from "../lib/env.js";
 import { requireUser } from "../lib/auth.js";
 
@@ -84,7 +84,7 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
     receipt_no: receipt, paid_at: new Date().toISOString(),
   }).eq("id", pay.id);
 
-  const { data: cur } = await db.from("resumes").select("parsed").eq("user_id", pay.user_id).eq("is_current", true).maybeSingle();
+  const cur = await currentResume<{ parsed: any }>(pay.user_id, "parsed");
   const { data: plan } = await db.from("plans").insert({
     user_id: pay.user_id, product: pay.product, shots_total: price.shots, resume_name: (cur?.parsed as any)?.name ?? null,
     expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id,
@@ -103,7 +103,7 @@ payments.post("/dummy", requireUser, async (c) => {
   const price = PRICES.sharpen;
   const { data: pay, error } = await db.from("payments").insert({ user_id: u.id, product: "sharpen", amount_paise: 0, status: "paid", razorpay_order_id: `test_${Date.now()}`, paid_at: now }).select("*").single();
   if (error || !pay) return c.json({ error: error?.message ?? "could not record" }, 500);
-  const { data: cur } = await db.from("resumes").select("parsed").eq("user_id", u.id).eq("is_current", true).maybeSingle();
+  const cur = await currentResume<{ parsed: any }>(u.id, "parsed");
   const { data: plan } = await db.from("plans").insert({ user_id: u.id, product: "sharpen", shots_total: price.shots, resume_name: (cur?.parsed as any)?.name ?? null, expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id }).select("*").single();
   return c.json({ ok: true, plan });
 });

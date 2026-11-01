@@ -38,3 +38,11 @@ export async function activePlan(userId: string, product: Product): Promise<Plan
     .limit(5);
   return (data ?? []).find((p) => p.shots_used < p.shots_total) ?? null;
 }
+
+
+/** The résumé on file for a user: the newest one marked current. Concurrent uploads can leave more than one row marked
+ *  current for a moment; the newest wins everywhere, so no lookup ever fails for having found two. */
+export async function currentResume<T = any>(userId: string, cols = "id, parsed"): Promise<T | null> {
+  const { data } = await db.from("resumes").select(cols).eq("user_id", userId).eq("is_current", true).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  return (data as T) ?? null;
+}
