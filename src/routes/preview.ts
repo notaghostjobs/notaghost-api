@@ -6,7 +6,7 @@ import { requireUser } from "../lib/auth.js";
 import { fetchPosting } from "../engine/extract.js";
 import { assess, fit, ENGINE_VERSION } from "../engine/fit.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../engine/sharpen.js";
-import { gapsOf, vetAnswer, acceptInto, withdrawFrom } from "../engine/told.js";
+import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, type Facts } from "../engine/told.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(u.trim().toLowerCase()).digest("hex");
 export const preview = new Hono<{ Variables: { user: User } }>();
@@ -51,7 +51,7 @@ preview.post("/", async (c) => {
     : { data: null };
   // The number is holy: once this résumé has been matched against this posting, the stored result is what the user sees,
   // every time, whatever the engine does later. An engine change applies to pairs scored after it, never to one already shown.
-  let matches: Match[], fits: string | null, previewId: string | null;
+  let matches: Match[], fits: string | null, previewId: string | null;   // matches may gain options below
   const similar_open = await similarOpen(posting.title);
   if (prior?.matches) { matches = prior.matches as Match[]; fits = null; previewId = prior.id; }
   else {
@@ -62,6 +62,11 @@ preview.post("/", async (c) => {
     const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting: { ...posting, __engine: ENGINE_VERSION }, matches, score_before: a0.current, score_after: a0.promised }).select("id").single();
     previewId = pv?.id ?? null;
   }
+  // "things we couldn't see": the three tap-able ways of having done each missing requirement, made once and kept
+  if (previewId && matches.some((m) => m.bucket === "missing" && !m.options?.length)) {
+    try { const withOpts = await fillOptions(matches); if (withOpts !== matches) { matches = withOpts; await db.from("previews").update({ matches }).eq("id", previewId); } } catch { /* the page works without options; the card falls back to "say it my way" */ }
+  }
+  const roles = ((resume.parsed as ResumeProfile).roles ?? []).map((r) => ({ company: r.company, start: r.start, end: r.end })).slice(0, 8);
   const a = assess(matches);
   const pv = { id: previewId };
   // the change list: what's unsaid (we can say it), what's buried (a keyword only), what's missing (we won't claim it)
@@ -80,7 +85,7 @@ preview.post("/", async (c) => {
   return c.json({ similar_open, preview_id: pv?.id ?? null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location },
     score_before: a.current, score_after: a.promised, band: a.band, reachable: a.reachable, can_lift: a.can_lift,
     counts: { said: matches.filter((m) => m.bucket === "said").length, unsaid: unsaid.length, buried: buried.length, missing: matches.filter((m) => m.bucket === "missing" || m.told).length, total: matches.length },
-    changes, reasons, matches, fits: fits ?? null, gaps: gapsOf(matches) });
+    changes, reasons, matches, fits: fits ?? null, gaps: gapsOf(matches), roles });
 });
 
 
@@ -90,7 +95,10 @@ preview.post("/", async (c) => {
 preview.post("/:id/answer", async (c) => {
   const u = c.get("user");
   const id = c.req.param("id");
-  const body = z.object({ requirement: z.string().min(2), text: z.string().max(600).optional(), withdraw: z.boolean().optional() }).safeParse(await c.req.json());
+  const body = z.object({
+    requirement: z.string().min(2), withdraw: z.boolean().optional(),
+    what: z.string().max(200).optional(), where: z.string().max(80).optional(), when: z.string().max(40).optional(), size: z.string().max(30).optional(), unit: z.string().max(30).optional(), free: z.string().max(600).optional(),
+  }).safeParse(await c.req.json());
   if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
   const { data: pv } = await db.from("previews").select("id, resume_id, matches").eq("id", id).eq("user_id", u.id).maybeSingle();
   if (!pv?.matches) return c.json({ error: "That fit check has expired. Run it again." }, 404);
@@ -100,10 +108,12 @@ preview.post("/:id/answer", async (c) => {
   let next: Match[];
   if (body.data.withdraw) next = withdrawFrom(matches, m.requirement);
   else {
-    const { data: resume } = await db.from("resumes").select("parsed").eq("id", pv.resume_id).maybeSingle();
-    const v = await vetAnswer((resume?.parsed ?? { roles: [] }) as ResumeProfile, m.requirement, body.data.text ?? "");
-    if (!v.ok) return c.json({ ok: false, reason: v.reason });
-    next = acceptInto(matches, m.requirement, body.data.text ?? "", v.line!);
+    const f = body.data as Facts;
+    // their words, or their taps. Nothing is refused: what goes in is theirs to stand behind.
+    const line = f.free?.trim() ? await shapeFree(m.requirement, f.free) : (f.what?.trim() ? assembleLine(f) : "");
+    if (!line) return c.json({ error: "Pick one of the three, or say it your way." }, 400);
+    const facts = f.free?.trim() ? f.free.trim() : [f.what, f.where && `at ${f.where}`, f.when, f.size && `${f.size} ${f.unit ?? ""}`.trim()].filter(Boolean).join(" · ");
+    next = acceptInto(matches, m.requirement, facts, line);
   }
   const a = assess(next);
   await db.from("previews").update({ matches: next, score_after: a.promised }).eq("id", pv.id);

@@ -37,6 +37,7 @@ export interface Match {
   line?: string;                  // have_not_said only: the finished bullet we would write — résumé text, not advice — built only from facts in the résumé
   sayable?: boolean;              // have_not_said only (v2): the suggested line was audited at preview — supported by the résumé and satisfies the requirement
   vet_reason?: string;            // the auditor's one-line reason (kept for audits and the self-test; never shown to users)
+  options?: string[];             // missing only: three honest ways someone could have done this, for the candidate to tap
   told?: boolean;                 // the requirement was missing from the résumé; the candidate answered it in one vetted line (evidence = their words, line = the bullet)
 }
 

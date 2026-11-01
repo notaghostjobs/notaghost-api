@@ -5,7 +5,7 @@ import { json, FAST } from "./claude.js";
 import { reachable } from "./fit.js";
 import type { Match, ResumeProfile } from "./sharpen.js";
 
-export type Gap = { requirement: string; kind: "must" | "nice"; weight: number; why: string; told?: { text: string; line: string } };
+export type Gap = { requirement: string; kind: "must" | "nice"; weight: number; why: string; options: string[]; told?: { text: string; line: string } };
 
 const flip = (ms: Match[], req: string): Match[] => ms.map((m) => (m.requirement === req ? { ...m, bucket: "have_not_said" as const, sayable: true, told: true, line: m.line || "x" } : m));
 
@@ -18,30 +18,54 @@ export function gapsOf(matches: Match[]): Gap[] {
     requirement: m.requirement, kind: m.kind,
     weight: m.told ? Math.max(0, base - reachable(matches.map((x) => (x.requirement === m.requirement ? { ...x, bucket: "missing" as const, told: false, sayable: false } : x)), true)) : Math.max(0, reachable(flip(matches, m.requirement), true) - base),
     why: m.suggestion || "",
+    options: m.options ?? [],
     ...(m.told ? { told: { text: m.evidence, line: m.line ?? "" } } : {}),
   }));
 }
 
 const nums = (s: string) => new Set((s.match(/\d[\d,.]*%?/g) ?? []).map((x) => x.replace(/[\s,]/g, "").replace(/[.,]+$/, "")));
 
-/** Vets one typed answer. ok → a bullet built only from the candidate's words. */
-export async function vetAnswer(resume: ResumeProfile, requirement: string, text: string): Promise<{ ok: boolean; reason?: string; line?: string }> {
+/** For each missing requirement, three honest ways a person could have done that thing — short clauses, no employer, no
+ *  number, each a complete "what" the candidate can tap. Generated once per preview and kept on the match. */
+export async function fillOptions(matches: Match[]): Promise<Match[]> {
+  const need = matches.filter((m) => m.bucket === "missing" && !(m.options && m.options.length));
+  if (!need.length) return matches;
+  const r = await json<{ items: { id: number; options: string[] }[] }>(
+    `For EACH numbered job requirement, write THREE short résumé clauses describing three different, realistic ways a candidate might genuinely have done it. Rules: each starts with a past-tense verb, 6–12 words, states the requirement's core activity in plain words, names NO employer, NO number and NO outcome (the candidate adds those). The three must differ in kind of involvement (e.g. owned it / partnered on it / built it), not in wording. Plain, specific, screener-readable. Answer every id.`,
+    `REQUIREMENTS:\n${JSON.stringify(need.map((m, i) => ({ id: i + 1, requirement: m.requirement })))}\n\nReturn: {items:[{id, options:[a,b,c]}]}`,
+    1500, FAST);
+  const by = new Map<string, string[]>();
+  for (const it of r.items ?? []) { const m = need[Number(it.id) - 1]; if (m) by.set(m.requirement, (it.options ?? []).map((o) => String(o).trim().replace(/[.。]+$/, "")).filter(Boolean).slice(0, 3)); }
+  return matches.map((m) => (by.has(m.requirement) ? { ...m, options: by.get(m.requirement) } : m));
+}
+
+export type Facts = { what: string; where?: string; when?: string; size?: string; unit?: string; free?: string };
+
+/** The bullet, from the facts the candidate tapped. Deterministic: what they chose, where, when, how big. Nothing added. */
+export function assembleLine(f: Facts): string {
+  const what = (f.what || "").trim().replace(/[.。]+$/, "");
+  const where = (f.where || "").trim(), when = (f.when || "").trim(), size = (f.size || "").trim(), unit = (f.unit || "").trim();
+  let s = what.charAt(0).toUpperCase() + what.slice(1);
+  if (where) s += ` at ${where}`;
+  if (when) s += `, ${when}`;
+  if (size) s += ` — ${size}${unit ? ` ${unit}` : ""}`;
+  return s + ".";
+}
+
+/** "Say it my way": their words, shaped into one bullet. Never refused; never given a number they did not type. */
+export async function shapeFree(requirement: string, text: string): Promise<string> {
   const t = text.trim().replace(/\s+/g, " ");
-  if (t.split(" ").length < 6) return { ok: false, reason: "Add where and when, and one number — a screener will ask." };
-  const r = await json<{ ok: boolean; reason: string; line: string }>(
-    `A candidate typed one statement about themselves as proof for a job requirement their résumé did not show. Judge it the way a fair screener would, then write it down.
-specific: it names WHERE (an employer, team, market or product) or WHEN (a year or period), AND gives at least one concrete number or named thing. "Yes, lots" or "I have done this" is not specific.
-relevant: it is this requirement's core activity, not something adjacent.
-If both hold: ok=true and line = one résumé bullet, at most 28 words, starting with a verb, built ONLY from facts in the statement — no new number, tool, scope, employer or outcome; you may drop words, never add them. Keep the candidate's numbers exactly.
-Otherwise ok=false and reason = one plain sentence to the candidate saying what is missing (where or when, a number, or that it does not answer this requirement). Never lecture; never mention policy.`,
-    `REQUIREMENT: ${requirement}\n\nCANDIDATE'S STATEMENT: ${t}\n\nRÉSUMÉ (for context only — the statement must stand on its own): ${JSON.stringify({ roles: resume.roles.map((r) => ({ company: r.company, title: r.title, start: r.start, end: r.end })) })}\n\nReturn: {ok, reason, line}`,
-    800, FAST);
-  if (!r.ok) return { ok: false, reason: (r.reason || "Add where and when, and one number — a screener will ask.").slice(0, 200) };
-  let line = (r.line || "").trim();
-  // the bullet may not carry a number the candidate did not type; if it does, their own sentence is the bullet
-  const given = nums(t);
-  if (!line || [...nums(line)].some((n) => !given.has(n) && !/^(19|20)\d\d$/.test(n))) line = t.charAt(0).toUpperCase() + t.slice(1).replace(/[.。]+$/, "") + ".";
-  return { ok: true, line };
+  const fallback = t.charAt(0).toUpperCase() + t.slice(1).replace(/[.。]+$/, "") + ".";
+  if (t.split(" ").length < 4) return fallback;
+  try {
+    const r = await json<{ line: string }>(
+      `Turn the candidate's statement into ONE résumé bullet for the given requirement: at most 26 words, starts with a past-tense verb, keeps every fact, number, employer and date exactly as given, adds nothing — no new number, tool, scope or outcome. If the statement is already a clean bullet, return it unchanged.`,
+      `REQUIREMENT: ${requirement}\nSTATEMENT: ${t}\n\nReturn: {line}`, 300, FAST);
+    const line = (r.line || "").trim();
+    const given = nums(t);
+    if (!line || [...nums(line)].some((n) => !given.has(n) && !/^(19|20)\d\d$/.test(n))) return fallback;
+    return line;
+  } catch { return fallback; }
 }
 
 /** Writes an accepted answer into the match list: the missing item becomes a sayable, told line. */
