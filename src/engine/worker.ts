@@ -4,6 +4,7 @@ import { parseResume, runSharpen, type ResumeProfile, type PostingProfile, type 
 import { resumePdf } from "./pdf.js";
 import { createHash } from "node:crypto";
 import { fit, target } from "../engine/fit.js";
+import { addedFacts } from "./told.js";
 
 /** Called right after upload. Extracts + parses once; stores text and profile. */
 export async function processResume(resumeId: string) {
@@ -63,7 +64,11 @@ export async function runShot(shotId: string) {
     }
     if (postingText.length < 80) throw new Error("That posting is too short to work with. Paste the full description.");
 
-    const out = await runSharpen(profile, postingText, undefined, pre);
+    // what the candidate told us for requirements the résumé lacked is part of the original for every audit — the
+    // rewrite may state it (verbatim, as the vetted line), the verifier and the number rule accept it, and nothing else changes
+    const told = pre ? addedFacts(pre.matches) : [];
+    const source: ResumeProfile = told.length ? { ...profile, candidate_added_facts: told } : profile;
+    const out = await runSharpen(source, postingText, undefined, pre);
     if (postingId) await db.from("postings").update({ company: out.posting.company, title: out.posting.title, parsed: out.posting }).eq("id", postingId);
 
     const pdf = await resumePdf(out.rewrite, profile);
@@ -78,7 +83,7 @@ export async function runShot(shotId: string) {
     if (short) await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
     await db.from("shots").update({
       status: "done", posting_id: postingId, done_at: new Date().toISOString(),
-      output: { ...out, before, after, promised, shot_returned: short, pdf_path },
+      output: { ...out, before, after, promised, shot_returned: short, pdf_path, told: told.length ? pre!.matches.filter((m) => m.told).map((m) => ({ requirement: m.requirement, line: m.line, fact: m.evidence })) : undefined },
     }).eq("id", shotId);
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);

@@ -21,7 +21,7 @@ const CREDIT = { said: 1, line: 0.5, keyword: 0.2, missing: 0 } as const;
 
 function credit(m: Match): number {
   if (m.bucket === "said") return CREDIT.said;
-  if (m.bucket === "have_not_said") return m.evidence_kind === "keyword" ? CREDIT.keyword : CREDIT.line;
+  if (m.bucket === "have_not_said") return m.told ? 0 : m.evidence_kind === "keyword" ? CREDIT.keyword : CREDIT.line;   // a fact the candidate told us is not on the résumé yet: it moves the promise, never today's number
   return CREDIT.missing;
 }
 

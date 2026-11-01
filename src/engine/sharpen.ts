@@ -13,6 +13,7 @@ export interface ResumeProfile {
   education: { school: string; degree: string; year?: string }[];
   extra_sections: { title: string; items: string[] }[];  // ventures, certifications, languages, awards...
   pages: number;
+  candidate_added_facts?: { requirement: string; fact: string }[];   // answers the candidate typed for requirements the résumé lacked; part of the "original" for every audit, never a section of the document
 }
 
 export interface PostingProfile {
@@ -36,6 +37,7 @@ export interface Match {
   line?: string;                  // have_not_said only: the finished bullet we would write — résumé text, not advice — built only from facts in the résumé
   sayable?: boolean;              // have_not_said only (v2): the suggested line was audited at preview — supported by the résumé and satisfies the requirement
   vet_reason?: string;            // the auditor's one-line reason (kept for audits and the self-test; never shown to users)
+  told?: boolean;                 // the requirement was missing from the résumé; the candidate answered it in one vetted line (evidence = their words, line = the bullet)
 }
 
 export interface Rewrite {

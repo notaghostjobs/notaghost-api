@@ -6,6 +6,7 @@ import { requireUser } from "../lib/auth.js";
 import { fetchPosting } from "../engine/extract.js";
 import { assess, fit, ENGINE_VERSION } from "../engine/fit.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../engine/sharpen.js";
+import { gapsOf, vetAnswer, acceptInto, withdrawFrom } from "../engine/told.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(u.trim().toLowerCase()).digest("hex");
 export const preview = new Hono<{ Variables: { user: User } }>();
@@ -64,8 +65,8 @@ preview.post("/", async (c) => {
   const a = assess(matches);
   const pv = { id: previewId };
   // the change list: what's unsaid (we can say it), what's buried (a keyword only), what's missing (we won't claim it)
-  const unsaid = matches.filter((m) => m.bucket === "have_not_said" && m.evidence_kind !== "keyword");
-  const buried = matches.filter((m) => m.bucket === "have_not_said" && m.evidence_kind === "keyword");
+  const unsaid = matches.filter((m) => m.bucket === "have_not_said" && !m.told && m.evidence_kind !== "keyword");
+  const buried = matches.filter((m) => m.bucket === "have_not_said" && !m.told && m.evidence_kind === "keyword");
   const missing = matches.filter((m) => m.bucket === "missing" && m.kind === "must");
   const changes = [
     ...unsaid.slice(0, 3).map((m) => ({ kind: "unsaid", requirement: m.requirement, evidence: m.evidence, how: m.suggestion })),
@@ -78,10 +79,36 @@ preview.post("/", async (c) => {
   ].slice(0, 3);
   return c.json({ similar_open, preview_id: pv?.id ?? null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location },
     score_before: a.current, score_after: a.promised, band: a.band, reachable: a.reachable, can_lift: a.can_lift,
-    counts: { said: matches.filter((m) => m.bucket === "said").length, unsaid: unsaid.length, buried: buried.length, missing: matches.filter((m) => m.bucket === "missing").length, total: matches.length },
-    changes, reasons, matches, fits: fits ?? null });
+    counts: { said: matches.filter((m) => m.bucket === "said").length, unsaid: unsaid.length, buried: buried.length, missing: matches.filter((m) => m.bucket === "missing" || m.told).length, total: matches.length },
+    changes, reasons, matches, fits: fits ?? null, gaps: gapsOf(matches) });
 });
 
+
+/** "Things we couldn't see": the candidate answers one missing requirement in a line. Vetted; accepted answers live on the
+ *  preview, so the same pair shows the same questions and answers every time, and the promise is recomputed from the same
+ *  scorer. Today's number never moves (a told fact earns nothing until it is in the document); only the promise does. */
+preview.post("/:id/answer", async (c) => {
+  const u = c.get("user");
+  const id = c.req.param("id");
+  const body = z.object({ requirement: z.string().min(2), text: z.string().max(600).optional(), withdraw: z.boolean().optional() }).safeParse(await c.req.json());
+  if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
+  const { data: pv } = await db.from("previews").select("id, resume_id, matches").eq("id", id).eq("user_id", u.id).maybeSingle();
+  if (!pv?.matches) return c.json({ error: "That fit check has expired. Run it again." }, 404);
+  const matches = pv.matches as Match[];
+  const m = matches.find((x) => x.requirement === body.data.requirement && (x.bucket === "missing" || x.told));
+  if (!m) return c.json({ error: "That isn’t one of the things we couldn’t see." }, 400);
+  let next: Match[];
+  if (body.data.withdraw) next = withdrawFrom(matches, m.requirement);
+  else {
+    const { data: resume } = await db.from("resumes").select("parsed").eq("id", pv.resume_id).maybeSingle();
+    const v = await vetAnswer((resume?.parsed ?? { roles: [] }) as ResumeProfile, m.requirement, body.data.text ?? "");
+    if (!v.ok) return c.json({ ok: false, reason: v.reason });
+    next = acceptInto(matches, m.requirement, body.data.text ?? "", v.line!);
+  }
+  const a = assess(next);
+  await db.from("previews").update({ matches: next, score_after: a.promised }).eq("id", pv.id);
+  return c.json({ ok: true, line: next.find((x) => x.requirement === m.requirement)?.line ?? null, score_before: a.current, score_after: a.promised, gaps: gapsOf(next) });
+});
 
 /** Live Bengaluru roles on employers' own systems whose title shares the posting's two most specific words. */
 async function similarOpen(title: string): Promise<number> {
