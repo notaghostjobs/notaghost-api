@@ -23,7 +23,7 @@ export async function json<T>(system: string, user: string, maxTokens = 4000, mo
     } catch {
       console.error("[claude] bad JSON, model=%s stop_reason=%s, len=%d, tail=%s", model, r.stop_reason, text.length, text.slice(-200));
       if (r.stop_reason === "max_tokens") { maxTokens = Math.min(maxTokens * 2, 32000); }
-      if (attempt === 1) throw Object.assign(new Error("We couldn't finish writing this one. Your shot is back — try again."), { status: 502 });
+      if (attempt === 1) throw Object.assign(new Error("We couldn't finish writing this one. Nothing was used — try again."), { status: 502 });
       if (model !== MODEL) model = MODEL;  // second try on the stronger model
     }
   }
