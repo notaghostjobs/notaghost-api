@@ -175,6 +175,9 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   return present(updated!, true);
 }
 
+/** A stored posting row as the card reads it (no re-score). */
+export const presentStored = (row: any): CheckResult => present(row, false);
+
 function present(row: any, fresh: boolean): CheckResult {
   const g = row.ghost ?? {};
   return { posting_id: row.id, job_key: row.job_key, link: (row.url ?? "").replace(/^https?:\/\//, ""), title: row.title ?? g.title ?? "", company: row.company ?? "", location: g.location ?? "",

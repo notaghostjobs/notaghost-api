@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { ghostCheck, snapshotDue } from "../engine/ghost/index.js";
+import { ghostCheck, presentStored, snapshotDue } from "../engine/ghost/index.js";
 import { db } from "../lib/db.js";
 import { identify, gate, refund, type Caller } from "../lib/quota.js";
 import { jobKey } from "../engine/ghost/canon.js";
@@ -49,8 +49,10 @@ check.post("/", async (c) => {
 
 /** The stored verdict for a posting (the verdict page reload; the Sharpen step). */
 check.get("/:id", async (c) => {
-  const { data } = await db.from("postings").select("id, url, title, company, score, verdict, signals, ghost, scored_at, history").eq("id", c.req.param("id")).maybeSingle();
-  return data ? c.json(data) : c.json({ error: "Not found." }, 404);
+  const { data } = await db.from("postings").select("id, job_key, url, title, company, score, verdict, signals, ghost, scored_at, history").eq("id", c.req.param("id")).maybeSingle();
+  if (!data) return c.json({ error: "Not found." }, 404);
+  // ?card=1 → the same shape POST /check returns, so a stored verdict (a WhatsApp link, a reload) renders the full card
+  return c.json(c.req.query("card") ? presentStored(data) : data);
 });
 
 /** Admin: run the daily snapshot now. Also runs on a timer in index.ts. */
