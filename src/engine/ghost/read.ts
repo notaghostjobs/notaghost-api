@@ -113,7 +113,9 @@ export function extractFactsRules(raw: RawRead, url: string): Extracted {
   const applicants = raw.applicants ?? (() => { const m = text.match(/(?:over\s+)?(\d[\d,]*)\+?\s*(?:applicants|people clicked apply)/i); return m ? Number(m[1].replace(/,/g, "")) : null; })();
   const locParts = location.split(/\s*(?:\/|\||·|;)\s*/).map((s) => s.trim()).filter(Boolean);
   const locations_count = Math.max(1, new Set(locParts.map((s) => s.toLowerCase())).size + (/\bremote\b/i.test(location) && !/remote/i.test(locParts.join()) ? 1 : 0));
-  const pay_stated = /(?:₹|rs\.?|inr|\$|usd|eur|£)\s?\d[\d,.]*\s*(?:k|l|lpa|lakhs?|cr)?(?:\s*(?:-|–|to)\s*(?:₹|rs\.?|inr|\$)?\s?\d[\d,.]*\s*(?:k|l|lpa|lakhs?|cr)?)?|\b\d{1,3}(?:\.\d)?\s*(?:lpa|lakhs?\b|lacs?\b)|\bctc\s*[:\-]?\s*\d|per annum\s*[:\-]?\s*\d/i.test(text);
+  // A pay band is a money figure NEXT TO a pay word ("CTC ₹18–24 LPA", "salary: $120k", "compensation 8-10 lakhs"). A bare
+  // "$100M revenue" or "3 lakh orders" in the description is not pay; the old test counted it and said "pay band stated".
+  const pay_stated = payStated(text);
   const evergreen = /talent (?:community|pool|network)|future opportunit|always looking|multiple openings|across (?:all )?levels|open pipeline|ongoing requirement|evergreen/i.test(low);
   const specific = /\b(?:you will|you'll|responsib|our team|the team|this role|reporting to|manager|product|platform|customers?|stakeholders?|roadmap|own the|lead the)\b/i;
   const templated = text.length < 250 || !specific.test(text);
@@ -136,6 +138,14 @@ export function extractFactsRules(raw: RawRead, url: string): Extracted {
   const poster = raw.poster ? { name: raw.poster.name, is_recruiter_account: /\b(talent acquisition|recruit|staffing|hiring)\b/i.test(raw.poster.name ?? "") ? true : null, account_age_months: null } : null;
   void url;
   return { title, company, location, locations_count, posted_text, posted_days, applicants, pay_stated, templated, evergreen, kitchen_sink, apply_route, apply_domain, contact_present: !!(email || dm), agency, scam_tells, poster };
+}
+
+const MONEY = String.raw`(?:(?:₹|rs\.?|inr|\$|usd|eur|£|aed|sgd)\s?\d[\d,.]*\s*(?:k|l|lpa|lakhs?|lacs?|cr|m)?|\b\d{1,3}(?:\.\d)?\s*(?:lpa|lakhs?|lacs?)\b)`;
+const PAYWORD = String.raw`(?:salary|ctc|compensation|package|pay|per annum|p\.a\.|lpa|stipend|remuneration|base|total comp|otc|gross|net pay|in-hand|take[- ]home)`;
+/** True only when a money figure and a pay word sit within ~60 characters of each other, either order. */
+export function payStated(text: string): boolean {
+  const re = new RegExp(`${PAYWORD}[^.\n]{0,60}${MONEY}|${MONEY}[^.\n]{0,60}${PAYWORD}`, "i");
+  return re.test(text);
 }
 
 export async function extractFacts(raw: RawRead, url: string): Promise<Extracted> {
@@ -164,7 +174,7 @@ Keep strings short.`,
     posted_text: raw.posted_text ?? r.posted_text ?? null,
     posted_days: raw.posted_days ?? (r.posted_days == null ? null : Number(r.posted_days)),
     applicants: raw.applicants ?? (r.applicants == null ? null : Number(r.applicants)),
-    pay_stated: !!r.pay_stated, templated: !!r.templated, evergreen: !!r.evergreen, kitchen_sink: !!r.kitchen_sink,
+    pay_stated: !!r.pay_stated && payStated(raw.text), templated: !!r.templated, evergreen: !!r.evergreen, kitchen_sink: !!r.kitchen_sink,
     apply_route: r.apply_route ?? "unknown", apply_domain: r.apply_domain ?? (raw.apply_url ? safeHost(raw.apply_url) : null),
     contact_present: !!r.contact_present, agency: !!r.agency, scam_tells: Array.isArray(r.scam_tells) ? r.scam_tells : [],
     poster: r.poster ?? (raw.poster ? { name: raw.poster.name, is_recruiter_account: null, account_age_months: null } : null),
