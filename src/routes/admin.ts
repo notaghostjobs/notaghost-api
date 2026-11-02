@@ -152,7 +152,10 @@ admin.get("/whatsapp/status", async (c) => {
     get(`${c.req.query("waba") ?? "1137231462108125"}/subscribed_apps`),
     get(`${c.req.query("waba") ?? "1137231462108125"}?fields=name,account_review_status,business_verification_status,message_template_namespace,ownership_type`),
   ]);
-  return c.json({ phone, subscribed_apps: subs, waba });
+  // the WABA the number actually belongs to, from the business side (the "messaging account id" on the console is not always it)
+  const owned = await get(`${env.waPhoneId}?fields=id,whatsapp_business_account{id,name}`);
+  const biz = await get(`me/businesses?fields=id,name,owned_whatsapp_business_accounts{id,name,subscribed_apps}`);
+  return c.json({ phone, subscribed_apps: subs, waba, owned, businesses: biz });
 });
 
 admin.get("/whatsapp", (c) => c.json({ configured: { token: !!env.waToken, phone_id: !!env.waPhoneId, verify: !!env.waVerifyToken, app_secret: !!env.waAppSecret }, trace: waTrace }));
