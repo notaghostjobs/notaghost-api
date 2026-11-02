@@ -96,25 +96,12 @@ function format(r: CheckResult, token: string, g: { used: number; limit: number 
     : r.verdict === "Caution" ? `⚠️ *Caution* — ${r.flags} of ${r.checks_run} checks flagged`
     : `⛔ *Ghost* — don’t spend time here`;
   const hook = r.verdict === "Ghost"
-    ? `*Radar* shows you only the real ones, the day they appear ↓
-${radar}`
+    ? "*Radar* shows you only the real ones, the day they appear ↓\n" + radar
     : r.verdict === "Real"
-    ? `*They’re hiring. Will they see you?*
-Your résumé against what they screen for — what you say, what you don’t, and the one line that would change it ↓
-${check}`
-    : `*Check before you apply.*
-Every check we ran, and whether your résumé clears the ones that matter ↓
-${check}`;
-  const left = g.limit == null ? "" : `
-
-_${Math.max(0, g.limit - g.used)} free checks left today_`;
-  return `${head}
-${where}
-
-${picks.join("
-")}
-
-${hook}${left}`;
+    ? "*They’re hiring. Will they see you?*\nYour résumé against what they screen for — what you say, what you don’t, and the one line that would change it ↓\n" + check
+    : "*Check before you apply.*\nEvery check we ran, and whether your résumé clears the ones that matter ↓\n" + check;
+  const left = g.limit == null ? "" : "\n\n_" + Math.max(0, g.limit - g.used) + " free checks left today_";
+  return [head, where, "", picks.join("\n"), "", hook].join("\n") + left;
 }
 /** Card lines read as facts, not accusations: "Created 145 days ago in amazon — the page says…" → "In amazon’s system for 145 days; the page says…". */
 function tidy(t: string): string {
