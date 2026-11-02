@@ -14,6 +14,9 @@ export const env = {
   razorpayKeyId: opt("RAZORPAY_KEY_ID"),
   razorpayKeySecret: opt("RAZORPAY_KEY_SECRET"),
   razorpayWebhookSecret: opt("RAZORPAY_WEBHOOK_SECRET"),
+  waToken: opt("WA_TOKEN", ""),                    // WhatsApp Cloud API: permanent system-user token (Meta → Render, never chat)
+  waPhoneId: opt("WA_PHONE_ID", ""),               // the Ghosted number's phone number ID
+  waVerifyToken: opt("WA_VERIFY_TOKEN", ""),       // what Meta sends back on the webhook handshake
   otpProvider: opt("OTP_PROVIDER", "dev") as "msg91" | "email" | "dev",
   msg91AuthKey: opt("MSG91_AUTHKEY"),
   msg91TemplateId: opt("MSG91_TEMPLATE_ID"),               // SMS (DLT) template id
