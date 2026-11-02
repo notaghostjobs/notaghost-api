@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { audit } from "./audit.js";
 import { env } from "../lib/env.js";
 import { waTrace } from "./whatsapp.js";
 import { db } from "../lib/db.js";
@@ -14,7 +15,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|payments|previews|shots|whatsapp(\/status)?|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|payments|previews|shots|audit\/signals|whatsapp(\/status)?|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -144,6 +145,8 @@ admin.route("/sharpen/selftest", selftest);
 /** The last previews: the matched list with the auditor's verdict on each proposed line. For tuning the audit; no résumé text beyond the quoted evidence. */
 /** The last shots, as an audit reads them: the three numbers, what was owed and whether each owed line is in the document, what the verifier and the rules said, where the time went. No document text. */
 /** Read-only: what Meta says about our number and the app's webhook subscription — the first place to look when messages don't arrive. */
+admin.route("/audit", audit);
+
 admin.get("/whatsapp/status", async (c) => {
   const H = { authorization: `Bearer ${env.waToken}` };
   const get = async (p: string) => { try { const r = await fetch(`https://graph.facebook.com/v21.0/${p}`, { headers: H }); return { status: r.status, body: await r.json() }; } catch (e) { return { error: String(e) }; } };
