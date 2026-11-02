@@ -33,19 +33,22 @@ export async function runShot(shotId: string) {
     const profile = res.parsed as ResumeProfile;
 
     // posting: fetch or pasted; cache by url hash
-    const input = shot.input as { posting_url?: string; posting_text?: string; preview_id?: string };
+    const input = shot.input as { posting_url?: string; posting_text?: string; preview_id?: string; fresh?: boolean };
     let pre: { posting: PostingProfile; matches: Match[] } | undefined;
     let shownPromise: number | null = null;   // the number the user actually saw at preview — the one we are held to
     if (input.preview_id) {
       const { data: pv } = await db.from("previews").select("posting, matches, posting_text, score_after").eq("id", input.preview_id).eq("user_id", shot.user_id).maybeSingle();
       if (pv?.posting && pv?.matches) { pre = { posting: pv.posting as PostingProfile, matches: pv.matches as Match[] }; if (!input.posting_text && pv.posting_text) input.posting_text = pv.posting_text; shownPromise = typeof pv.score_after === "number" ? pv.score_after : null; }
-      // the same résumé against the same posting was already sharpened: the document and its number are returned as they were.
-      // A second shot on the same pair is not a new roll of the dice; it is the same answer (and the shot comes back).
-      const { data: prev } = await db.from("shots").select("output").eq("user_id", shot.user_id).eq("status", "done").contains("input", { preview_id: input.preview_id }).neq("id", shotId).order("done_at", { ascending: false }).limit(1).maybeSingle();
-      if (prev?.output && (prev.output as any).pdf_path) {
-        await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
-        await db.from("shots").update({ status: "done", done_at: new Date().toISOString(), output: { ...(prev.output as any), shot_returned: true, repeat: true } }).eq("id", shotId);
-        return;
+      // Already sharpened (rule book §5, decided 2 Nov): the fit page shows the prior document and offers "Sharpen anyway".
+      // A shot that arrives without fresh=true for a pair that already has a document is a client that didn't see the offer:
+      // it returns the existing document and does NOT consume the shot (nothing new was produced). fresh=true runs anew and is spent.
+      if (!input.fresh) {
+        const { data: prev } = await db.from("shots").select("output").eq("user_id", shot.user_id).eq("status", "done").contains("input", { preview_id: input.preview_id }).neq("id", shotId).order("done_at", { ascending: false }).limit(1).maybeSingle();
+        if (prev?.output && (prev.output as any).pdf_path) {
+          await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
+          await db.from("shots").update({ status: "done", done_at: new Date().toISOString(), output: { ...(prev.output as any), repeat: true } }).eq("id", shotId);
+          return;
+        }
       }
     }
     let postingId: string | null = null;

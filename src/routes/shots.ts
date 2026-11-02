@@ -53,6 +53,7 @@ shots.post("/", async (c) => {
       posting_url: z.string().url().optional(),
       posting_text: z.string().min(80).optional(),
       preview_id: z.string().uuid().optional(),
+      fresh: z.boolean().optional(),            // "Sharpen anyway" on a pair that already has a document: run anew, spend the shot
     })
     .refine((b) => b.posting_url || b.posting_text, "Give a link or paste the posting.")
     .safeParse(await c.req.json());

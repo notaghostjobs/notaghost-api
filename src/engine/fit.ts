@@ -14,6 +14,7 @@ export const CEILING = 97;
 export const TARGET_CAP = 92;
 export const TARGET_RATE = 0.4;
 export const MIN_LIFT = 8;
+export const MIN_OFFER_LIFT = 5;   // the smallest promise we sell
 
 const W = { must: 2, nice: 1 } as const;
 /** What a screener ticks for each bucket. A quoted line counts most; a keyword mention a little; missing nothing. */
@@ -73,7 +74,10 @@ export function assess(matches: Match[], v2 = v2On()) {
   // Sharpen is offered only where the résumé's own material gives a real lift (v2: at least MIN_LIFT; v1: +5).
   // Medium with nothing unsaid (everything either said or missing) is honest to show and nothing to sell.
   // medium ALWAYS offers Sharpen (the promise may be modest; the user decides). high offers it only when something is left to say.
-  const anySayable = matches.some((m) => m.bucket === "have_not_said" && (!v2 || m.sayable));
-  const canLift = b === "medium" ? true : b === "high" ? anySayable && promised > current : false;
-  return { current, promised, reachable: max, band: b, can_lift: canLift };
+  // Minimum lift (rule book §4, decided 2 Nov): Sharpen is offered when the promise is at least MIN_OFFER_LIFT above today's fit
+  // AND the floor shown ("past N") is above today's fit. Below that the page shows the fit and the questions; the button appears
+  // as told answers lift the promise over the line. The same rule applies to medium and high; low never offers (Radar first).
+  const floorShown = Math.max(0, Math.ceil(promised / 5) * 5 - 5);
+  const canLift = b !== "low" && promised >= current + MIN_OFFER_LIFT && floorShown > current;
+  return { current, promised, reachable: max, band: b, can_lift: canLift, floor_shown: floorShown };
 }

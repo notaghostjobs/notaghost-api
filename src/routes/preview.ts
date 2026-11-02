@@ -69,6 +69,12 @@ preview.post("/", async (c) => {
   const roles = ((resume.parsed as ResumeProfile).roles ?? []).map((r) => ({ company: r.company, start: r.start, end: r.end })).slice(0, 8);
   const a = assess(matches);
   const pv = { id: previewId };
+  // already sharpened: the same résumé on this posting has a delivered document. The page offers to open it (free) or sharpen anyway (a real shot).
+  let prior_shot: { id: string; at: string; before: number; after: number } | null = null;
+  if (previewId) {
+    const { data: ps } = await db.from("shots").select("id, done_at, output").eq("user_id", u.id).eq("status", "done").contains("input", { preview_id: previewId }).order("done_at", { ascending: false }).limit(1).maybeSingle();
+    if (ps?.output && (ps.output as any).pdf_path) prior_shot = { id: ps.id, at: ps.done_at, before: (ps.output as any).before, after: Math.min(97, (ps.output as any).after) };
+  }
   // the change list: what's unsaid (we can say it), what's buried (a keyword only), what's missing (we won't claim it)
   const unsaid = matches.filter((m) => m.bucket === "have_not_said" && !m.told && m.evidence_kind !== "keyword");
   const buried = matches.filter((m) => m.bucket === "have_not_said" && !m.told && m.evidence_kind === "keyword");
@@ -83,9 +89,9 @@ preview.post("/", async (c) => {
     ...missing.slice(0, 1).map((m) => ({ tone: "bad", label: "Genuinely missing", title: m.requirement, body: m.suggestion })),
   ].slice(0, 3);
   return c.json({ similar_open, preview_id: pv?.id ?? null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location },
-    score_before: a.current, score_after: a.promised, band: a.band, reachable: a.reachable, can_lift: a.can_lift,
+    score_before: a.current, score_after: a.promised, band: a.band, reachable: a.reachable, can_lift: a.can_lift, floor_shown: a.floor_shown,
     counts: { said: matches.filter((m) => m.bucket === "said").length, unsaid: unsaid.length, buried: buried.length, missing: matches.filter((m) => m.bucket === "missing" || m.told).length, total: matches.length },
-    changes, reasons, matches, fits: fits ?? null, gaps: gapsOf(matches), roles });
+    changes, reasons, matches, fits: fits ?? null, gaps: gapsOf(matches), roles, prior_shot });
 });
 
 
@@ -117,7 +123,7 @@ preview.post("/:id/answer", async (c) => {
   }
   const a = assess(next);
   await db.from("previews").update({ matches: next, score_after: a.promised }).eq("id", pv.id);
-  return c.json({ ok: true, line: next.find((x) => x.requirement === m.requirement)?.line ?? null, score_before: a.current, score_after: a.promised, gaps: gapsOf(next) });
+  return c.json({ ok: true, line: next.find((x) => x.requirement === m.requirement)?.line ?? null, score_before: a.current, score_after: a.promised, can_lift: a.can_lift, floor_shown: a.floor_shown, gaps: gapsOf(next) });
 });
 
 /** Live Bengaluru roles on employers' own systems whose title shares the posting's two most specific words. */
