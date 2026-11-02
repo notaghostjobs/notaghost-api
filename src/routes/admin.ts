@@ -153,9 +153,12 @@ admin.get("/whatsapp/status", async (c) => {
     get(`${c.req.query("waba") ?? "1137231462108125"}?fields=name,account_review_status,business_verification_status,message_template_namespace,ownership_type`),
   ]);
   // the WABA the number actually belongs to, from the business side (the "messaging account id" on the console is not always it)
-  const owned = await get(`${env.waPhoneId}?fields=id,whatsapp_business_account{id,name}`);
-  const biz = await get(`me/businesses?fields=id,name,owned_whatsapp_business_accounts{id,name,subscribed_apps}`);
-  return c.json({ phone, subscribed_apps: subs, waba, owned, businesses: biz });
+  // which WABAs can this token see at all? (debug_token lists the granular scopes with their target ids)
+  const dbg = await get(`debug_token?input_token=${encodeURIComponent(env.waToken)}`);
+  const scopes = (dbg as any)?.body?.data?.granular_scopes ?? [];
+  const wabaIds: string[] = Array.from(new Set(scopes.flatMap((g: any) => g.target_ids ?? [])));
+  const perWaba = await Promise.all(wabaIds.map(async (id) => ({ id, info: await get(`${id}?fields=id,name,account_review_status`), subscribed_apps: await get(`${id}/subscribed_apps`), phones: await get(`${id}/phone_numbers?fields=id,display_phone_number,status`) })));
+  return c.json({ phone, subscribed_apps: subs, waba, token_scopes: scopes, wabas: perWaba });
 });
 
 admin.get("/whatsapp", (c) => c.json({ configured: { token: !!env.waToken, phone_id: !!env.waPhoneId, verify: !!env.waVerifyToken, app_secret: !!env.waAppSecret }, trace: waTrace }));
