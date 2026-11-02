@@ -11,7 +11,8 @@ const PAGE_SIGNALS: Record<number, string> = { 1: "pay band stated (a salary/CTC
 
 audit.get("/signals", async (c) => {
   const limit = Math.min(300, Number(c.req.query("limit") ?? 200));
-  const { data: rows } = await db.from("postings").select("id, url, title, company, raw_text, facts, signals, verdict, scored_at").not("scored_at", "is", null).not("raw_text", "is", null).order("scored_at", { ascending: false }).limit(limit);
+  const offset = Math.max(0, Number(c.req.query("offset") ?? 0));
+  const { data: rows } = await db.from("postings").select("id, url, title, company, raw_text, facts, signals, verdict, scored_at").not("scored_at", "is", null).not("raw_text", "is", null).order("scored_at", { ascending: false }).range(offset, offset + limit - 1);
   const out: any[] = [];
   const stats: Record<string, { shown: number; disagree: number; examples: any[] }> = {};
   const bump = (k: string, bad: boolean, ex: any) => { const s = (stats[k] ??= { shown: 0, disagree: 0, examples: [] }); s.shown++; if (bad) { s.disagree++; if (s.examples.length < 5) s.examples.push(ex); } };
