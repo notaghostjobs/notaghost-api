@@ -37,6 +37,27 @@ async function deliverOtp(phone: string, code: string) {
     console.log(`[otp] ${phone} -> ${code}`);
     return;
   }
+  if (env.otpProvider === "whatsapp") {
+    // Meta Cloud API, our own number: an "authentication" template with the code in the body and a copy-code button
+    const r = await fetch(`https://graph.facebook.com/v21.0/${env.waPhoneId}/messages`, {
+      method: "POST", headers: { authorization: `Bearer ${env.waToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", to: phone.replace("+", ""), type: "template",
+        template: { name: env.waOtpTemplate, language: { code: "en" }, components: [
+          { type: "body", parameters: [{ type: "text", text: code }] },
+          { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: code }] },
+        ] } }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (r.ok) return;
+    const detail = (await r.text()).slice(0, 300);
+    console.error(`[otp] whatsapp ${r.status} ${detail}`);
+    // the number isn't on WhatsApp (or the template is still in review): fall through to MSG91 SMS when configured
+    if (env.otpProvider === "whatsapp" && env.msg91AuthKey && env.msg91TemplateId) {
+      const s = await fetch("https://control.msg91.com/api/v5/otp", { method: "POST", headers: { authkey: env.msg91AuthKey, "content-type": "application/json" }, body: JSON.stringify({ template_id: env.msg91TemplateId, mobile: phone.replace("+", ""), otp: code }), signal: AbortSignal.timeout(10000) });
+      if (s.ok) return;
+    }
+    throw Object.assign(new Error("We couldn’t send the code to that number on WhatsApp. Check the number and try again."), { status: 400 });
+  }
   if (env.otpProvider === "msg91") {
     // WhatsApp first (Meta "authentication" template: body {{1}} = code, URL button {{1}} = code), SMS (DLT) as the fallback
     if (env.msg91WaNumber && env.msg91WaTemplate) {

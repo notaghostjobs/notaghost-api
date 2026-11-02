@@ -17,8 +17,10 @@ export const env = {
   waToken: opt("WA_TOKEN", ""),                    // WhatsApp Cloud API: permanent system-user token (Meta → Render, never chat)
   waPhoneId: opt("WA_PHONE_ID", ""),               // the Ghosted number's phone number ID
   waVerifyToken: opt("WA_VERIFY_TOKEN", ""),       // what Meta sends back on the webhook handshake
-  waAppSecret: opt("WA_APP_SECRET", ""),           // the app secret (App settings → Basic): verifies every webhook delivery when set
-  otpProvider: opt("OTP_PROVIDER", "dev") as "msg91" | "email" | "dev",
+  waAppSecret: opt("WA_APP_SECRET", ""),
+  waWabaId: opt("WA_WABA_ID", ""),                 // the WhatsApp business account (templates live here)
+  waOtpTemplate: opt("WA_OTP_TEMPLATE", "ghosted_signin_code"),   // authentication template name           // the app secret (App settings → Basic): verifies every webhook delivery when set
+  otpProvider: opt("OTP_PROVIDER", "dev") as "whatsapp" | "msg91" | "email" | "dev",   // whatsapp = Meta Cloud API directly (WA_* vars), authentication template
   msg91AuthKey: opt("MSG91_AUTHKEY"),
   msg91TemplateId: opt("MSG91_TEMPLATE_ID"),               // SMS (DLT) template id
   msg91WaNumber: opt("MSG91_WA_NUMBER"),                     // WhatsApp sender, e.g. 919xxxxxxxxx; empty = SMS only

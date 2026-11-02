@@ -18,6 +18,40 @@ const trace = (kind: string, detail: unknown) => { waTrace.unshift({ at: new Dat
 const SITE = "https://notaghost.jobs";
 const GRAPH = "https://graph.facebook.com/v21.0";
 
+/** The three launch templates, created through the Graph API (so the console isn't needed). Read-only listing at GET /templates;
+ *  POST /templates creates any that are missing. Meta reviews them (minutes to a day); status shows here. */
+export const TEMPLATES = [
+  { name: "ghosted_signin_code", category: "AUTHENTICATION", language: "en",
+    components: [{ type: "BODY", add_security_recommendation: true }, { type: "FOOTER", code_expiration_minutes: 5 }, { type: "BUTTONS", buttons: [{ type: "OTP", otp_type: "COPY_CODE", text: "Copy code" }] }] },
+  { name: "ghosted_document_ready", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Your sharpened résumé for *{{1}}* at *{{2}}* is ready: {{3}}% → *{{4}}%*. Open it, download the PDF, and send the referral note.", example: { body_text: [["Category Manager", "Amazon", "54", "75"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open document", url: "https://notaghost.jobs/app.html#/sharpen/delivered?s={{1}}", example: ["abc123"] }] },
+    ] },
+  { name: "ghosted_receipt", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Receipt {{1}} from Ghosted: {{2}} for ₹{{3}}, paid on {{4}}. Tap to view or download.", example: { body_text: [["NAG-2026-00001", "Sharpen — 10 shots", "499", "2 Nov 2026"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "View receipt", url: "https://notaghost.jobs/app.html#/receipts/{{1}}", example: ["NAG-2026-00001"] }] },
+    ] },
+];
+whatsapp.get("/templates", async (c) => {
+  if (!env.waWabaId || !env.waToken) return c.json({ error: "WA_WABA_ID / WA_TOKEN not set" }, 500);
+  const r = await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status,category,rejected_reason&limit=50`, { headers: { authorization: `Bearer ${env.waToken}` } });
+  return c.json(await r.json());
+});
+whatsapp.post("/templates", async (c) => {
+  if (!env.waWabaId || !env.waToken) return c.json({ error: "WA_WABA_ID / WA_TOKEN not set" }, 500);
+  const have = await (await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status&limit=50`, { headers: { authorization: `Bearer ${env.waToken}` } })).json();
+  const names = new Set(((have as any).data ?? []).map((t: any) => t.name));
+  const results: any[] = [];
+  for (const t of TEMPLATES) {
+    if (names.has(t.name)) { results.push({ name: t.name, skipped: "exists" }); continue; }
+    const r = await fetch(`${GRAPH}/${env.waWabaId}/message_templates`, { method: "POST", headers: { authorization: `Bearer ${env.waToken}`, "content-type": "application/json" }, body: JSON.stringify(t) });
+    results.push({ name: t.name, status: r.status, body: await r.json() });
+  }
+  return c.json({ results });
+});
+
 /** Meta's one-time handshake when the callback URL is saved: echo hub.challenge if the verify token matches. */
 whatsapp.get("/webhook", (c) => {
   const mode = c.req.query("hub.mode"), token = c.req.query("hub.verify_token"), challenge = c.req.query("hub.challenge");
