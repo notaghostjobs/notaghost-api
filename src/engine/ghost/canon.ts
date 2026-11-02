@@ -41,7 +41,7 @@ export function companyKey(name: string) {
 /** LinkedIn rows scored before this instant may hold another job's text (split-view misread); nothing stored before it is trusted. */
 export const CLEAN_SINCE = "2026-10-27T08:20:00.000Z";
 /** Since this moment every check that ran is a line on the card (29 Oct). Rows scored earlier show a partial list and are re-scored on sight, history kept. */
-export const FULL_LIST_SINCE = "2026-10-29T06:45:00.000Z";
+export const FULL_LIST_SINCE = "2026-11-02T14:05:00.000Z";   // 2 Nov: signals 1,2,3,4,5,15 corrected after the 200-posting audit; cards scored before this re-score on sight
 
 /**
  * The posting without the job board's furniture. LinkedIn's split view puts "see how you compare", the Premium

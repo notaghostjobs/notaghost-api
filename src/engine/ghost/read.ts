@@ -112,23 +112,35 @@ export function extractFactsRules(raw: RawRead, url: string): Extracted {
   const posted_days = raw.posted_days ?? daysFromText(posted_text);
   const applicants = raw.applicants ?? (() => { const m = text.match(/(?:over\s+)?(\d[\d,]*)\+?\s*(?:applicants|people clicked apply)/i); return m ? Number(m[1].replace(/,/g, "")) : null; })();
   const locParts = location.split(/\s*(?:\/|\||·|;)\s*/).map((s) => s.trim()).filter(Boolean);
-  const locations_count = Math.max(1, new Set(locParts.map((s) => s.toLowerCase())).size + (/\bremote\b/i.test(location) && !/remote/i.test(locParts.join()) ? 1 : 0));
+  const headerCount = new Set(locParts.map((s) => s.toLowerCase())).size + (/\bremote\b/i.test(location) && !/remote/i.test(locParts.join()) ? 1 : 0);
+  // the header shows one city; the description often lists "Bengaluru / Hyderabad / Pune / Remote" on the same posting
+  const bodyCount = locationsInText(text);
+  const locations_count = Math.max(1, headerCount, bodyCount);
   // A pay band is a money figure NEXT TO a pay word ("CTC ₹18–24 LPA", "salary: $120k", "compensation 8-10 lakhs"). A bare
   // "$100M revenue" or "3 lakh orders" in the description is not pay; the old test counted it and said "pay band stated".
   const pay_stated = payStated(text);
-  const evergreen = /talent (?:community|pool|network)|future opportunit|always looking|multiple openings|across (?:all )?levels|open pipeline|ongoing requirement|evergreen/i.test(low);
-  const specific = /\b(?:you will|you'll|responsib|our team|the team|this role|reporting to|manager|product|platform|customers?|stakeholders?|roadmap|own the|lead the)\b/i;
-  const templated = text.length < 250 || !specific.test(text);
-  const yrs = low.match(/(\d{1,2})\s*(?:\+|-|–|to)?\s*(?:\d{1,2})?\s*\+?\s*(?:years?|yrs?)/); const minYears = yrs ? Number(yrs[1]) : null;
-  const senior = /\b(senior|sr\.?|lead|principal|staff|director|head|vp|manager)\b/i.test(title);
-  // only the unambiguous case without a model: a senior title asking for two years or less
-  const kitchen_sink = senior && minYears != null && minYears <= 2;
+  const evergreen = /talent (?:community|pool|network)|future opportunit|always (?:looking|hiring)|open pipeline|ongoing requirement|evergreen (?:role|req|posting|position)|general application|express(?:ion of)? interest/i.test(low);
+  const specific = /\b(?:you will|you'll|you would|responsib|our team|the team|this role|in this role|reporting to|reports to|manager|product|platform|customers?|stakeholders?|roadmap|own the|lead the|drive the|build the|deliver)\b/i;
+  const concrete = /\b(?:team|category|portfolio|region|market|p&l|pnl|kpi|okr|sku|gmv|revenue|launch|vendor|supplier|merchant|seller|campaign|pipeline|client|account|project|programme|program)\b/i;
+  // templated = could be any company. Short text, or neither a description of the work NOR a concrete noun anywhere.
+  const templated = text.length < 120 || (!specific.test(text) && !concrete.test(text));
+  const yearFigs = [...low.matchAll(/(\d{1,2})\s*(?:\+|-|–|to)?\s*(?:\d{1,2})?\s*\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:experience|exp\b|in\b|working|relevant|total)/g)].map((m) => Number(m[1]));
+  const minYears = yearFigs.length ? Math.max(...yearFigs) : null;   // the posting's headline experience ask is its largest figure ("2+ years in SQL" is a sub-skill, not the bar)
+  const senior = /\b(senior|sr\.?|lead|principal|staff|director|head|vp|vice president)\b/i.test(title);
+  const mustBullets = (text.match(/^\s*(?:[-•*▪●]|\d+[.)])\s+\S/gm) ?? []).length;
+  // kitchen sink = a senior title whose only experience ask is ≤2 years, or 15+ requirement bullets
+  const kitchen_sink = (senior && minYears != null && minYears <= 2) || mustBullets >= 15;
   const email = text.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/); const form = text.match(/https?:\/\/(?:forms\.gle|docs\.google\.com\/forms|[\w.-]*typeform\.com|[\w.-]*jotform\.com)[^\s"')]*/i);
   const dm = /\b(?:whatsapp|telegram)\b[^.\n]{0,40}\b(?:\+?\d[\d\s-]{8,})/i.test(text) || /\b(?:dm|message) (?:me|us) (?:on|at|via)\b/i.test(low);
   const sendCv = /\b(?:send|share|mail|email|forward)\b[^.\n]{0,40}\b(?:cv|resume|résumé|profile)\b/i.test(text);
   const apply_route: PostingFacts["apply_route"] = raw.apply_url ? "system" : form ? "external_form" : dm ? "dm" : email && sendCv ? "email" : /\bapply\b/i.test(text) ? "system" : "unknown";
   const apply_domain = raw.apply_url ? safeHost(raw.apply_url) : form ? safeHost(form[0]) : email ? email[0].split("@")[1].toLowerCase() : null;
-  const agency = /\b(?:our client|leading client|a leading (?:mnc|company|organisation|organization)|client of ours|hiring for (?:a|an|our) (?:client|reputed)|staffing|consultancy|recruitment (?:firm|agency))\b/i.test(low);
+  const STAFFING = /\b(?:staffing|manpower|consultancy|consultants?\b(?!.{0,40}\b(?:functional|technical|sap|oracle|salesforce|retail|management)\b)|recruitment (?:firm|agency|services)|placement (?:services|agency)|hr (?:services|solutions)|talent (?:solutions|partners?))\b/i;
+  const CLIENT_HIRING = /\b(?:our client|leading client|client of ours|for (?:a|an|our) (?:leading|reputed|top|fortune|mnc|global)\b[^.\n]{0,30}\b(?:client|company|organisation|organization)|hiring for (?:a|an|our) (?:client|reputed)|on behalf of (?:a|an|our) client)\b/i;
+  const employerNamed = company.length > 1 && !STAFFING.test(company);
+  // an agency posting is one where the employer is NOT the poster: client-hiring language, or a staffing-firm poster with no employer named.
+  // Consulting firms describing their clients' work (Accenture, EXL, Infosys) are the employer, not an agency.
+  const agency = CLIENT_HIRING.test(low) ? !employerNamed || STAFFING.test(company) : STAFFING.test(company) && !/\b(?:we are|join (?:us|our team)|our team)\b/i.test(low);
   const scam_tells: string[] = [];
   if (/\b(?:registration|processing|security|training|joining|document(?:ation)?)\s+(?:fee|charge|deposit|amount)\b|\bpay(?:ment)? (?:to|before) (?:apply|join)|\brefundable (?:deposit|amount)\b/i.test(low)) scam_tells.push("a fee or deposit is asked for");
   if (/\bguaranteed (?:job|placement|selection)\b|\bno interview\b|\bdirect joining\b/i.test(low)) scam_tells.push("guaranteed job / no interview");
@@ -142,6 +154,16 @@ export function extractFactsRules(raw: RawRead, url: string): Extracted {
 
 const MONEY = String.raw`(?:(?:₹|rs\.?|inr|\$|usd|eur|£|aed|sgd)\s?\d[\d,.]*\s*(?:k|l|lpa|lakhs?|lacs?|cr|m)?|\b\d{1,3}(?:\.\d)?\s*(?:lpa|lakhs?|lacs?)\b)`;
 const PAYWORD = String.raw`(?:salary|ctc|compensation|package|pay|per annum|p\.a\.|lpa|stipend|remuneration|base|total comp|otc|gross|net pay|in-hand|take[- ]home)`;
+const CITIES = ["bengaluru","bangalore","hyderabad","chennai","mumbai","pune","delhi","gurgaon","gurugram","noida","kolkata","ahmedabad","kochi","jaipur","indore","chandigarh","coimbatore","remote","work from home","pan india","anywhere in india"];
+/** Distinct cities this ONE posting says it is open in, read from the description ("Location: Bengaluru / Hyderabad / Pune"). */
+export function locationsInText(text: string): number {
+  const m = text.match(/\b(?:locations?|work location|job location|base location|office)\s*[:\-–]\s*([^\n]{3,160})/i);
+  const scope = (m ? m[1] : "").toLowerCase();
+  if (!scope) return 1;
+  const found = new Set(CITIES.filter((c) => scope.includes(c)).map((c) => (c === "bangalore" ? "bengaluru" : c === "gurgaon" ? "gurugram" : c)));
+  return Math.max(1, found.size);
+}
+
 /** True only when a money figure and a pay word sit within ~60 characters of each other, either order. */
 export function payStated(text: string): boolean {
   const re = new RegExp(`${PAYWORD}[^.\n]{0,60}${MONEY}|${MONEY}[^.\n]{0,60}${PAYWORD}`, "i");

@@ -7,6 +7,16 @@ import { extractFactsRules, payStated } from "../engine/ghost/read.js";
 
 export const audit = new Hono();
 
+/** Re-score the most recent N stored postings with the current rules (₹0: rules + reader, no model). Runs in the background. */
+audit.post("/rescore", async (c) => {
+  const limit = Math.min(300, Number(c.req.query("limit") ?? 200));
+  const { data: rows } = await db.from("postings").select("id, url").not("scored_at", "is", null).not("url", "is", null).order("scored_at", { ascending: false }).limit(limit);
+  const { ghostCheck } = await import("../engine/ghost/index.js");
+  let done = 0, failed = 0;
+  (async () => { for (const p of rows ?? []) { try { await ghostCheck({ url: p.url }, { force: true, quick: true }); done++; } catch { failed++; } } console.log("[audit] rescore finished", { done, failed }); })();
+  return c.json({ queued: rows?.length ?? 0 });
+});
+
 const PAGE_SIGNALS: Record<number, string> = { 1: "pay band stated (a salary/CTC figure or range for THIS role)", 2: "templated description (could be any company; no product, team, manager or specific work named)", 3: "catch-all location (three or more cities, or remote plus cities, on this ONE posting)", 4: "evergreen language (talent community/pool, future opportunities, always looking, multiple openings across levels)", 5: "kitchen-sink requirements (unrelated stacks lumped together, 15+ must-haves, or a senior title asking ≤2 years)", 6: "off-system apply route (email a CV, DM/WhatsApp/Telegram, or an unrelated external form)", 15: "posted by an agency / staffing firm for an unnamed client", 20: "asks for money, fees, deposits or personal documents (Aadhaar, PAN, passport) to apply" };
 
 audit.get("/signals", async (c) => {
