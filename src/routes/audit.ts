@@ -56,5 +56,5 @@ audit.get("/signals", async (c) => {
     }
   }
   const summary = Object.fromEntries(Object.entries(stats).map(([k, v]) => [k, { label: PAGE_SIGNALS[Number(k.slice(1))], shown: v.shown, disagree: v.disagree, rate: v.shown ? Math.round((100 * v.disagree) / v.shown) : 0, examples: v.examples }]));
-  return c.json({ postings: out.length, summary, detail: c.req.query("detail") ? out : undefined });
+  return c.json({ postings: out.length, summary, detail: c.req.query("detail") ? out.map((o) => ({ ...o, url: (rows ?? []).find((r: any) => r.id === o.id)?.url })) : undefined });
 });
