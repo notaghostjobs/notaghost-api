@@ -12,6 +12,9 @@ import { ghostCheck, type CheckResult } from "../engine/ghost/index.js";
 import { jobKey } from "../engine/ghost/canon.js";
 
 export const whatsapp = new Hono();
+/** The last 50 webhook events and sends, for the read-only audit: did Meta call us, did we reply, what did Graph say. */
+export const waTrace: { at: string; kind: string; detail: string }[] = [];
+const trace = (kind: string, detail: unknown) => { waTrace.unshift({ at: new Date().toISOString(), kind, detail: String(typeof detail === "string" ? detail : JSON.stringify(detail)).slice(0, 400) }); if (waTrace.length > 50) waTrace.pop(); };
 const SITE = "https://notaghost.jobs";
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -32,8 +35,10 @@ whatsapp.post("/webhook", async (c) => {
     if (sig.length !== want.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(want))) return c.text("bad signature", 401);
   }
   let body: any = null;
-  try { body = JSON.parse(raw); } catch { return c.json({ ok: true }); }
+  try { body = JSON.parse(raw); } catch { trace("webhook:unparseable", raw.slice(0, 200)); return c.json({ ok: true }); }
   const msgs: any[] = body?.entry?.flatMap((e: any) => e.changes ?? []).flatMap((ch: any) => ch.value?.messages ?? []) ?? [];
+  const statuses: any[] = body?.entry?.flatMap((e: any) => e.changes ?? []).flatMap((ch: any) => ch.value?.statuses ?? []) ?? [];
+  trace("webhook", { messages: msgs.map((m: any) => ({ type: m.type, from: String(m.from ?? "").slice(0, 4) + "…" })), statuses: statuses.map((s: any) => s.status), fields: body?.entry?.flatMap((e: any) => (e.changes ?? []).map((ch: any) => ch.field)) });
   for (const m of msgs) handle(m).catch((e) => console.error("[whatsapp] handle", m?.id, e?.message ?? e));
   return c.json({ ok: true });
 });
@@ -108,9 +113,11 @@ async function callerFor(user: any): Promise<Caller> {
 }
 
 async function graph(path: string, body: unknown) {
-  if (!env.waToken || !env.waPhoneId) { console.error("[whatsapp] not configured"); return; }
+  if (!env.waToken || !env.waPhoneId) { trace("graph:unconfigured", { token: !!env.waToken, phone: !!env.waPhoneId }); console.error("[whatsapp] not configured"); return; }
   const res = await fetch(`${GRAPH}/${env.waPhoneId}/${path}`, { method: "POST", headers: { authorization: `Bearer ${env.waToken}`, "content-type": "application/json" }, body: JSON.stringify(body) });
-  if (!res.ok) console.error("[whatsapp] graph", res.status, (await res.text()).slice(0, 300));
+  const text = await res.text();
+  trace(res.ok ? "graph:ok" : "graph:error", `${path} ${res.status} ${text.slice(0, 300)}`);
+  if (!res.ok) console.error("[whatsapp] graph", res.status, text.slice(0, 300));
 }
 const send = (to: string, text: string) => graph("messages", { messaging_product: "whatsapp", to, type: "text", text: { body: text.slice(0, 4000), preview_url: false } });
 const markRead = (id: string) => graph("messages", { messaging_product: "whatsapp", status: "read", message_id: id });
