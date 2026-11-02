@@ -2,6 +2,7 @@ import type { PostingFacts, FiredSignal, Scored, Verdict } from "./types.js";
 
 /**
  * The 22 signals, exactly as in the playbook (chapter 01). Pure: same facts → same score.
+ * Since 2 Nov 2026 signals 2 and 5 are off the card (JUDGEMENT_SIGNALS=on restores them): 20 signals shown.
  * 15 = nearly settles it · 8 = matters, has innocent explanations · 4 = counts only in company.
  */
 export function score(f: PostingFacts): Scored {
@@ -15,13 +16,16 @@ export function score(f: PostingFacts): Scored {
 
   // ---------- A. the posting itself ----------
   const signal7 = process.env.SIGNAL7 === "on";
-  evaluated += signal7 ? 7 : 6;
+  // Signals 2 (templated) and 5 (kitchen-sink) are judgement calls a rule can't make reliably (audit of 2 Nov: ~10% wrong lines).
+  // Off the card until they are backed by a model read; back when revenue covers it (rule book §14). Not evaluated, not shown.
+  const JUDGEMENT_SIGNALS = process.env.JUDGEMENT_SIGNALS === "on";
+  evaluated += (signal7 ? 5 : 4) + (JUDGEMENT_SIGNALS ? 2 : 0);
   // a missing pay band is true of almost every Indian posting, so it separates nothing: shown, not scored. A stated one is rare and counts for the posting.
   if (!f.pay_stated) note(1, "No pay band shown"); else ok(1, "Pay band stated");
-  if (f.templated) bad(2, 4, "Templated description —", "no team, manager or specifics about the work"); else ok(2, "Describes a specific team and work");
+  if (JUDGEMENT_SIGNALS) { if (f.templated) bad(2, 4, "Templated description —", "no team, manager or specifics about the work"); else ok(2, "Describes a specific team and work"); }
   if (f.locations_count >= 3) bad(3, 4, "Catch-all location —", `${f.locations_count} cities or remote on one posting`); else ok(3, "One location, not a catch-all");
   if (f.evergreen) bad(4, 8, "Evergreen language —", "“talent community”, “future opportunities”, “always looking”"); else ok(4, "No “talent community” or “future opportunities” language");
-  if (f.kitchen_sink) bad(5, 4, "Kitchen-sink requirements —", "unrelated stacks or an unrealistic must-have list"); else ok(5, "Requirements read like one real role");
+  if (JUDGEMENT_SIGNALS) { if (f.kitchen_sink) bad(5, 4, "Kitchen-sink requirements —", "unrelated stacks or an unrealistic must-have list"); else ok(5, "Requirements read like one real role"); }
   if (f.apply_route === "email" || f.apply_route === "dm") bad(6, 8, "Off-system apply route —", f.apply_route === "dm" ? "“DM me” / WhatsApp" : "email your CV to a personal address");
   else if (f.apply_route === "external_form" && f.apply_domain) bad(6, 8, "Apply form on an unrelated domain —", f.apply_domain);
   else ok(6, "No off-system apply route", undefined, "(no email, DM or outside form)");
