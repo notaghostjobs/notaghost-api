@@ -104,10 +104,16 @@ function format(r: CheckResult, token: string, g: { used: number; limit: number 
   return [head, where, "", picks.join("\n"), "", hook].join("\n") + left;
 }
 /** Card lines read as facts, not accusations: "Created 145 days ago in amazon — the page says…" → "In amazon’s system for 145 days; the page says…". */
+/** Card lines read as facts, not accusations. "Created 145 days ago in amazon — the page says “1 week ago”" becomes
+ *  "In Amazon’s system since June; the page says “1 week ago”". The month is the honest unit for a long-open requisition. */
 function tidy(t: string): string {
+  const since = (days: string) => { const d = new Date(Date.now() - Number(days) * 86400e3); return d.toLocaleDateString("en-IN", { month: "long", ...(Number(days) > 300 ? { year: "numeric" } : {}) }); };
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
   return t
-    .replace(/^Created (\d+) days ago in (\S+) — the page says (.+)$/i, "In $2’s system for $1 days; the page says $3")
-    .replace(/^We first saw this (\d+) days ago — the page says (.+)$/i, "We first saw it $1 days ago; the page says $2")
+    .replace(/^Created (\d+) days ago in (\S+) — the page says (.+)$/i, (_m, d, sys, page) => `In ${cap(sys)}’s system since ${since(d)}; the page says ${page}`)
+    .replace(/^We first saw this (\d+) days ago — the page says (.+)$/i, (_m, d, page) => `We’ve seen it since ${since(d)}; the page says ${page}`)
+    .replace(/^On the company’s own hiring system \((\w+); (\d+) Bengaluru roles open there today\)$/i, (_m, sys, n) => `On ${cap(sys)}’s own hiring system — ${n} Bengaluru roles open there today`)
+    .replace(/^Open for (\d+) days(.*)$/i, (_m, d, rest) => `Open ${d} days${rest}`)
     .replace(/\s+—\s+/g, " — ").replace(/\s{2,}/g, " ").trim();
 }
 
