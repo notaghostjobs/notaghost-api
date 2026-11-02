@@ -79,19 +79,49 @@ async function handle(m: any) {
   await send(from, format(r, token, g));
 }
 
-/** WhatsApp formatting: *bold*, _italic_. Three lines of verdict, the two strongest findings, one link that signs them in. */
+/** The card, as a WhatsApp message: verdict + count, three facts (positives first on a Real, flags first otherwise),
+ *  one hook that only the link answers. Mirrors the Ghost Meter card; nothing here is invented. */
 function format(r: CheckResult, token: string, g: { used: number; limit: number | null }): string {
-  const head = r.verdict === "Real" ? "✅" : r.verdict === "Caution" ? "⚠️" : "⛔";
-  const where = [r.title, r.company].filter(Boolean).join(" · ");
-  const fired = r.signals.filter((s) => s.kind === "bad").sort((a, b) => b.pts - a.pts).slice(0, 2);
-  const oks = r.signals.filter((s) => s.kind === "ok").slice(0, 2);
-  const lines = (fired.length ? fired : oks).map((s) => `• ${[s.text, s.strong, s.tail].filter(Boolean).join(" ")}`);
+  const bad = r.signals.filter((s) => s.kind === "bad").sort((a, b) => b.pts - a.pts);
+  const ok = r.signals.filter((s) => s.kind === "ok");
+  const line = (s: { text: string; strong?: string; tail?: string }) => tidy([s.text, s.strong, s.tail].filter(Boolean).join(" "));
+  // On a Real the card leads with what's FOR it; a flag it still shows, phrased as a fact ("in their system since June"), not a contradiction.
+  const picks = r.verdict === "Real" ? [...ok.slice(0, 2).map((s) => `✔ ${line(s)}`), ...bad.slice(0, 1).map((s) => `⚠ ${line(s)}`)]
+    : r.verdict === "Caution" ? [...bad.slice(0, 2).map((s) => `⚠ ${line(s)}`), ...ok.slice(0, 1).map((s) => `✔ ${line(s)}`)]
+    : bad.slice(0, 3).map((s) => `⛔ ${line(s)}`);
+  const where = [r.title, r.company, r.location].filter(Boolean).join(" · ");
   const check = `${SITE}/app.html#/check?id=${r.posting_id}&t=${token}&src=wa`;
-  const next = r.verdict === "Ghost"
-    ? `Don’t spend time here. Radar finds the real ones: ${SITE}/app.html#/radar?t=${token}&src=wa`
-    : `See every check, and why they’d skip you: ${check}`;
-  const left = g.limit == null ? "" : `\n_${Math.max(0, g.limit - g.used)} free checks left today_`;
-  return `${head} *${r.verdict}* · ${r.clear}/${r.checks_run} clear\n${where}\n\n${r.headline}\n${lines.join("\n")}\n\n${next}${left}`;
+  const radar = `${SITE}/app.html#/radar?t=${token}&src=wa`;
+  const head = r.verdict === "Real" ? `✅ *Real* — ${r.clear} of ${r.checks_run} checks clear`
+    : r.verdict === "Caution" ? `⚠️ *Caution* — ${r.flags} of ${r.checks_run} checks flagged`
+    : `⛔ *Ghost* — don’t spend time here`;
+  const hook = r.verdict === "Ghost"
+    ? `*Radar* shows you only the real ones, the day they appear ↓
+${radar}`
+    : r.verdict === "Real"
+    ? `*They’re hiring. Will they see you?*
+Your résumé against what they screen for — what you say, what you don’t, and the one line that would change it ↓
+${check}`
+    : `*Check before you apply.*
+Every check we ran, and whether your résumé clears the ones that matter ↓
+${check}`;
+  const left = g.limit == null ? "" : `
+
+_${Math.max(0, g.limit - g.used)} free checks left today_`;
+  return `${head}
+${where}
+
+${picks.join("
+")}
+
+${hook}${left}`;
+}
+/** Card lines read as facts, not accusations: "Created 145 days ago in amazon — the page says…" → "In amazon’s system for 145 days; the page says…". */
+function tidy(t: string): string {
+  return t
+    .replace(/^Created (\d+) days ago in (\S+) — the page says (.+)$/i, "In $2’s system for $1 days; the page says $3")
+    .replace(/^We first saw this (\d+) days ago — the page says (.+)$/i, "We first saw it $1 days ago; the page says $2")
+    .replace(/\s+—\s+/g, " — ").replace(/\s{2,}/g, " ").trim();
 }
 
 function firstUrl(t: string): string | null {
