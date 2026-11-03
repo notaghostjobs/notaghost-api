@@ -237,7 +237,11 @@ function phrase(x: FiredSignal) {
 }
 function positives(p: PostingFacts) {
   const bits: string[] = [];
-  if (p.posted_days != null && p.posted_days <= 21) bits.push(`posted ${p.posted_text?.toLowerCase() ?? `${p.posted_days} days ago`}`);
+  if (p.posted_days != null && p.posted_days <= 21) {
+    // the board's own words when they already carry a verb ("Reposted 1 week ago"), else "posted …"
+    const t = p.posted_text?.toLowerCase();
+    bits.push(t ? (/^(re)?posted\b/.test(t) ? t : `posted ${t}`) : `posted ${p.posted_days} days ago`);
+  }
   if (!p.templated) bits.push("describes a specific team");
   if (p.pay_stated) bits.push("pay stated");
   if (p.ats?.found) bits.unshift(`on ${p.company || "the company"}’s own hiring system${p.ats.created_at ? ` since ${new Date(p.ats.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : ""}`);
