@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { db, currentResume, type User } from "../lib/db.js";
 import { currentParsedResume } from "../lib/resumeReady.js";
+import { srcOf, stampUser, logEvent } from "../lib/src.js";
 import { requireUser } from "../lib/auth.js";
 import { fetchPosting } from "../engine/extract.js";
 import { assess, fit, ENGINE_VERSION } from "../engine/fit.js";
@@ -28,6 +29,7 @@ preview.post("/", async (c) => {
 
   const resume = await currentParsedResume<{ id: string; parsed: any }>(u.id, "id, parsed");
   if (!resume?.parsed) return c.json({ error: "Upload your résumé first." }, 400);
+  { const src = srcOf(c); await stampUser(u.id, src); void logEvent("preview", { src, userId: u.id, meta: { posting_url: body.data.posting_url ?? null } }); }
 
   let postingText = body.data.posting_text ?? "", postingId: string | null = null, parsed: any = null;
   if (body.data.posting_url) {

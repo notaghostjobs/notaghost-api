@@ -3,6 +3,7 @@
 // verified phone, so the account exists from the first message and the link we send signs them in — no OTP wall.
 // Quota is the signed-in quota (section 7 of the rule book). Nothing outbound is ever sent unprompted.
 import { Hono } from "hono";
+import { stampUser, srcOfUser, logEvent, untagMessage } from "../lib/src.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "../lib/env.js";
 import { db, activePlan } from "../lib/db.js";
@@ -83,14 +84,19 @@ function once(id: string) { const now = Date.now(); for (const [k, t] of seen) i
 async function handle(m: any) {
   if (!m?.id || !m?.from || !once(m.id)) return;
   const from: string = String(m.from).replace(/\D/g, "");                 // E.164 digits without '+', e.g. 9198765...
-  const text: string = m.type === "text" ? String(m.text?.body ?? "") : m.type === "interactive" ? String(m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? "") : "";
+  const rawText: string = m.type === "text" ? String(m.text?.body ?? "") : m.type === "interactive" ? String(m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? "") : "";
   await markRead(m.id);
+  // a prefilled message from a post carries its channel in a trailing bracket — "(IF)" → wa-if; a hand-typed message is wa-direct
+  const { text, tag } = untagMessage(rawText);
   const url = firstUrl(text);
   if (!url) {
     await send(from, "Send me a job link — LinkedIn, Naukri or a careers page — and I’ll tell you if the role is real.\n\n_Ghosted · notaghost.jobs_");
     return;
   }
   const user = await userFor(from);
+  await stampUser(user.id, { first: tag ?? "wa-direct", last: tag ?? "wa-direct" });
+  const src = await srcOfUser(user.id);
+  void logEvent("wa_in", { src, userId: user.id, meta: { tagged: !!tag } });
   const caller: Caller = await callerFor(user);
   const key = jobKey(url).key;
   const g = await gate(caller, key);
@@ -110,6 +116,7 @@ async function handle(m: any) {
     return;
   }
   const token = await createSession(user.id);
+  void logEvent("check", { src, userId: user.id, meta: { verdict: r.verdict, source: "whatsapp", posting_id: r.posting_id } });
   await sendCard(from, format(r, token, g));
 }
 

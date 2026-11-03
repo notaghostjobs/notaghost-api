@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { srcOf, srcOfUser, stampUser, logEvent } from "../lib/src.js";
 import { isTester } from "../lib/testers.js";
 import { z } from "zod";
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -17,19 +18,21 @@ payments.post("/order", requireUser, async (c) => {
   const body = z.object({ product: z.enum(["sharpen", "build"]) }).safeParse(await c.req.json());
   if (!body.success) return c.json({ error: "Pick Sharpen or Build." }, 400);
   const price = PRICES[body.data.product];
+  // the person's channel rides on the order: first (who brought them) and last (this visit) — on our row and in Razorpay's notes
+  const here = srcOf(c); await stampUser(u.id, here);
+  const src = await srcOfUser(u.id);
+  const attributed = { first: src.first ?? here.first ?? here.last ?? null, last: here.last ?? src.last ?? null };
 
   const order = await rzp().orders.create({
     amount: price.paise,
     currency: "INR",
-    notes: { user_id: u.id, product: body.data.product },
+    notes: { user_id: u.id, product: body.data.product, src_first: attributed.first ?? "direct", src_last: attributed.last ?? "direct" },
   });
-  await db.from("payments").insert({
-    user_id: u.id,
-    product: body.data.product,
-    amount_paise: price.paise,
-    razorpay_order_id: order.id,
-    raw: order,
-  });
+  const row = { user_id: u.id, product: body.data.product, amount_paise: price.paise, razorpay_order_id: order.id, raw: order, src_first: attributed.first, src_last: attributed.last };
+  let { error } = await db.from("payments").insert(row);
+  if (error && /column/i.test(error.message)) { const { src_first, src_last, ...plain } = row; void src_first; void src_last; ({ error } = await db.from("payments").insert(plain)); }  // before migration 0010
+  if (error) return c.json({ error: error.message }, 500);
+  void logEvent("order", { src: attributed, userId: u.id, meta: { order_id: order.id, product: body.data.product, amount_paise: price.paise } });
   return c.json({ order_id: order.id, amount: price.paise, key_id: env.razorpayKeyId, phone: u.phone });
 });
 
@@ -83,6 +86,7 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
     status: "paid", razorpay_payment_id: paymentId, razorpay_signature: signature,
     receipt_no: receipt, paid_at: new Date().toISOString(),
   }).eq("id", pay.id);
+  void logEvent("paid", { src: { first: pay.src_first ?? null, last: pay.src_last ?? null }, userId: pay.user_id, meta: { payment_id: pay.id, order_id: orderId, product: pay.product, amount_paise: pay.amount_paise } });
 
   const cur = await currentResume<{ parsed: any }>(pay.user_id, "parsed");
   const { data: plan } = await db.from("plans").insert({

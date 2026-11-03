@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { PHONE_RE, sendOtp, verifyOtp, createSession, requireUser } from "../lib/auth.js";
+import { srcOf, stampUser, logEvent } from "../lib/src.js";
 
 export const auth = new Hono<{ Variables: { user: import("../lib/db.js").User } }>();
 
@@ -18,6 +19,9 @@ auth.post("/verify", async (c) => {
   if (!body.success) return c.json({ error: "Phone and six-digit code." }, 400);
   const user = await verifyOtp(body.data.phone, body.data.code);
   const token = await createSession(user.id);
+  const src = srcOf(c);
+  await stampUser(user.id, src);
+  void logEvent("signin", { src, anon: c.req.header("x-ghosted-anon") ?? null, userId: user.id });
   return c.json({ token, user });
 });
 

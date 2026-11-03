@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { srcOf, logEvent } from "../lib/src.js";
 import { z } from "zod";
 import { ghostCheck, presentStored, snapshotDue } from "../engine/ghost/index.js";
 import { db } from "../lib/db.js";
@@ -35,6 +36,10 @@ check.post("/", async (c) => {
   }
   try {
     const r = await ghostCheck({ url: body.data.url, text: body.data.text, page: body.data.page }, { force: !!body.data.force && c.req.header("x-admin") === process.env.ADMIN_SECRET, quick: !(body.data.full && c.req.header("x-admin") === process.env.ADMIN_SECRET) });
+    if (!admin) {
+      const caller = granted?.caller;
+      void logEvent("check", { src: srcOf(c), anon: caller?.kind === "anon" ? caller.id : (c.req.header("x-ghosted-anon") ?? null), userId: caller && caller.kind !== "anon" ? caller.user.id : null, meta: { verdict: r.verdict, source: body.data.page?.source ?? "site", posting_id: r.posting_id } });
+    }
     return c.json(quota ? { ...r, quota } : r);
   } catch (e) {
     if (granted) await refund(granted.caller, granted.key).catch(() => {});   // our failure, not their check

@@ -11,6 +11,7 @@ import { payments } from "./routes/payments.js";
 import { whatsapp } from "./routes/whatsapp.js";
 import { preview } from "./routes/preview.js";
 import { check } from "./routes/check.js";
+import { events } from "./routes/funnel.js";
 import { admin } from "./routes/admin.js";
 import { snapshotDue } from "./engine/ghost/index.js";
 
@@ -19,7 +20,7 @@ app.use("*", logger());
 const origins = [...env.appOrigin.split(",").map((o) => o.trim()).filter(Boolean), "https://notaghost.jobs", "https://www.notaghost.jobs", "https://notaghost-web.onrender.com", "http://localhost:5173"];
 app.use("/admin/*", cors({ origin: "*", allowHeaders: ["x-admin", "content-type"], allowMethods: ["GET", "POST", "OPTIONS"] }));  // secret header is the gate
 // the browser extension calls /check from chrome-extension:// origins
-app.use("*", cors({ origin: (o) => (o && (origins.includes(o) || /^(chrome|moz)-extension:\/\//.test(o)) ? o : origins[0]), allowHeaders: ["authorization", "content-type", "x-admin", "x-ghosted-anon"] }));
+app.use("*", cors({ origin: (o) => (o && (origins.includes(o) || /^(chrome|moz)-extension:\/\//.test(o)) ? o : origins[0]), allowHeaders: ["authorization", "content-type", "x-admin", "x-ghosted-anon", "x-ghosted-src-first", "x-ghosted-src-last"] }));
 
 app.get("/health", async (c) => {
   const { error } = await db.from("users").select("id", { count: "exact", head: true });
@@ -43,6 +44,7 @@ app.route("/payments", payments);
 app.route("/whatsapp", whatsapp);
 app.route("/preview", preview);
 app.route("/check", check);
+app.route("/events", events);
 app.route("/admin", admin);
 
 app.onError((err, c) => {

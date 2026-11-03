@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db, activePlan, currentResume, type User, type Product } from "../lib/db.js";
 import { currentParsedResume } from "../lib/resumeReady.js";
+import { srcOf, logEvent } from "../lib/src.js";
 import { requireUser } from "../lib/auth.js";
 import { runShot } from "../engine/worker.js";
 import { env } from "../lib/env.js";
@@ -75,6 +76,7 @@ shots.post("/", async (c) => {
   if (error) return c.json({ error: error.message }, 500);
 
   await db.from("plans").update({ shots_used: plan.shots_used + 1 }).eq("id", plan.id);
+  void logEvent("shot", { src: srcOf(c), userId: u.id, meta: { shot_id: shot.id, product } });
   void runShot(shot.id);
   return c.json({ shot, remaining: plan.shots_total - plan.shots_used - 1 });
 });
