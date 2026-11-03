@@ -96,7 +96,7 @@ async function handle(m: any) {
   const g = await gate(caller, key);
   if (!g.allowed) {
     const token = await createSession(user.id);
-    await send(from, `That’s your ${g.limit} checks for today. Sharpen, Build or Radar makes them unlimited — and shows you why they’d skip you.\n\n${SITE}/app.html#/sharpen?t=${token}&src=wa`);
+    await sendCard(from, { body: `That’s your ${g.limit} free checks for today.\n\nSharpen, Build or Radar makes them unlimited — and shows you why they’d skip you.`, button: "Make it unlimited", url: `${SITE}/app.html#/sharpen?t=${token}&src=wa`, footer: "Ghosted · notaghost.jobs" });
     return;
   }
   let r: CheckResult;
@@ -110,12 +110,13 @@ async function handle(m: any) {
     return;
   }
   const token = await createSession(user.id);
-  await send(from, format(r, token, g));
+  await sendCard(from, format(r, token, g));
 }
 
 /** The card, as a WhatsApp message: verdict + count, three facts (positives first on a Real, flags first otherwise),
  *  one hook that only the link answers. Mirrors the Ghost Meter card; nothing here is invented. */
-function format(r: CheckResult, token: string, g: { used: number; limit: number | null }): string {
+type Card = { body: string; button: string; url: string; footer?: string };
+function format(r: CheckResult, token: string, g: { used: number; limit: number | null }): Card {
   const bad = r.signals.filter((s) => s.kind === "bad").sort((a, b) => b.pts - a.pts);
   const ok = r.signals.filter((s) => s.kind === "ok");
   const line = (s: { text: string; strong?: string; tail?: string }) => tidy([s.text, s.strong, s.tail].filter(Boolean).join(" "));
@@ -129,13 +130,14 @@ function format(r: CheckResult, token: string, g: { used: number; limit: number 
   const head = r.verdict === "Real" ? `✅ *Real* — ${r.clear} of ${r.checks_run} checks clear`
     : r.verdict === "Caution" ? `⚠️ *Caution* — ${r.flags} of ${r.checks_run} checks flagged`
     : `⛔ *Ghost* — don’t spend time here`;
-  const hook = r.verdict === "Ghost"
-    ? "*Radar* shows you only the real ones, the day they appear ↓\n" + radar
+  // the hook is a sentence; the button carries the link (WhatsApp button labels are capped at 20 characters)
+  const [hook, button, url] = r.verdict === "Ghost"
+    ? ["*Don’t spend time here.*\nRadar shows you only the real ones, the day they appear.", "See real roles", radar]
     : r.verdict === "Real"
-    ? "*They’re hiring. Will they see you?*\nYour résumé against what they screen for — what you say, what you don’t, and the one line that would change it ↓\n" + check
-    : "*Check before you apply.*\nEvery check we ran, and whether your résumé clears the ones that matter ↓\n" + check;
-  const left = g.limit == null ? "" : "\n\n_" + Math.max(0, g.limit - g.used) + " free checks left today_";
-  return [head, where, "", picks.join("\n"), "", hook].join("\n") + left;
+    ? ["*They’re hiring. Will they see you?*\nYour résumé against what they screen for — what you say, what you don’t, and the one line that would change it.", "Sharpen this job", check]
+    : ["*Check before you apply.*\nEvery check we ran, and whether your résumé clears the ones that matter.", "See every check", check];
+  const footer = g.limit == null ? "Ghosted · notaghost.jobs" : `${Math.max(0, g.limit - g.used)} free checks left today · Ghosted`;
+  return { body: [head, where, "", picks.join("\n"), "", hook].join("\n"), button, url, footer };
 }
 /** Card lines read as facts, not accusations: "Created 145 days ago in amazon — the page says…" → "In amazon’s system for 145 days; the page says…". */
 /** Card lines read as facts, not accusations. "Created 145 days ago in amazon — the page says “1 week ago”" becomes
@@ -169,12 +171,22 @@ async function callerFor(user: any): Promise<Caller> {
   return s || b || r ? { kind: "plan", user } : { kind: "user", user };
 }
 
-async function graph(path: string, body: unknown) {
-  if (!env.waToken || !env.waPhoneId) { trace("graph:unconfigured", { token: !!env.waToken, phone: !!env.waPhoneId }); console.error("[whatsapp] not configured"); return; }
+async function graph(path: string, body: unknown): Promise<boolean> {
+  if (!env.waToken || !env.waPhoneId) { trace("graph:unconfigured", { token: !!env.waToken, phone: !!env.waPhoneId }); console.error("[whatsapp] not configured"); return false; }
   const res = await fetch(`${GRAPH}/${env.waPhoneId}/${path}`, { method: "POST", headers: { authorization: `Bearer ${env.waToken}`, "content-type": "application/json" }, body: JSON.stringify(body) });
   const text = await res.text();
   trace(res.ok ? "graph:ok" : "graph:error", `${path} ${res.status} ${text.slice(0, 300)}`);
   if (!res.ok) console.error("[whatsapp] graph", res.status, text.slice(0, 300));
+  return res.ok;
 }
 const send = (to: string, text: string) => graph("messages", { messaging_product: "whatsapp", to, type: "text", text: { body: text.slice(0, 4000), preview_url: false } });
+/** A card with one button. WhatsApp's interactive "cta_url" message: the body reads like a message, the link sits behind a
+ *  button and is never printed (a long signed URL in chat looks like phishing). Limits: body 1024, footer 60, label 20.
+ *  If Meta refuses the interactive form for any reason, the same card goes as text with the link on its own line. */
+async function sendCard(to: string, c: Card) {
+  const ok = await graph("messages", { messaging_product: "whatsapp", to, type: "interactive", interactive: {
+    type: "cta_url", body: { text: c.body.slice(0, 1024) }, ...(c.footer ? { footer: { text: c.footer.slice(0, 60) } } : {}),
+    action: { name: "cta_url", parameters: { display_text: c.button.slice(0, 20), url: c.url } } } });
+  if (!ok) await send(to, `${c.body}\n\n${c.url}`);
+}
 const markRead = (id: string) => graph("messages", { messaging_product: "whatsapp", status: "read", message_id: id });
