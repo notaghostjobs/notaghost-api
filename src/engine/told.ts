@@ -14,7 +14,8 @@ export function gapsOf(matches: Match[]): Gap[] {
   const base = reachable(matches, true);
   const pool = matches.filter((m) => m.bucket === "missing" || m.told);
   pool.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "must" ? -1 : 1));
-  return pool.slice(0, 5).map((m) => ({
+  // every missing requirement is asked, musts first — nothing is decided for the person by leaving one out
+  return pool.map((m) => ({
     requirement: m.requirement, kind: m.kind,
     weight: m.told ? Math.max(0, base - reachable(matches.map((x) => (x.requirement === m.requirement ? { ...x, bucket: "missing" as const, told: false, sayable: false } : x)), true)) : Math.max(0, reachable(flip(matches, m.requirement), true) - base),
     why: m.suggestion || "",
@@ -33,7 +34,7 @@ export async function fillOptions(matches: Match[]): Promise<Match[]> {
   const r = await json<{ items: { id: number; options: string[] }[] }>(
     `For EACH numbered job requirement, write THREE short résumé clauses describing three different, realistic ways a candidate might genuinely have done it. Rules: each starts with a past-tense verb, 6–12 words, states the requirement's core activity in plain words, names NO employer, NO number and NO outcome (the candidate adds those). The three must differ in kind of involvement (e.g. owned it / partnered on it / built it), not in wording. Plain, specific, screener-readable. Answer every id.`,
     `REQUIREMENTS:\n${JSON.stringify(need.map((m, i) => ({ id: i + 1, requirement: m.requirement })))}\n\nReturn: {items:[{id, options:[a,b,c]}]}`,
-    1500, FAST);
+    3000, FAST);   // enough for every missing requirement on a long posting (≈60 tokens per item)
   const by = new Map<string, string[]>();
   for (const it of r.items ?? []) { const m = need[Number(it.id) - 1]; if (m) by.set(m.requirement, (it.options ?? []).map((o) => String(o).trim().replace(/[.。]+$/, "")).filter(Boolean).slice(0, 3)); }
   return matches.map((m) => (by.has(m.requirement) ? { ...m, options: by.get(m.requirement) } : m));
