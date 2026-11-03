@@ -189,9 +189,10 @@ Keep strings short.`,
     `URL: ${url}\n\nKNOWN FIELDS: ${JSON.stringify({ title: raw.title, company: raw.company, location: raw.location, posted_text: raw.posted_text, applicants: raw.applicants, apply_url: raw.apply_url })}\n\nPAGE TEXT:\n${raw.text.slice(0, 14000)}\n\nReturn: {title, company, location, locations_count, posted_text, posted_days, applicants, pay_stated, templated, evergreen, kitchen_sink, apply_route, apply_domain, contact_present, agency, scam_tells[], poster}`,
     1400, FAST
   );
-  // source-structured fields win over the model's reading
+  // source-structured fields win over the model's reading; boards leave stray spaces around punctuation ("Businesses , Retail")
+  const neat = (t: string | null | undefined) => (t ?? "").replace(/\s+([,;:])/g, "$1").replace(/\s{2,}/g, " ").trim();
   return {
-    title: raw.title ?? r.title ?? "", company: raw.company ?? r.company ?? "", location: raw.location ?? r.location ?? "",
+    title: neat(raw.title ?? r.title), company: neat(raw.company ?? r.company), location: neat(raw.location ?? r.location),
     locations_count: Math.max(1, Number(r.locations_count) || 1),
     posted_text: raw.posted_text ?? r.posted_text ?? null,
     posted_days: raw.posted_days ?? (r.posted_days == null ? null : Number(r.posted_days)),
