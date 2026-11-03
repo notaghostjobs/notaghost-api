@@ -136,7 +136,8 @@ function format(r: CheckResult, token: string, g: { used: number; limit: number 
     : r.verdict === "Real"
     ? ["*They’re hiring. Will they see you?*\nYour résumé against what they screen for — what you say, what you don’t, and the one line that would change it.", "Sharpen this job", check]
     : ["*Check before you apply.*\nEvery check we ran, and whether your résumé clears the ones that matter.", "See every check", check];
-  const footer = g.limit == null ? "Ghosted · notaghost.jobs" : `${Math.max(0, g.limit - g.used)} free checks left today · Ghosted`;
+  // testers run on a large allowance; "499 free checks left" reads as a mistake, so only a real daily limit is shown
+  const footer = g.limit == null || g.limit > 50 ? "Ghosted · notaghost.jobs" : `${Math.max(0, g.limit - g.used)} free checks left today · Ghosted`;
   return { body: [head, where, "", picks.join("\n"), "", hook].join("\n"), button, url, footer };
 }
 /** Card lines read as facts, not accusations: "Created 145 days ago in amazon — the page says…" → "In amazon’s system for 145 days; the page says…". */

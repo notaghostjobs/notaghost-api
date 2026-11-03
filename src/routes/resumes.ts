@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { db, currentResume, type User } from "../lib/db.js";
+import { currentParsedResume } from "../lib/resumeReady.js";
 import { requireUser } from "../lib/auth.js";
 import { processResume } from "../engine/worker.js";
 
@@ -50,7 +51,7 @@ resumes.post("/", async (c) => {
 });
 
 resumes.get("/current", async (c) => {
-  const data = await currentResume(c.get("user").id, "id, filename, parsed, created_at");
+  const data = await currentParsedResume<{ id: string; parsed: any }>(c.get("user").id, "id, filename, parsed, created_at");
   return c.json({ resume: data });
 });
 
