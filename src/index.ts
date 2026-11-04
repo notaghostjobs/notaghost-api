@@ -1,3 +1,4 @@
+import { doc } from "./routes/doc.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -40,6 +41,7 @@ app.get("/health", async (c) => {
 app.route("/auth", auth);
 app.route("/resumes", resumes);
 app.route("/shots", shots);
+app.route("/d", doc);
 app.route("/payments", payments);
 app.route("/whatsapp", whatsapp);
 app.route("/preview", preview);

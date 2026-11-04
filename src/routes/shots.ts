@@ -1,3 +1,4 @@
+import { docLink } from "./doc.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { db, activePlan, currentResume, type User, type Product } from "../lib/db.js";
@@ -86,9 +87,7 @@ shots.get("/:id/pdf-link", async (c) => {
   const { data } = await db.from("shots").select("output").eq("id", c.req.param("id")).eq("user_id", c.get("user").id).maybeSingle();
   const path = (data?.output as { pdf_path?: string } | null)?.pdf_path;
   if (!path) return c.json({ error: "Not ready." }, 404);
-  const signed = await db.storage.from("outputs").createSignedUrl(path, 3600, { download: "resume-sharpened.pdf" });
-  if (signed.error || !signed.data?.signedUrl) return c.json({ error: signed.error?.message ?? "No link." }, 500);
-  return c.json({ url: signed.data.signedUrl });
+  return c.json({ url: docLink(c.req.param("id")) });
 });
 
 shots.get("/:id/pdf", async (c) => {
