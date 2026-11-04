@@ -26,7 +26,7 @@ export interface Plan {
   expires_at: string;
 }
 
-/** Active plan = not expired and shots remaining. "25 shots or 30 days, whichever first." */
+/** Active plan = not expired and shots remaining. "10 shots or 10 days, whichever first." */
 export async function activePlan(userId: string, product: Product): Promise<Plan | null> {
   const { data } = await db
     .from("plans")
