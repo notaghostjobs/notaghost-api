@@ -2,7 +2,7 @@
 // conversation (a reply to a user-started message needs no template and is free). The user's WhatsApp number is a
 // verified phone, so the account exists from the first message and the link we send signs them in — no OTP wall.
 // Quota is the signed-in quota (section 7 of the rule book). Nothing outbound is ever sent unprompted.
-import { docLink } from "./doc.js";
+import { docLink, docToken } from "./doc.js";
 import { Hono } from "hono";
 import { stampUser, srcOfUser, logEvent, untagMessage } from "../lib/src.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -231,7 +231,7 @@ export async function notifyDocumentReady(userId: string, shotId: string, d: { t
     const to = String(u?.phone ?? "").replace(/\D/g, ""); if (!to) return;
     await graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name: "ghosted_document_ready", language: { code: "en" }, components: [
       { type: "body", parameters: [{ type: "text", text: d.title.slice(0, 60) }, { type: "text", text: d.company.slice(0, 40) }, { type: "text", text: String(d.before) }, { type: "text", text: String(d.after) }] },
-      { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: shotId }] },
+      { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: docToken(shotId) }] },
     ] } });
     await graph("messages", { messaging_product: "whatsapp", to, type: "document", document: { link: docLink(shotId), filename: d.filename, caption: `Your résumé for ${d.title} at ${d.company} — ${d.after}% fit, as promised.` } });
   } catch (e: any) { console.error("[whatsapp] document ready", e?.message ?? e); }

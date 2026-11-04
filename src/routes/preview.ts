@@ -21,6 +21,28 @@ export function scores(matches: Match[]) {
 }
 
 /** Free step: read the posting, match against the current résumé. No shot spent. */
+
+/** The upload page knows the posting before the résumé is in: read and parse it now, so the fit check only has to match. */
+preview.post("/warm", async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  const url = typeof b?.posting_url === "string" ? b.posting_url : "";
+  if (!/^https?:\/\//.test(url)) return c.json({ ok: false });
+  void (async () => {
+    try {
+      const url_hash = hashUrl(url);
+      const { data: cached } = await db.from("postings").select("id, parsed").eq("url_hash", url_hash).maybeSingle();
+      if (cached?.parsed) return;
+      let id = cached?.id ?? null, text = "";
+      if (!cached) { text = await fetchPosting(url); const { data: p } = await db.from("postings").insert({ url, url_hash, raw_text: text }).select("id").single(); id = p?.id ?? null; }
+      else { const { data: r } = await db.from("postings").select("raw_text").eq("id", cached.id).single(); text = r?.raw_text ?? ""; }
+      if (!id || text.length < 80) return;
+      const posting = await parsePosting(text);
+      await db.from("postings").update({ company: posting.company, title: posting.title, parsed: posting }).eq("id", id);
+    } catch { /* the fit check does it the slow way */ }
+  })();
+  return c.json({ ok: true });
+});
+
 preview.post("/", async (c) => {
   const u = c.get("user");
   const body = z.object({ posting_url: z.string().url().optional(), posting_text: z.string().min(80).optional() })

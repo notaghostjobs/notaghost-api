@@ -1,14 +1,21 @@
 import { Hono } from "hono";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { env } from "../lib/env.js";
 import { db } from "../lib/db.js";
 
 /** Short-lived, signed links to a delivered PDF on our own domain (api.notaghost.jobs/d/…), so a phone's address bar
  *  shows notaghost, not a storage bucket. The key lives only in this process; a restart retires old links, which is fine:
  *  links last an hour and WhatsApp fetches the file the moment it is sent. */
-const KEY = randomBytes(32);
+// derived from a secret that already lives in the environment, so links survive a restart
+const KEY = createHash("sha256").update("ghosted-doc-links:" + (process.env.DOC_LINK_SECRET || env.anthropicKey || "dev")).digest();
 const BASE = "https://api.notaghost.jobs";
 const sig = (id: string, exp: number) => createHmac("sha256", KEY).update(`${id}.${exp}`).digest("base64url").slice(0, 32);
 
+/** The token the WhatsApp "Open document" button carries: id.exp.sig (the template's URL suffix). Thirty days. */
+export function docToken(shotId: string, ttlSec = 30 * 86400) {
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  return `${shotId}.${exp}.${sig(shotId, exp)}`;
+}
 export function docLink(shotId: string, ttlSec = 3600) {
   const exp = Math.floor(Date.now() / 1000) + ttlSec;
   return `${BASE}/d/${shotId}?e=${exp}&s=${sig(shotId, exp)}`;

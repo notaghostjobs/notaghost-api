@@ -6,6 +6,7 @@ import { resumePdf } from "./pdf.js";
 import { createHash } from "node:crypto";
 import { fit, target } from "../engine/fit.js";
 import { addedFacts } from "./told.js";
+import { takeDraft, draftKey } from "./prewarm.js";
 
 /** Called right after upload. Extracts + parses once; stores text and profile. */
 export async function processResume(resumeId: string) {
@@ -72,7 +73,7 @@ export async function runShot(shotId: string) {
     // rewrite may state it (verbatim, as the vetted line), the verifier and the number rule accept it, and nothing else changes
     const told = pre ? addedFacts(pre.matches) : [];
     const source: ResumeProfile = told.length ? { ...profile, candidate_added_facts: told } : profile;
-    const out = await runSharpen(source, postingText, undefined, pre);
+    const out = await runSharpen(source, postingText, undefined, pre, undefined, pre && input.preview_id ? takeDraft(draftKey(input.preview_id, pre.matches)) : null);
     if (postingId) await db.from("postings").update({ company: out.posting.company, title: out.posting.title, parsed: out.posting }).eq("id", postingId);
 
     const pdf = await resumePdf(out.rewrite, profile);

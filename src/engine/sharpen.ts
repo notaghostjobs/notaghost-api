@@ -242,7 +242,7 @@ export async function matchAndGrade(resume: ResumeProfile, posting: PostingProfi
   return { ...r, matches: await vetLines(resume, r.matches) };
 }
 
-export async function runSharpen(resume: ResumeProfile, postingText: string, onStage?: (s: string) => void, pre?: { posting: PostingProfile; matches: Match[] }, v2: boolean = v2On()) {
+export async function runSharpen(resume: ResumeProfile, postingText: string, onStage?: (s: string) => void, pre?: { posting: PostingProfile; matches: Match[] }, v2: boolean = v2On(), draftP: Promise<Rewrite> | null = null) {
   const t = (label: string) => { onStage?.(label); return Date.now(); };
   const timing: Record<string, number> = {};
   let t0 = t("Reading the posting");
@@ -251,7 +251,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
 
   t0 = t("Matching and writing");
   const { matches } = pre ? { matches: pre.matches } : await matchAndGrade(resume, posting);
-  const firstDraft = await rewriteResume(resume, posting, MODEL, matches);
+  const firstDraft = draftP ? await draftP.catch(() => rewriteResume(resume, posting, MODEL, matches)) : await rewriteResume(resume, posting, MODEL, matches);
   timing.write = Date.now() - t0;
   let rewrite = tidy(firstDraft);
 

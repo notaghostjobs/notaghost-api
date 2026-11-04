@@ -1,5 +1,9 @@
 import { docLink } from "./doc.js";
 import { Hono } from "hono";
+import { prewarm, draftKey } from "../engine/prewarm.js";
+import { rewriteResume, type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
+import { MODEL } from "../engine/claude.js";
+import { addedFacts } from "../engine/told.js";
 import { z } from "zod";
 import { db, activePlan, currentResume, type User, type Product } from "../lib/db.js";
 import { currentParsedResume } from "../lib/resumeReady.js";
@@ -80,6 +84,24 @@ shots.post("/", async (c) => {
   void logEvent("shot", { src: srcOf(c), userId: u.id, meta: { shot_id: shot.id, product } });
   void runShot(shot.id);
   return c.json({ shot, remaining: plan.shots_total - plan.shots_used - 1 });
+});
+
+
+// Checkout opened: start the first draft now, so the shot after payment skips its slowest step. Harmless if never used.
+shots.post("/prewarm", async (c) => {
+  const u = c.get("user");
+  const b = await c.req.json().catch(() => ({}));
+  const pid = typeof b?.preview_id === "string" ? b.preview_id : "";
+  if (!pid) return c.json({ ok: false });
+  const { data: pv } = await db.from("previews").select("resume_id, posting, matches").eq("id", pid).eq("user_id", u.id).maybeSingle();
+  if (!pv?.posting || !pv?.matches) return c.json({ ok: false });
+  const { data: res } = await db.from("resumes").select("parsed").eq("id", pv.resume_id).maybeSingle();
+  if (!res?.parsed) return c.json({ ok: false });
+  const matches = pv.matches as Match[];
+  const told = addedFacts(matches);
+  const source: ResumeProfile = told.length ? { ...(res.parsed as ResumeProfile), candidate_added_facts: told } : (res.parsed as ResumeProfile);
+  const started = prewarm(draftKey(pid, matches), () => rewriteResume(source, pv.posting as PostingProfile, MODEL, matches));
+  return c.json({ ok: true, started });
 });
 
 /** A one-hour link to the PDF for phones: Safari and in-app browsers cannot save a blob, but they can open a URL. */
