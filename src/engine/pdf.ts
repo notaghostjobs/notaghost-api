@@ -79,7 +79,9 @@ header .contact i{ display:inline-flex; width:1.05em; height:1.05em; color:var(-
 header .contact i svg{ width:100%; height:100%; }
 section{ margin-top:calc(13pt * var(--s)); }
 h2{ break-after:avoid; }
-.role, .role-h, li{ break-inside:avoid; }
+.role-h, li{ break-inside:avoid; }
+.role-h{ break-after:avoid; }
+.role ul li:first-child{ break-before:avoid; }
 h2{ font-size:calc(8.2pt * var(--s)); font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:var(--mid);
     padding-bottom:calc(3pt * var(--s)); border-bottom:0.9pt solid var(--rule); margin-bottom:calc(7pt * var(--s)); }
 p.sum{ color:var(--ink); }
@@ -153,8 +155,15 @@ export async function htmlToPdf(html: string): Promise<Buffer> {
       }
       return pages;
     })()`);
-    void chosen;
-    const pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true });
+    // the measured height ignores page-break gaps; print, count, and tighten until the printed pages match the plan
+    const countPages = (b: Uint8Array) => (Buffer.from(b).toString("latin1").match(/\/Type\s*\/Page[^s]/g) ?? []).length;
+    let pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true });
+    for (let i = 0; i < 6 && countPages(pdf) > chosen; i++) {
+      const ok = await page.evaluate(`(() => { const r = document.documentElement; const s = parseFloat(getComputedStyle(r).getPropertyValue("--s")) || 1; if (s <= 0.82) return false;
+        r.style.setProperty("--s", String(s - 0.03)); document.querySelectorAll("section").forEach((x) => { x.style.marginTop = ""; }); return true; })()`);
+      if (!ok) break;
+      pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true });
+    }
     return Buffer.from(pdf);
   } finally {
     await page.close();
