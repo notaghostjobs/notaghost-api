@@ -81,6 +81,24 @@ whatsapp.post("/webhook", async (c) => {
 const seen = new Map<string, number>();   // Meta re-delivers on any hiccup; a message id is handled once
 function once(id: string) { const now = Date.now(); for (const [k, t] of seen) if (now - t > 600e3) seen.delete(k); if (seen.has(id)) return false; seen.set(id, now); return true; }
 
+// 20 minutes after the opener with no link back: one nudge, once, with three roles live on employers’ own systems today.
+const nudges = new Map<string, ReturnType<typeof setTimeout>>();
+function cancelNudge(from: string) { const t = nudges.get(from); if (t) { clearTimeout(t); nudges.delete(from); } }
+function scheduleNudge(from: string) {
+  cancelNudge(from);
+  nudges.set(from, setTimeout(async () => {
+    nudges.delete(from);
+    try {
+      const { data } = await db.from("sightings").select("title,company_name,url").eq("blr", true).is("gone_at", null).not("url", "is", null).not("title", "is", null).not("source", "in", "(linkedin,naukri)")
+        .order("last_seen", { ascending: false }).limit(60);
+      const seenCo = new Set<string>(); const picks: any[] = [];
+      for (const r of data ?? []) { const co = String(r.company_name ?? "").trim(); if (!co || seenCo.has(co) || /\b(senior|lead|principal|director|manager|head|vp|staff)\b/i.test(r.title)) continue; seenCo.add(co); picks.push(r); if (picks.length === 3) break; }
+      const lines = picks.map((r) => `• ${String(r.title).slice(0, 60)} · ${r.company_name}\n${r.url}`).join("\n\n");
+      await send(from, "Still here whenever you find one." + (lines ? `\n\nIf it helps, these three are live on employers’ own systems in Bengaluru right now — send any one back and I’ll check it:\n\n${lines}` : "") + "\n\n_Ghosted · notaghost.jobs_");
+    } catch (e: any) { console.error("[whatsapp] nudge", e?.message ?? e); }
+  }, 20 * 60e3));
+}
+
 async function handle(m: any) {
   if (!m?.id || !m?.from || !once(m.id)) return;
   const from: string = String(m.from).replace(/\D/g, "");                 // E.164 digits without '+', e.g. 9198765...
@@ -90,13 +108,15 @@ async function handle(m: any) {
   const { text, tag } = untagMessage(rawText);
   const url = firstUrl(text);
   if (!url) {
-    // first contact from the site arrives as "I’m done being ghosted"; anything else without a link gets the short version
-    const opener = /ghosted/i.test(text) && /done|tired|enough|real jobs/i.test(text);
+    // first contact from the site arrives as the opener; anything else without a link gets the short ask
+    const opener = /done applying into the dark|show me what.s real/i.test(text);
     await send(from, opener
-      ? "You’ve come to the right place. Let’s end that together.\n\nSend me any job link — LinkedIn, Naukri, a careers page — and in about eight seconds I’ll tell you if the role is real, with every reason.\n\nTip: on any job, tap *Share → WhatsApp → Ghosted*. No copying needed.\n\n_Ghosted · notaghost.jobs_"
-      : "Send me a job link — LinkedIn, Naukri or a careers page — and I’ll tell you if the role is real.\n\nTip: on any job, tap *Share → WhatsApp → Ghosted*.\n\n_Ghosted · notaghost.jobs_");
+      ? "You’ve come to the right place. Let’s end that together.\n\nSend me any job link and in about eight seconds I’ll tell you if the role is real — with every reason.\n\nFastest way: in LinkedIn or Naukri, on the job you’re looking at, tap *Share → WhatsApp → Ghosted*. The link lands here on its own.\n\n_Ghosted · notaghost.jobs_"
+      : "I need the link itself — on the job, tap *Share → Copy link*, then paste it here. LinkedIn, Naukri or any careers page.\n\n_Ghosted · notaghost.jobs_");
+    if (opener) scheduleNudge(from);
     return;
   }
+  cancelNudge(from);
   const user = await userFor(from);
   await stampUser(user.id, { first: tag ?? "wa-direct", last: tag ?? "wa-direct" });
   const src = await srcOfUser(user.id);
