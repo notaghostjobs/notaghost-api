@@ -81,6 +81,16 @@ shots.post("/", async (c) => {
   return c.json({ shot, remaining: plan.shots_total - plan.shots_used - 1 });
 });
 
+/** A one-hour link to the PDF for phones: Safari and in-app browsers cannot save a blob, but they can open a URL. */
+shots.get("/:id/pdf-link", async (c) => {
+  const { data } = await db.from("shots").select("output").eq("id", c.req.param("id")).eq("user_id", c.get("user").id).maybeSingle();
+  const path = (data?.output as { pdf_path?: string } | null)?.pdf_path;
+  if (!path) return c.json({ error: "Not ready." }, 404);
+  const signed = await db.storage.from("outputs").createSignedUrl(path, 3600, { download: "resume-sharpened.pdf" });
+  if (signed.error || !signed.data?.signedUrl) return c.json({ error: signed.error?.message ?? "No link." }, 500);
+  return c.json({ url: signed.data.signedUrl });
+});
+
 shots.get("/:id/pdf", async (c) => {
   const { data } = await db.from("shots").select("output").eq("id", c.req.param("id")).eq("user_id", c.get("user").id).maybeSingle();
   const path = (data?.output as { pdf_path?: string } | null)?.pdf_path;

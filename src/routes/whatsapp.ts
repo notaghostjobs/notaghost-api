@@ -221,4 +221,19 @@ async function sendCard(to: string, c: Card) {
     action: { name: "cta_url", parameters: { display_text: c.button.slice(0, 20), url: c.url } } } });
   if (!ok) await send(to, `${c.body}\n\n${c.url}`);
 }
+
+/** After a shot lands: the approved "document ready" template (works outside the 24-hour window) and the PDF itself as a
+ *  WhatsApp document, so the phone has the file where the person already is. Both best-effort; the page is the source of truth. */
+export async function notifyDocumentReady(userId: string, shotId: string, d: { title: string; company: string; before: number; after: number; pdf_path: string; filename: string }) {
+  try {
+    const { data: u } = await db.from("users").select("phone").eq("id", userId).maybeSingle();
+    const to = String(u?.phone ?? "").replace(/\D/g, ""); if (!to) return;
+    await graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name: "ghosted_document_ready", language: { code: "en" }, components: [
+      { type: "body", parameters: [{ type: "text", text: d.title.slice(0, 60) }, { type: "text", text: d.company.slice(0, 40) }, { type: "text", text: String(d.before) }, { type: "text", text: String(d.after) }] },
+      { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: shotId }] },
+    ] } });
+    const signed = await db.storage.from("outputs").createSignedUrl(d.pdf_path, 3600);
+    if (signed.data?.signedUrl) await graph("messages", { messaging_product: "whatsapp", to, type: "document", document: { link: signed.data.signedUrl, filename: d.filename, caption: `Your résumé for ${d.title} at ${d.company} — ${d.after}% fit, as promised.` } });
+  } catch (e: any) { console.error("[whatsapp] document ready", e?.message ?? e); }
+}
 const markRead = (id: string) => graph("messages", { messaging_product: "whatsapp", status: "read", message_id: id });

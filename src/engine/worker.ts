@@ -1,3 +1,4 @@
+import { notifyDocumentReady } from "../routes/whatsapp.js";
 import { db } from "../lib/db.js";
 import { extractText, fetchPosting } from "./extract.js";
 import { parseResume, runSharpen, type ResumeProfile, type PostingProfile, type Match } from "./sharpen.js";
@@ -89,6 +90,7 @@ export async function runShot(shotId: string) {
       status: "done", posting_id: postingId, done_at: new Date().toISOString(),
       output: { ...out, before, after, promised, pdf_path, told: told.length ? pre!.matches.filter((m) => m.told).map((m) => ({ requirement: m.requirement, line: m.line, fact: m.evidence })) : undefined },
     }).eq("id", shotId);
+    void notifyDocumentReady(shot.user_id, shotId, { title: out.posting?.title ?? pre?.posting?.title ?? "the role", company: out.posting?.company ?? pre?.posting?.company ?? "", before, after, pdf_path, filename: `${String((profile as any)?.name ?? "resume").replace(/\s+/g, "-")}-${String(out.posting?.company ?? "sharpened").replace(/\s+/g, "-")}.pdf` });
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
     console.error("[shot]", shotId, raw);
