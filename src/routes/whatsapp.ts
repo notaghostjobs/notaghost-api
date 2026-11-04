@@ -90,7 +90,11 @@ async function handle(m: any) {
   const { text, tag } = untagMessage(rawText);
   const url = firstUrl(text);
   if (!url) {
-    await send(from, "Send me a job link — LinkedIn, Naukri or a careers page — and I’ll tell you if the role is real.\n\n_Ghosted · notaghost.jobs_");
+    // first contact from the site arrives as "I’m done being ghosted"; anything else without a link gets the short version
+    const opener = /ghosted/i.test(text) && /done|tired|enough|real jobs/i.test(text);
+    await send(from, opener
+      ? "You’ve come to the right place. Let’s end that together.\n\nSend me any job link — LinkedIn, Naukri, a careers page — and in about eight seconds I’ll tell you if the role is real, with every reason.\n\nTip: on any job, tap *Share → WhatsApp → Ghosted*. No copying needed.\n\n_Ghosted · notaghost.jobs_"
+      : "Send me a job link — LinkedIn, Naukri or a careers page — and I’ll tell you if the role is real.\n\nTip: on any job, tap *Share → WhatsApp → Ghosted*.\n\n_Ghosted · notaghost.jobs_");
     return;
   }
   const user = await userFor(from);
