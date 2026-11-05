@@ -105,7 +105,7 @@ export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, mo
 1. NEVER invent. No new employers, titles, dates, degrees, tools, numbers or outcomes. Every bullet must be traceable to the original résumé.
 2. The posting's priorities drive the structure. Whatever the role is built around (its first three "own/responsibilities" items) must be visible in the headline area, the summary, the relevant block and the first bullet of the most recent role — if the candidate has evidence for it anywhere, including older roles, ventures or projects, pull it forward. Mirror the posting's language where it is true of the candidate. Cut bullets that don't serve this role (list what you cut in changes). A venture or side project that is the candidate's best evidence for the role moves UP, into or next to Experience, not buried at the end.
 2b. Do not leave generic lines ("collaborated with teams to drive growth") in the two most recent roles; either make them specific from facts elsewhere in the résumé or cut them.
-3. EXPAND, don't pad. Most résumés under-write. Where a bullet compresses real work ("managed P&L for key categories"), unpack it into 2-3 specific bullets using only facts present anywhere in the résumé (summary, competencies, other roles). Each unpacked bullet must still be traceable. Never add numbers, tools or outcomes that aren't in the source. Target: a dense page — 4-6 bullets per recent role, 2-3 for older ones.
+3. EXPAND, don't pad. Most résumés under-write. Where a bullet compresses real work ("managed P&L for key categories"), unpack it into 2-3 specific bullets using only facts present anywhere in the résumé (summary, competencies, other roles). Each unpacked bullet must still be traceable. Never add numbers, tools or outcomes that aren't in the source. Target: a dense page — 4-6 bullets per recent role, 2-3 for older ones. EVERY role keeps its OWN bullets about the work done in THAT role: never leave a role with only a title and dates, never move a role's lines into another role or into an extras block (ventures, technical background). Pulling evidence forward means mentioning it in the summary or relevant block, not stripping it from its role.
 3b. relevant: 3-4 statements, each a complete sentence of at most 28 words, mapping the candidate's proof to the posting's must-haves, in the employer's language (e.g. "Category P&L: ran FMCG & grocery P&L at Ninjacart; 60% of revenue, 5x volume in 100 days"). Only requirements with real evidence — never an absent one.
 3c. extra_sections: keep the résumé's own extra blocks (ventures, certifications, languages) tightened to what serves this role; drop personal details.
 3d. Length: ${resume.pages} page(s) in, ${resume.pages} page(s) out — full pages, not half.
@@ -367,6 +367,9 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     }
   }
   timing.rescore = Date.now() - t0;
+  // never ship a role stripped of its work: any role the original describes keeps at least its share of bullets
+  const restored = restoreRoles(rewrite, resume);
+  if (restored.n) { rewrite = restored.rewrite; broken = checkRules(rewrite, resume, posting); timing.restored = restored.n; console.error("[sharpen] RESTORED ROLE BULLETS", restored.n); }
   return { posting, matches, after_matches, rewrite, verification, broken, needs_review: needs_review || !verification.ok || broken.length > 0, timing, first_pass };
 }
 
@@ -394,5 +397,37 @@ export function placeLines(rw: Rewrite, owed: Match[], resume: ResumeProfile): {
     else next.relevant = [line, ...(next.relevant ?? [])];
     n++;
   }
+  return { rewrite: next, n };
+}
+
+
+/** Every role in the original appears in the rewrite, in the original's order, with at least 4 bullets (two most recent) or
+ *  2 (older) when the original has them. Missing bullets are taken verbatim from the original, so nothing new is claimed;
+ *  bullets a draft moved into "extras" are not double-counted because only bullets not already in the document are added. */
+export function restoreRoles(rw: Rewrite, resume: ResumeProfile): { rewrite: Rewrite; n: number } {
+  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  const key = (r: { company: string; title: string }) => norm(r.company) + "|" + norm(r.title);
+  const next: Rewrite = JSON.parse(JSON.stringify(rw));
+  let n = 0;
+  resume.roles.forEach((orig, i) => {
+    let role = next.roles.find((r) => key(r) === key(orig)) ?? next.roles.find((r) => norm(r.company) === norm(orig.company) && norm(r.start) === norm(orig.start));
+    if (!role) {
+      role = { company: orig.company, title: orig.title, start: orig.start, end: orig.end, bullets: [] };
+      const at = next.roles.findIndex((r) => resume.roles.findIndex((o) => key(o) === key(r)) > i);
+      if (at < 0) next.roles.push(role); else next.roles.splice(at, 0, role);
+      n++;
+    }
+    const min = i < 2 ? 4 : 2;
+    for (const b of orig.bullets) {
+      if (role.bullets.length >= min) break;
+      const core = norm(b).split(" ").slice(0, 8).join(" ");
+      if (!core) continue;
+      if (norm(JSON.stringify(next.roles)).includes(core) || norm(JSON.stringify(next.relevant ?? [])).includes(core)) continue;
+      // a role's own line that a draft moved into an extras block goes back to the role
+      for (const sec of next.extra_sections ?? []) sec.items = sec.items.filter((it) => !norm(it).includes(core));
+      role.bullets.push(b.trim()); n++;
+    }
+  });
+  next.extra_sections = (next.extra_sections ?? []).filter((x) => x.items.length);
   return { rewrite: next, n };
 }
