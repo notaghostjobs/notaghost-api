@@ -72,3 +72,13 @@ export function fingerprint(text: string) {
   return v.map((x) => (x > 0 ? "1" : "0")).join("");
 }
 export function hamming(a: string, b: string) { let d = 0; for (let i = 0; i < 64; i++) if (a[i] !== b[i]) d++; return d; }
+
+/** A search or list page, not one job: no verdict can be honest about it. */
+export function isListingPage(url: string): boolean {
+  const u = url.trim();
+  if (/linkedin\.com\/jobs\/(?:search|search-results|collections)/i.test(u) && !/currentJobId=\d{6,}/i.test(u)) return true;
+  if (/indeed\.[a-z.]+\/(?:jobs|q-)/i.test(u) && !/jk=[0-9a-f]{10,}/i.test(u)) return true;
+  if (/naukri\.com\//i.test(u) && !/\d{8,}/.test(u) && /-jobs(?:-in-|$|\?|\/)/i.test(u)) return true;
+  if (/glassdoor\.[a-z.]+\/Job\/.*SRCH/i.test(u)) return true;
+  return false;
+}

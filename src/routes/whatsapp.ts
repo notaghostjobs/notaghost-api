@@ -11,7 +11,7 @@ import { db, activePlan } from "../lib/db.js";
 import { createSession } from "../lib/auth.js";
 import { gate, refund, type Caller } from "../lib/quota.js";
 import { ghostCheck, type CheckResult } from "../engine/ghost/index.js";
-import { jobKey } from "../engine/ghost/canon.js";
+import { jobKey, isListingPage } from "../engine/ghost/canon.js";
 
 export const whatsapp = new Hono();
 /** The last 50 webhook events and sends, for the read-only audit: did Meta call us, did we reply, what did Graph say. */
@@ -123,6 +123,7 @@ async function handle(m: any) {
   const src = await srcOfUser(user.id);
   void logEvent("wa_in", { src, userId: user.id, meta: { tagged: !!tag } });
   const caller: Caller = await callerFor(user);
+  if (isListingPage(url)) { await send(from, "That link is a search page, not a job. Open the job you want and send me the link from its own page."); return; }
   const key = jobKey(url).key;
   const g = await gate(caller, key);
   if (!g.allowed) {

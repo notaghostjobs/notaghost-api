@@ -4,7 +4,7 @@ import { z } from "zod";
 import { ghostCheck, presentStored, snapshotDue } from "../engine/ghost/index.js";
 import { db } from "../lib/db.js";
 import { identify, gate, refund, type Caller } from "../lib/quota.js";
-import { jobKey } from "../engine/ghost/canon.js";
+import { jobKey, isListingPage } from "../engine/ghost/canon.js";
 import { fingerprint } from "../engine/ghost/canon.js";
 
 export const check = new Hono();
@@ -16,6 +16,7 @@ check.post("/", async (c) => {
     page: z.object({ title: z.string().optional(), company: z.string().optional(), location: z.string().optional(), posted_text: z.string().optional(), applicants: z.number().optional(), apply_url: z.string().optional(), closed: z.boolean().optional(), source: z.enum(["extension", "site"]).optional() }).optional() })
     .refine((b) => b.url || b.text, "Paste a job link or the posting text.").safeParse(await c.req.json());
   if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
+  if (body.data.url && isListingPage(body.data.url)) return c.json({ error: "That link is a search page, not a job. Open the job you want and copy the link from its own page." }, 422);
   // the gate: who is asking, and have they used today's free checks (admin header bypasses, for audits)
   const admin = !!process.env.ADMIN_SECRET && c.req.header("x-admin") === process.env.ADMIN_SECRET;
   let quota: { used: number; limit: number | null } | undefined;
