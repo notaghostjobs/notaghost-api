@@ -16,6 +16,17 @@ export function docToken(shotId: string, ttlSec = 30 * 86400) {
   const exp = Math.floor(Date.now() / 1000) + ttlSec;
   return `${shotId}.${exp}.${sig(shotId, exp)}`;
 }
+/** Signed token for a receipt (WhatsApp "View receipt" button): id.exp.sig, namespaced so a doc token can't open a receipt. */
+export function receiptToken(paymentId: string, ttlSec = 365 * 86400) {
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  return `${paymentId}.${exp}.${sig("r:" + paymentId, exp)}`;
+}
+export function readReceiptToken(tok: string): string | null {
+  const [id, e, s] = tok.split("."); const exp = Number(e);
+  if (!id || !exp || !s || exp < Date.now() / 1000) return null;
+  const want = sig("r:" + id, exp);
+  return s.length === want.length && timingSafeEqual(Buffer.from(s), Buffer.from(want)) ? id : null;
+}
 export function docLink(shotId: string, ttlSec = 3600) {
   const exp = Math.floor(Date.now() / 1000) + ttlSec;
   return `${BASE}/d/${shotId}?e=${exp}&s=${sig(shotId, exp)}`;

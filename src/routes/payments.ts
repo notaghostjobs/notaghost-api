@@ -7,6 +7,8 @@ import Razorpay from "razorpay";
 import { db, currentResume, type User } from "../lib/db.js";
 import { env, PRICES } from "../lib/env.js";
 import { requireUser } from "../lib/auth.js";
+import { notifyReceipt } from "./whatsapp.js";
+import { readReceiptToken } from "./doc.js";
 
 export const payments = new Hono<{ Variables: { user: User } }>();
 
@@ -93,7 +95,7 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
     user_id: pay.user_id, product: pay.product, shots_total: price.shots, resume_name: (cur?.parsed as any)?.name ?? null,
     expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id,
   }).select("*").single();
-  // TODO: receipt PDF in company name -> storage receipts/<id>.pdf; email it
+  if (receipt) void notifyReceipt(pay.user_id, { id: pay.id, receipt_no: String(receipt), amount_paise: pay.amount_paise, product: pay.product, shots: price.shots, days: price.days, list_paise: (price as any).list_paise });
   return plan;
 }
 
@@ -110,6 +112,19 @@ payments.post("/dummy", requireUser, async (c) => {
   const cur = await currentResume<{ parsed: any }>(u.id, "parsed");
   const { data: plan } = await db.from("plans").insert({ user_id: u.id, product: "sharpen", shots_total: price.shots, resume_name: (cur?.parsed as any)?.name ?? null, expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id }).select("*").single();
   return c.json({ ok: true, plan });
+});
+
+/** Public, signed: the receipt page behind WhatsApp's "View receipt" button. */
+payments.get("/receipt/:tok", async (c) => {
+  const id = readReceiptToken(c.req.param("tok"));
+  if (!id) return c.json({ error: "This receipt link has expired." }, 410);
+  const { data: p } = await db.from("payments").select("id, user_id, product, amount_paise, status, receipt_no, paid_at, razorpay_payment_id").eq("id", id).maybeSingle();
+  if (!p || p.status !== "paid") return c.json({ error: "Receipt not found." }, 404);
+  const { data: u } = await db.from("users").select("phone").eq("id", p.user_id).maybeSingle();
+  const ph = String(u?.phone ?? "").replace(/\D/g, "");
+  const price = PRICES[p.product as "sharpen" | "build"] as any;
+  return c.json({ receipt_no: p.receipt_no, paid_at: p.paid_at, amount_paise: p.amount_paise, list_paise: price?.list_paise ?? null,
+    item: `Sharpen, ${price?.shots ?? 10} shots, valid ${price?.days ?? 10} days`, payment_ref: p.razorpay_payment_id, phone: ph ? `+${ph.slice(0, 2)} ••••• ${ph.slice(-4)}` : null });
 });
 
 payments.get("/", requireUser, async (c) => {

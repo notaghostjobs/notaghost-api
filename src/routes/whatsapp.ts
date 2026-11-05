@@ -2,7 +2,7 @@
 // conversation (a reply to a user-started message needs no template and is free). The user's WhatsApp number is a
 // verified phone, so the account exists from the first message and the link we send signs them in — no OTP wall.
 // Quota is the signed-in quota (section 7 of the rule book). Nothing outbound is ever sent unprompted.
-import { docLink, docToken } from "./doc.js";
+import { docLink, docToken, receiptToken } from "./doc.js";
 import { Hono } from "hono";
 import { stampUser, srcOfUser, logEvent, untagMessage } from "../lib/src.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -127,7 +127,7 @@ async function handle(m: any) {
   const g = await gate(caller, key);
   if (!g.allowed) {
     const token = await createSession(user.id);
-    await sendCard(from, { body: `That’s your ${g.limit} free checks for today.\n\nSharpen, Build or Radar makes them unlimited — and shows you why they’d skip you.`, button: "Make it unlimited", url: `${SITE}/app.html#/sharpen?t=${token}&src=wa`, footer: "Ghosted · notaghost.jobs" });
+    await sendCard(from, { body: `That’s your ${g.limit} free checks for today.\n\nA Sharpen plan makes them unlimited — and shows you why they’d skip you.`, button: "Make it unlimited", url: `${SITE}/app.html#/sharpen?t=${token}&src=wa`, footer: "Ghosted · notaghost.jobs" });
     return;
   }
   let r: CheckResult;
@@ -158,13 +158,12 @@ function format(r: CheckResult, token: string, g: { used: number; limit: number 
     : bad.slice(0, 3).map((s) => `⛔ ${line(s)}`);
   const where = [r.title, r.company, r.location].filter(Boolean).join(" · ");
   const check = `${SITE}/app.html#/check?id=${r.posting_id}&t=${token}&src=wa`;
-  const radar = `${SITE}/app.html#/radar?t=${token}&src=wa`;
   const head = r.verdict === "Real" ? `✅ *Real* — ${r.clear} of ${r.checks_run} checks clear`
     : r.verdict === "Caution" ? `⚠️ *Caution* — ${r.flags} of ${r.checks_run} checks flagged`
     : `⛔ *Ghost* — don’t spend time here`;
   // the hook is a sentence; the button carries the link (WhatsApp button labels are capped at 20 characters)
   const [hook, button, url] = r.verdict === "Ghost"
-    ? ["*Don’t spend time here.*\nRadar shows you only the real ones, the day they appear.", "See real roles", radar]
+    ? ["*Don’t spend time here.*\nSend me the next link — the check is free.", "See every check", check]
     : r.verdict === "Real"
     ? ["*They’re hiring. Will they see you?*\nYour résumé against what they screen for — what you say, what you don’t, and the one line that would change it.", "Sharpen this job", check]
     : ["*Check before you apply.*\nEvery check we ran, and whether your résumé clears the ones that matter.", "See every check", check];
@@ -235,5 +234,19 @@ export async function notifyDocumentReady(userId: string, shotId: string, d: { t
     ] } });
     await graph("messages", { messaging_product: "whatsapp", to, type: "document", document: { link: docLink(shotId), filename: d.filename, caption: `Your résumé for ${d.title} at ${d.company} — ${d.after}% fit, as promised.` } });
   } catch (e: any) { console.error("[whatsapp] document ready", e?.message ?? e); }
+}
+/** Receipt on WhatsApp right after payment (approved template ghosted_receipt). The list price is shown struck while the launch offer runs. */
+export async function notifyReceipt(userId: string, p: { id: string; receipt_no: string; amount_paise: number; product: string; shots: number; days: number; list_paise?: number }) {
+  try {
+    const { data: u } = await db.from("users").select("phone").eq("id", userId).maybeSingle();
+    const to = String(u?.phone ?? "").replace(/\D/g, ""); if (!to) return;
+    const rupees = (n: number) => (n / 100).toLocaleString("en-IN");
+    const item = `Sharpen, ${p.shots} shots, valid ${p.days} days` + (p.list_paise && p.list_paise > p.amount_paise ? ` (launch offer, ~₹${rupees(p.list_paise)}~)` : "");
+    const date = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
+    await graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name: "ghosted_receipt", language: { code: "en" }, components: [
+      { type: "body", parameters: [{ type: "text", text: p.receipt_no }, { type: "text", text: item }, { type: "text", text: rupees(p.amount_paise) }, { type: "text", text: date }] },
+      { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: receiptToken(p.id) }] },
+    ] } });
+  } catch (e: any) { console.error("[whatsapp] receipt", e?.message ?? e); }
 }
 const markRead = (id: string) => graph("messages", { messaging_product: "whatsapp", status: "read", message_id: id });
