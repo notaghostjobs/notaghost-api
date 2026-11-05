@@ -45,5 +45,5 @@ doc.get("/:id/:file?", async (c) => {
   if (f.error) return c.text("Could not open the document.", 500);
   const asked = (c.req.param("file") ?? "").replace(/[^A-Za-z0-9._-]+/g, "-");
   const name = /\.pdf$/i.test(asked) ? asked : `Resume-${String(out.posting?.company ?? "sharpened").replace(/[^A-Za-z0-9]+/g, "-")}.pdf`;
-  return new Response(f.data, { headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${name}"`, "cache-control": "private, max-age=600" } });
+  return new Response(f.data, { headers: { "content-type": "application/pdf", "content-disposition": `${c.req.query("dl") ? "attachment" : "inline"}; filename="${name}"`, "cache-control": "private, max-age=600" } });
 });
