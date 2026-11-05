@@ -46,6 +46,15 @@ export async function srcOfUser(userId: string): Promise<Src> {
 
 /** A WhatsApp message can carry its channel in a trailing bracket: "Is this job real? (IF)". Returns the tag and the text without it. */
 export function untagMessage(text: string): { text: string; tag: string | null } {
+  // invisible tag: zero-width bits framed by word joiners (U+2060), appended by /<channel> links so the prefilled message reads clean
+  const z = text.match(/\u2060([\u200b\u200c]+)\u2060/);
+  if (z) {
+    const bits = z[1].replace(/\u200b/g, "0").replace(/\u200c/g, "1");
+    let code = ""; for (let i = 0; i + 8 <= bits.length; i += 8) code += String.fromCharCode(parseInt(bits.slice(i, i + 8), 2));
+    const clean = text.replace(z[0], "").replace(/[\u200b\u200c\u2060]/g, "").trim();
+    if (/^[a-z0-9_-]{1,12}$/i.test(code)) return { text: clean, tag: `wa-${code.toLowerCase()}` };
+    return { text: clean, tag: null };
+  }
   const m = text.match(/\(([a-z0-9_-]{1,12})\)\s*$/i);
   if (!m) return { text, tag: null };
   return { text: text.slice(0, m.index).trim(), tag: `wa-${m[1].toLowerCase()}` };
