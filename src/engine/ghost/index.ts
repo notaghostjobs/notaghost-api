@@ -46,7 +46,8 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   const claimsSystem = Array.isArray(existing?.signals) && (existing!.signals as any[]).some((s) => s?.n === 9 && s?.kind === "ok");
   const tainted = (Array.isArray(existing?.signals) && (existing!.signals as any[]).some((s) => s?.n === 7))
     || (existing?.source === "linkedin" && !!existing?.scored_at && existing.scored_at < CLEAN_SINCE)
-    || (claimsSystem && !existing?.sighting_id);   // scored before the link was stored: re-score once so the link lands
+    || (claimsSystem && !existing?.sighting_id)   // scored before the link was stored: re-score once so the link lands
+    || (existing?.source === "ats" && !existing?.title && /myworkdayjobs\.com|greenhouse\.io|gh_jid=/i.test(url ?? ""));   // read before the Workday/Greenhouse API readers (5 Nov): no title, re-read once
   // scored before every check became a line: re-score so the card shows the whole list (₹0 — rules and the reader), history kept
   const partial = !!existing?.scored_at && existing.scored_at < FULL_LIST_SINCE;
   if (existing?.scored_at && !opts.force && !tainted && !partial) {
