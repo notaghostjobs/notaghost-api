@@ -27,13 +27,14 @@ export function readReceiptToken(tok: string): string | null {
   const want = sig("r:" + id, exp);
   return s.length === want.length && timingSafeEqual(Buffer.from(s), Buffer.from(want)) ? id : null;
 }
-export function docLink(shotId: string, ttlSec = 3600) {
+export function docLink(shotId: string, ttlSec = 3600, filename?: string) {
   const exp = Math.floor(Date.now() / 1000) + ttlSec;
-  return `${BASE}/d/${shotId}?e=${exp}&s=${sig(shotId, exp)}`;
+  // the last path segment is what a phone saves the file as
+  return `${BASE}/d/${shotId}${filename ? "/" + encodeURIComponent(filename) : ""}?e=${exp}&s=${sig(shotId, exp)}`;
 }
 
 export const doc = new Hono();
-doc.get("/:id", async (c) => {
+doc.get("/:id/:file?", async (c) => {
   const id = c.req.param("id"), exp = Number(c.req.query("e") ?? 0), s = c.req.query("s") ?? "";
   const want = sig(id, exp);
   if (!exp || exp < Date.now() / 1000 || s.length !== want.length || !timingSafeEqual(Buffer.from(s), Buffer.from(want))) return c.text("This link has expired. Open the document again from Ghosted.", 410);
@@ -42,6 +43,7 @@ doc.get("/:id", async (c) => {
   if (!out?.pdf_path) return c.text("Not ready.", 404);
   const f = await db.storage.from("outputs").download(out.pdf_path);
   if (f.error) return c.text("Could not open the document.", 500);
-  const name = `Resume-${String(out.posting?.company ?? "sharpened").replace(/[^A-Za-z0-9]+/g, "-")}.pdf`;
+  const asked = (c.req.param("file") ?? "").replace(/[^A-Za-z0-9._-]+/g, "-");
+  const name = /\.pdf$/i.test(asked) ? asked : `Resume-${String(out.posting?.company ?? "sharpened").replace(/[^A-Za-z0-9]+/g, "-")}.pdf`;
   return new Response(f.data, { headers: { "content-type": "application/pdf", "content-disposition": `inline; filename="${name}"`, "cache-control": "private, max-age=600" } });
 });

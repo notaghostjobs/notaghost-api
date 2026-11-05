@@ -109,7 +109,8 @@ shots.get("/:id/pdf-link", async (c) => {
   const { data } = await db.from("shots").select("output").eq("id", c.req.param("id")).eq("user_id", c.get("user").id).maybeSingle();
   const path = (data?.output as { pdf_path?: string } | null)?.pdf_path;
   if (!path) return c.json({ error: "Not ready." }, 404);
-  return c.json({ url: docLink(c.req.param("id")) });
+  const name = (c.req.query("name") ?? "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+  return c.json({ url: docLink(c.req.param("id"), 3600, name && /\.pdf$/i.test(name) ? name : undefined) });
 });
 
 shots.get("/:id/pdf", async (c) => {
