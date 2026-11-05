@@ -114,7 +114,8 @@ async function handle(m: any) {
     await send(from, opener
       ? "You’ve come to the right place. Let’s end that together.\n\nSend me any job link and in about eight seconds I’ll tell you if the role is real — with every reason.\n\nFastest way: in LinkedIn or Naukri, on the job you’re looking at, tap *Share → WhatsApp → Ghosted*. The link lands here on its own.\n\n_Ghosted · notaghost.jobs_"
       : "I need the link itself — on the job, tap *Share → Copy link*, then paste it here. LinkedIn, Naukri or any careers page.\n\n_Ghosted · notaghost.jobs_");
-    if (opener) scheduleNudge(from);
+    // nudge paused (6 Nov): it listed other companies' job links, which sends people off Ghosted and can't know what fits them. To be reworked.
+    void scheduleNudge; void opener;
     return;
   }
   cancelNudge(from);
