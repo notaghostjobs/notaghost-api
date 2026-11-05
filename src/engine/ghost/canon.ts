@@ -9,7 +9,7 @@ export function jobKey(url: string): { key: string; source: "linkedin" | "naukri
   if ((m = u.match(/naukri\.com\/.*?-(\d{8,})(?:[?#]|$)/i))) return { key: `naukri:${m[1]}`, source: "naukri" };
   if ((m = u.match(/naukri\.com\/job-listings-.*?-(\d{8,})/i))) return { key: `naukri:${m[1]}`, source: "naukri" };
   if ((m = u.match(/indeed\.[a-z.]+\/.*?(?:jk=|viewjob\?.*?jk=)([0-9a-f]{10,})/i))) return { key: `indeed:${m[1]}`, source: "indeed" };
-  if ((m = u.match(/boards\.greenhouse\.io\/([^/]+)\/jobs\/(\d+)/i))) return { key: `greenhouse:${m[1]}:${m[2]}`, source: "ats" };
+  if ((m = u.match(/(?:boards|job-boards(?:\.eu)?)\.greenhouse\.io\/([^/]+)\/jobs\/(\d+)/i))) return { key: `greenhouse:${m[1]}:${m[2]}`, source: "ats" };
   if ((m = u.match(/jobs\.lever\.co\/([^/]+)\/([0-9a-f-]{20,})/i))) return { key: `lever:${m[1]}:${m[2]}`, source: "ats" };
   if ((m = u.match(/jobs\.ashbyhq\.com\/([^/]+)\/([0-9a-f-]{20,})/i))) return { key: `ashby:${m[1]}:${m[2]}`, source: "ats" };
   if ((m = u.match(/myworkdayjobs\.com\/.*?\/job\/.*?[_-]([A-Z0-9-]{4,})$/i))) return { key: `workday:${m[1]}`, source: "ats" };

@@ -85,14 +85,21 @@ export async function readPosting(url: string): Promise<RawRead> {
     return { text, html, source: "naukri", posted_text: pick(html, /(\d+\s+days?\s+ago|today|just now|few hours ago|\d+\s+weeks?\s+ago)/i), applicants: num(pick(html, /(\d[\d,]*\+?)\s*Applicants/i)) };
   }
 
+  // Workday and Greenhouse render the posting with JavaScript; their own public job APIs give the title, company,
+  // location, date and full description directly. A miss (404, unknown shape) falls through to the page read below.
+  const viaApi = (await workdayJob(url).catch(() => null)) ?? (await greenhouseJob(url).catch(() => null));
+  if (viaApi) return viaApi;
+
   // careers pages / ATS / other boards: plain fetch, JSON-LD when present, browser fallback for JS-only pages
   let html = "";
   try { const r = await get(url); if (r.ok) html = await r.text(); else if (r.status === 403 || r.status === 429) throw blocked(new URL(url).hostname); } catch (e) { if ((e as any).status) throw e; }
   let text = html ? htmlToText(html) : "";
+  const first = html;
   if (text.length < 300) { try { html = await renderWithBrowser(url); text = htmlToText(html); } catch { /* ignore */ } }
   if (text.length < 200) throw blocked(new URL(url).hostname);
-  const ld = jsonLd(html);
-  return { text, html, source, title: ld?.title ?? null, company: ld?.hiringOrganization?.name ?? null,
+  const ld = jsonLd(html) ?? jsonLd(first);
+  const og = (h: string, k: string) => pick(h, new RegExp(`<meta[^>]+property="og:${k}"[^>]+content="([^"]+)"`, "i"));
+  return { text, html, source, title: ld?.title ?? og(first, "title") ?? og(html, "title") ?? null, company: ld?.hiringOrganization?.name ?? og(first, "site_name") ?? null,
     location: ld?.jobLocation?.address?.addressLocality ?? null,
     posted_text: ld?.datePosted ? `Posted ${new Date(ld.datePosted).toDateString()}` : pick(html, /(\d+\s+days?\s+ago|\d+\s+weeks?\s+ago|\d+\s+months?\s+ago)/i),
     posted_days: ld?.datePosted ? Math.floor((Date.now() - new Date(ld.datePosted).getTime()) / 86400e3) : null,
@@ -202,6 +209,54 @@ Keep strings short.`,
     contact_present: !!r.contact_present, agency: !!r.agency, scam_tells: Array.isArray(r.scam_tells) ? r.scam_tells : [],
     poster: r.poster ?? (raw.poster ? { name: raw.poster.name, is_recruiter_account: null, account_age_months: null } : null),
   };
+}
+
+// ---------- ATS job APIs ----------
+/** https://{tenant}.wd{n}.myworkdayjobs.com/[en-US/]{site}/job/{place}/{slug}_{id} (also /details/) */
+async function workdayJob(url: string): Promise<RawRead | null> {
+  const m = url.match(/^https?:\/\/([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?([^/?#]+)\/((?:job|details)\/[^?#]+)/i);
+  if (!m) return null;
+  const [, tenant, wd, site, rest] = m;
+  const r = await fetch(`https://${tenant}.${wd}.myworkdayjobs.com/wday/cxs/${tenant}/${site}/${rest.replace(/^details\//, "job/")}`, { headers: { ...H, accept: "application/json" }, signal: AbortSignal.timeout(15000) });
+  if (!r.ok) return null;
+  const j: any = await r.json(); const i = j?.jobPostingInfo;
+  if (!i?.title || !i?.jobDescription) return null;
+  const org = String(j?.hiringOrganization?.name ?? "");
+  const hit = org.match(new RegExp(`\\b${tenant.replace(/[^a-z0-9]/gi, "")}\\b`, "i"));
+  // "IN01 NVIDIA Graphics Bengaluru" → NVIDIA; "RE1055 GE Renewable Energy Technologies Private Limited" → GE Renewable Energy Technologies
+  const clean = org.replace(/^[A-Z]{1,4}\d{2,}\s+/, "").replace(/\s*,?\s*\b(?:private limited|pvt\.? ltd\.?|limited|ltd\.?|inc\.?|llc|llp|gmbh)\s*$/i, "").trim();
+  const company = hit ? hit[0] : clean || tenant.charAt(0).toUpperCase() + tenant.slice(1);
+  const start = i.startDate ? new Date(i.startDate) : null;
+  const html = `<h1>${i.title}</h1><p>${company}</p><p>${i.location ?? ""}</p>${i.jobDescription}`;
+  return { text: htmlToText(html), html, source: "ats", title: i.title, company, location: i.location ?? null,
+    posted_text: start ? `Posted ${start.toDateString()}` : i.postedOn ?? null,
+    posted_days: start && !isNaN(start.getTime()) ? Math.max(0, Math.floor((Date.now() - start.getTime()) / 86400e3)) : daysFromText(i.postedOn),
+    apply_url: i.externalUrl ?? url, applicants: null };
+}
+
+/** boards.greenhouse.io / job-boards.greenhouse.io/{slug}/jobs/{id}, embed?for=slug&token=id, or a careers page carrying ?gh_jid=id */
+async function greenhouseJob(url: string): Promise<RawRead | null> {
+  let slug: string | null = null, id: string | null = null, m: RegExpMatchArray | null;
+  if ((m = url.match(/greenhouse\.io\/([a-z0-9_-]+)\/jobs\/(\d+)/i)) && m[1] !== "embed") { slug = m[1]; id = m[2]; }
+  else if (/greenhouse\.io\/embed\/job_app/i.test(url)) { slug = url.match(/[?&]for=([a-z0-9_-]+)/i)?.[1] ?? null; id = url.match(/[?&]token=(\d+)/i)?.[1] ?? null; }
+  else if ((m = url.match(/[?&]gh_jid=(\d+)/i))) {
+    id = m[1];
+    const r = await get(url).catch(() => null); const h = r?.ok ? await r.text() : "";
+    slug = h.match(/greenhouse\.io\/(?:embed\/job_board(?:\/js)?\?for=|embed\/job_app\?for=)([a-z0-9_-]+)/i)?.[1] ?? h.match(/boards-api\.greenhouse\.io\/v1\/boards\/([a-z0-9_-]+)/i)?.[1] ?? null;
+  }
+  if (!slug || !id) return null;
+  const r = await fetch(`https://boards-api.greenhouse.io/v1/boards/${slug}/jobs/${id}`, { headers: { ...H, accept: "application/json" }, signal: AbortSignal.timeout(15000) });
+  if (!r.ok) return null;
+  const j: any = await r.json();
+  if (!j?.title || !j?.content) return null;
+  const content = String(j.content).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+  const company = String(j.company_name ?? slug).replace(/\s+(careers|jobs|hiring)$/i, "").trim();
+  const pub = j.first_published ? new Date(j.first_published) : null;
+  const html = `<h1>${j.title}</h1><p>${company}</p><p>${j.location?.name ?? ""}</p>${content}`;
+  return { text: htmlToText(html), html, source: "ats", title: j.title, company, location: j.location?.name ?? null,
+    posted_text: pub ? `Posted ${pub.toDateString()}` : null,
+    posted_days: pub && !isNaN(pub.getTime()) ? Math.max(0, Math.floor((Date.now() - pub.getTime()) / 86400e3)) : null,
+    apply_url: j.absolute_url ?? url, applicants: null };
 }
 
 // ---------- helpers ----------
