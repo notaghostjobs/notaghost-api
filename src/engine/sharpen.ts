@@ -271,7 +271,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     rewrite = await json<Rewrite>(
       `Fix a résumé rewrite. For each flagged claim: delete the unsupported words or move the fact back to where the original has it (summary vs. role). Prefer deleting to rewording. Change nothing else. Rules: title = candidate's real title (≤6 words); summary 35–80 words; relevant 3–4 lines ≤30 words; bullets ≤30 words, start with a verb, none repeated, 4–6 on the two most recent roles and 2–4 on older ones; skills 6–14; no personal details; no numbers that aren't in the original. Keep the same JSON shape.`,
       `ORIGINAL:\n${JSON.stringify(resume)}\n\nREWRITE:\n${JSON.stringify(rewrite)}\n\nUNSUPPORTED CLAIMS:\n${JSON.stringify(verification.problems)}\n\nRULE BREAKS:\n${JSON.stringify(broken)}`,
-      16000, FAST
+      16000, MODEL
     );
     rewrite = tidy(rewrite);
     verification = await verifyRewrite(resume, rewrite);
@@ -283,7 +283,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     if (!verification.ok && verification.problems.length === 1) {
       rewrite = tidy(await json<Rewrite>(
         `One unsupported phrase remains in a résumé rewrite. DELETE the unsupported words from the sentence they appear in (do not reword, do not add), leaving a grammatical sentence. Change nothing else. Same JSON shape.`,
-        `REWRITE:\n${JSON.stringify(rewrite)}\n\nUNSUPPORTED:\n${JSON.stringify(verification.problems[0])}`, 16000, FAST));
+        `REWRITE:\n${JSON.stringify(rewrite)}\n\nUNSUPPORTED:\n${JSON.stringify(verification.problems[0])}`, 16000, MODEL));
       verification = await verifyRewrite(resume, rewrite);
       broken = checkRules(rewrite, resume, posting);
     }
@@ -333,14 +333,14 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
       v2
         ? `A résumé rewrite is missing bullets that were promised. For EACH item below, insert the given LINE EXACTLY as written (no paraphrase, no merging, no added words) as a bullet in the role where the evidence lives — or in the "relevant" block if the evidence is from the profile. If an existing bullet covers the same fact, replace that bullet with this exact line. Change nothing else. Same JSON shape.`
         : `A résumé rewrite leaves some of the candidate's real strengths unsaid. For EACH item below, add or reword ONE line so a screener searching for the requirement would tick it: use the quoted evidence, in the employer's words, placed in the role where the evidence lives (or the relevant block). Never add a fact, number, tool or outcome the evidence does not contain. Change nothing else. Same JSON shape.`,
-      `REWRITE:\n${JSON.stringify(rewrite)}\n\nSTILL UNSAID:\n${JSON.stringify(unsaid.map((m) => ({ requirement: m.requirement, evidence: m.evidence, line: v2 ? (m.line || m.suggestion) : m.suggestion })))}`, 16000, FAST));
+      `REWRITE:\n${JSON.stringify(rewrite)}\n\nSTILL UNSAID:\n${JSON.stringify(unsaid.map((m) => ({ requirement: m.requirement, evidence: m.evidence, line: v2 ? (m.line || m.suggestion) : m.suggestion })))}`, 16000, MODEL));
     let v = await verifyRewrite(resume, pushed);
     let b = checkRules(pushed, resume, posting);
     if ((!v.ok || b.length) && v2) {
       // a line or two overreached: take back exactly those, keep every clean line the pass added
       pushed = tidy(await json<Rewrite>(
         `Some lines in this rewrite overreach the original. For each UNSUPPORTED claim and RULE BREAK below, restore the wording to what the original supports (or remove the added words) — change nothing else, keep every other line exactly as it is. Same JSON shape.`,
-        `ORIGINAL:\n${JSON.stringify(resume)}\n\nREWRITE:\n${JSON.stringify(pushed)}\n\nUNSUPPORTED CLAIMS:\n${JSON.stringify(v.problems)}\n\nRULE BREAKS:\n${JSON.stringify(b)}`, 16000, FAST));
+        `ORIGINAL:\n${JSON.stringify(resume)}\n\nREWRITE:\n${JSON.stringify(pushed)}\n\nUNSUPPORTED CLAIMS:\n${JSON.stringify(v.problems)}\n\nRULE BREAKS:\n${JSON.stringify(b)}`, 16000, MODEL));
       v = await verifyRewrite(resume, pushed);
       b = checkRules(pushed, resume, posting);
     }
