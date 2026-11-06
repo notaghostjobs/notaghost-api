@@ -137,6 +137,7 @@ export function placeTold(rw: Rewrite, told: { line?: string; fact?: string }[],
 //    evidence bullet may stay reworded or split. Bullets come out in the original order; lines the draft added (owed lines,
 //    told lines, unpacked lines) follow, in the draft's order. Decided 6 Nov.
 const cwords = (t: string) => norm(t).split(" ").filter((w) => w.length > 3);
+const trigrams = (t: string) => { const w = cwords(t); const out: string[] = []; for (let i = 0; i + 2 < w.length; i++) out.push(w.slice(i, i + 3).join(" ")); return out; };
 const numsOf = (t: string) => [...t.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((m) => m[0].replace(/,/g, ""));
 function overlapOf(a: string, b: string): number {
   const wa = cwords(a), wb = new Set(cwords(b)); if (!wa.length) return 0;
@@ -166,11 +167,16 @@ export function holdLines(rw: Rewrite, resume: ResumeProfile, matches: { bucket:
         // ("managed 1,200 SKUs, 40 suppliers and 14 brands at once") is a merge, not a rewording — the original stands instead
         const own = new Set(numsOf(ob));
         const others = new Set((orig.bullets.filter((x) => x !== ob)).flatMap(numsOf));
+        // ...and only this role's own wording: a phrase lifted from ANOTHER employer's lines ("pricing, promotions and
+        // assortment" from the BigBasket role, written into a Ninjacart line) is a migration, undone the same way
+        const ownGrams = new Set(orig.bullets.flatMap(trigrams));
+        const foreignGrams = new Set((resume.roles ?? []).filter((r) => r !== orig).flatMap((r) => r.bullets.flatMap(trigrams)).filter((g) => !ownGrams.has(g)));
         let merged = false;
         for (const p of mine) {
           p.used = true;
           const foreign = numsOf(p.b).filter((n) => !own.has(n) && others.has(n) && !/^(19|20)\d\d$/.test(n));
-          if (foreign.length && norm(p.b) !== norm(ob)) { if (!merged) { out.push(ob.trim()); merged = true; log.push(`merge undone: ${orig.company}: ${p.b.slice(0, 60)}`); } continue; }
+          const lifted = trigrams(p.b).filter((g) => foreignGrams.has(g));
+          if ((foreign.length || lifted.length) && norm(p.b) !== norm(ob)) { if (!merged) { out.push(ob.trim()); merged = true; log.push(`merge undone: ${orig.company}: ${p.b.slice(0, 60)}${lifted.length ? ` (lifted: ${lifted[0]})` : ""}`); } continue; }
           out.push(p.b);
         }
         continue;
