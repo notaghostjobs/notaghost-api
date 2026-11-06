@@ -7,6 +7,8 @@ import { db } from "../lib/db.js";
 import { selftest } from "./selftest.js";
 import { snapshotDue } from "../engine/ghost/index.js";
 import { companyKey } from "../engine/ghost/canon.js";
+import { fetchPosting } from "../engine/extract.js";
+import { parsePosting } from "../engine/sharpen.js";
 
 export const admin = new Hono();
 // every /reader/<x> route is also served at /r/<secret>/<x>
@@ -16,7 +18,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -126,6 +128,19 @@ on.get("/reader/sightings", async (c) => {
   if (c.req.query("source")) q = q.eq("source", c.req.query("source")!);
   if (c.req.query("q")) q = q.or(`company_name.ilike.%${c.req.query("q")}%,title.ilike.%${c.req.query("q")}%`);
   const { data } = await q; return c.json(data ?? []);
+});
+
+/** Read-only diagnostic: what the Sharpen path reads and parses for a posting link, step by step (no DB writes). */
+admin.get("/diag/posting", async (c) => {
+  const url = c.req.query("url"); if (!url) return c.json({ error: "url" }, 400);
+  const out: any = { url };
+  const t0 = Date.now();
+  try { const cached = await fetchPosting(url); out.cached = { len: cached.length, head: cached.slice(0, 240) }; } catch (e) { out.cached = { error: (e as Error).message }; }
+  try { const fresh = await fetchPosting(url, { bypassCache: true }); out.fresh = { len: fresh.length, head: fresh.slice(0, 240) };
+    const p = await parsePosting(fresh); out.parsed = { title: p.title, company: p.company, must: p.must_have?.length ?? 0, nice: p.nice_to_have?.length ?? 0, sample: (p.must_have ?? []).slice(0, 3) };
+  } catch (e) { out.fresh = { ...(out.fresh ?? {}), error: (e as Error).message }; }
+  out.ms = Date.now() - t0;
+  return c.json(out);
 });
 
 /** The last pages the reader refused as unreadable: what the extension sent, and what was left after furniture stripping. */
