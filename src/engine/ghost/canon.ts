@@ -97,7 +97,7 @@ const JD_MARKERS = [
  *  declare itself (schema.org JobPosting) or read like a JD: several of the usual sections present. A company homepage,
  *  a blog post or a product page fails this and is refused instead of being scored. */
 export function looksLikeJob(raw: { text: string; job_ld?: boolean; title?: string | null; source: string }): boolean {
-  if (raw.source !== "careers") return true;
+  if (raw.source !== "careers" && raw.source !== "board") return true;   // LinkedIn, Naukri, Indeed and ATS pages are read by id
   if (raw.job_ld) return true;
   const t = raw.text.slice(0, 30000);
   const hits = JD_MARKERS.reduce((n, re) => n + (re.test(t) ? 1 : 0), 0);

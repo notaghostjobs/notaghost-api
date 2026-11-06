@@ -68,6 +68,7 @@ export async function readPosting(url: string): Promise<RawRead> {
     const id = key.split(":")[1];
     try {
       const r = await get(`https://www.naukri.com/jobapi/v4/job/${id}`, { appid: "121", systemid: "Naukri", "content-type": "application/json" });
+      if (r.status === 404 || r.status === 410) throw gone();
       if (r.ok) {
         const j: any = await r.json();
         const d = j?.jobDetails;
@@ -88,12 +89,17 @@ export async function readPosting(url: string): Promise<RawRead> {
 
   // Workday and Greenhouse render the posting with JavaScript; their own public job APIs give the title, company,
   // location, date and full description directly. A miss (404, unknown shape) falls through to the page read below.
-  const viaApi = (await workdayJob(url).catch(() => null)) ?? (await greenhouseJob(url).catch(() => null));
+  const viaApi = (await workdayJob(url).catch(() => null)) ?? (await greenhouseJob(url).catch(() => null)) ?? (await ashbyJob(url).catch(() => null));
   if (viaApi) return viaApi;
 
   // careers pages / ATS / other boards: plain fetch, JSON-LD when present, browser fallback for JS-only pages
   let html = "";
-  try { const r = await get(url); if (r.ok) html = await r.text(); else if (r.status === 403 || r.status === 429) throw blocked(new URL(url).hostname); } catch (e) { if ((e as any).status) throw e; }
+  try {
+    const r = await get(url);
+    if (r.status === 404 || r.status === 410) throw gone();
+    if (r.ok && bouncedToListing(url, r.url)) throw gone();
+    if (r.ok) html = await r.text(); else if (r.status === 403 || r.status === 429) throw blocked(new URL(url).hostname);
+  } catch (e) { if ((e as any).status) throw e; }
   let text = html ? htmlToText(html) : "";
   const first = html;
   if (text.length < 300) { try { html = await renderWithBrowser(url); text = htmlToText(html); } catch { /* ignore */ } }
@@ -236,6 +242,25 @@ async function workdayJob(url: string): Promise<RawRead | null> {
 }
 
 /** boards.greenhouse.io / job-boards.greenhouse.io/{slug}/jobs/{id}, embed?for=slug&token=id, or a careers page carrying ?gh_jid=id */
+/** Ashby: jobs.ashbyhq.com refuses servers, but the org's public posting API lists every open job with its description.
+ *  A job id missing from that list means the posting is gone. */
+async function ashbyJob(url: string): Promise<RawRead | null> {
+  const m = url.match(/jobs\.ashbyhq\.com\/([^/?#]+)\/([0-9a-f-]{20,})/i);
+  if (!m) return null;
+  const r = await fetch(`https://api.ashbyhq.com/posting-api/job-board/${m[1]}?includeCompensation=true`, { headers: { ...H, accept: "application/json" }, signal: AbortSignal.timeout(15000) });
+  if (!r.ok) return null;
+  const j: any = await r.json();
+  const jobs: any[] = Array.isArray(j?.jobs) ? j.jobs : [];
+  if (!jobs.length) return null;
+  const job = jobs.find((x) => String(x.id).toLowerCase() === m[2].toLowerCase());
+  if (!job) throw gone();
+  const pub = job.publishedAt ? new Date(job.publishedAt) : null;
+  const html = `<h1>${job.title}</h1><p>${m[1]}</p><p>${job.location ?? ""}</p>${job.descriptionHtml ?? job.descriptionPlain ?? ""}`;
+  return { text: htmlToText(html), html, source: "ats", title: job.title ?? null, company: m[1].replace(/-/g, " "), location: job.location ?? null,
+    posted_text: pub && !isNaN(pub.getTime()) ? `Posted ${pub.toDateString()}` : null,
+    posted_days: pub && !isNaN(pub.getTime()) ? Math.max(0, Math.floor((Date.now() - pub.getTime()) / 86400e3)) : null,
+    apply_url: job.applyUrl ?? job.jobUrl ?? url, applicants: null, job_ld: true };
+}
 async function greenhouseJob(url: string): Promise<RawRead | null> {
   let slug: string | null = null, id: string | null = null, m: RegExpMatchArray | null;
   if ((m = url.match(/greenhouse\.io\/([a-z0-9_-]+)\/jobs\/(\d+)/i)) && m[1] !== "embed") { slug = m[1]; id = m[2]; }
@@ -270,6 +295,19 @@ async function renderWithBrowser(url: string) {
   finally { await ctx.close(); }
 }
 function blocked(site: string) { return Object.assign(new Error(`${site} blocked automated reading. Paste the posting text instead.`), { status: 422 }); }
+/** The employer's site no longer has this posting: a 404/410, or the job link bounced to the careers home / a listing page. */
+export const GONE_MSG = "This posting isn’t on the employer’s site any more — the link now goes to a page with no job on it. If a job board still shows it, that’s the ghost.";
+function gone() { return Object.assign(new Error(GONE_MSG), { status: 422, gone: true }); }
+function bouncedToListing(from: string, finalUrl: string | undefined): boolean {
+  if (!finalUrl) return false;
+  try {
+    const a = new URL(from), b = new URL(finalUrl);
+    if (a.pathname.replace(/\/$/, "") === b.pathname.replace(/\/$/, "")) return false;
+    const path = b.pathname.replace(/\/$/, "");
+    // a job URL that lands on the site root, a locale root, or a jobs/careers/search index has lost its job
+    return path === "" || /^\/[a-z]{2}(?:[-_][a-z]{2})?$/i.test(path) || /^\/(?:[a-z]{2}(?:[-_][a-z]{2})?\/)?(?:global\/[a-z]{2}|jobs|careers|search|job-search|opportunities|openings|positions|vacancies|en)\/?$/i.test(path) || /[?&]error=true/i.test(finalUrl);
+  } catch { return false; }
+}
 function pick(html: string, re: RegExp) { const m = html.match(re); return m ? htmlToText(m[1]).trim() || null : null; }
 function num(s: string | null) { if (!s) return null; const m = s.replace(/,/g, "").match(/\d+/); return m ? Number(m[0]) : null; }
 function safeHost(u: string) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return null; } }
