@@ -137,6 +137,7 @@ export function placeTold(rw: Rewrite, told: { line?: string; fact?: string }[],
 //    evidence bullet may stay reworded or split. Bullets come out in the original order; lines the draft added (owed lines,
 //    told lines, unpacked lines) follow, in the draft's order. Decided 6 Nov.
 const cwords = (t: string) => norm(t).split(" ").filter((w) => w.length > 3);
+const numsOf = (t: string) => [...t.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((m) => m[0].replace(/,/g, ""));
 function overlapOf(a: string, b: string): number {
   const wa = cwords(a), wb = new Set(cwords(b)); if (!wa.length) return 0;
   return wa.filter((w) => wb.has(w) || wb.has(w.replace(/s$/, "")) || wb.has(w + "s")).length / wa.length;
@@ -161,7 +162,17 @@ export function holdLines(rw: Rewrite, resume: ResumeProfile, matches: { bucket:
       const mine = pool.filter((p) => !p.used && (norm(p.b) === norm(ob) || overlapOf(ob, p.b) >= 0.5 || overlapOf(p.b, ob) >= 0.6));
       if (isEvidence(ob)) {
         if (!mine.length) { out.push(ob.trim()); continue; }           // reworded away entirely? the original stands
-        for (const p of mine) { p.used = true; out.push(p.b); }
+        // a rewording may carry only this bullet's own numbers: a line that pulls numbers in from the role's other bullets
+        // ("managed 1,200 SKUs, 40 suppliers and 14 brands at once") is a merge, not a rewording — the original stands instead
+        const own = new Set(numsOf(ob));
+        const others = new Set((orig.bullets.filter((x) => x !== ob)).flatMap(numsOf));
+        let merged = false;
+        for (const p of mine) {
+          p.used = true;
+          const foreign = numsOf(p.b).filter((n) => !own.has(n) && others.has(n) && !/^(19|20)\d\d$/.test(n));
+          if (foreign.length && norm(p.b) !== norm(ob)) { if (!merged) { out.push(ob.trim()); merged = true; log.push(`merge undone: ${orig.company}: ${p.b.slice(0, 60)}`); } continue; }
+          out.push(p.b);
+        }
         continue;
       }
       // not evidence: the candidate's line, exactly as written, once (a promised line that merely resembles it stays)
