@@ -563,6 +563,25 @@ export function factAudit(rw: Rewrite, resume: ResumeProfile): { claim: string; 
   for (const [where, text] of fields) {
     for (const n of numbersIn(text)) if (!allowed.has(n)) out.push({ claim: text.slice(0, 160), reason: `"${n}" is not in the original (${where})` });
   }
+  // a number is also tied to its employer: "30% growth at Fashinza" when the 30% is an Unacademy line is a misattribution.
+  // Every number in a bullet must be in that role's own original lines (or what the candidate told us); every sentence of the
+  // summary/relevant block that names exactly one employer may only carry numbers from that employer's lines.
+  const told = normT(JSON.stringify(resume.candidate_added_facts ?? []));
+  const byCompany = new Map<string, Set<string>>();
+  for (const r of resume.roles ?? []) { const k = normT(r.company); const set = byCompany.get(k) ?? new Set<string>(); for (const n of numbersIn([r.title, r.start, r.end, ...r.bullets].join(" "))) set.add(n); byCompany.set(k, set); }
+  const profileNums = new Set(numbersIn([resume.headline ?? "", ...(resume.skills ?? []).map((x: any) => x?.evidence ?? ""), ...(resume.extra_sections ?? []).flatMap((x) => x.items)].join(" ")));   // facts the original states without an employer
+  const companyIn = (text: string) => [...byCompany.keys()].filter((k) => k && (normT(text).includes(k) || (k.split(" ")[0].length > 4 && normT(text).includes(k.split(" ")[0]))));
+  for (const r of doc.roles ?? []) {
+    const own = byCompany.get(normT(r.company)); if (!own) continue;
+    r.bullets.forEach((b, i) => { for (const n of numbersIn(b)) if (!own.has(n) && !numbersIn(told).includes(n) && !profileNums.has(n) && !/^(19|20)\d\d$/.test(n)) out.push({ claim: b.slice(0, 160), reason: `"${n}" is not in ${r.company}'s own lines in the original (${r.company} bullet ${i + 1}) — this number belongs to another employer` }); });
+  }
+  for (const [where, text] of [["summary", doc.summary ?? ""], ...(doc.relevant ?? []).map((l, i) => [`relevant ${i + 1}`, l] as [string, string])]) {
+    for (const sent of text.split(/(?<=[.;])\s+/).flatMap((x) => (companyIn(x).length > 1 ? x.split(/[,;:]\s+/) : [x]))) {
+      const cos = companyIn(sent); if (cos.length !== 1) continue;
+      const own = byCompany.get(cos[0])!;
+      for (const n of numbersIn(sent)) if (!own.has(n) && !numbersIn(told).includes(n) && !/^(19|20)\d\d$/.test(n)) out.push({ claim: sent.slice(0, 160), reason: `"${n}" is attributed to ${cos[0]} but is not in that employer's lines in the original (${where})` });
+    }
+  }
   const origNorm = normT(origText);
   for (const [where, text] of [["headline", doc.headline ?? ""], ["summary", doc.summary ?? ""]]) {
     if (IN_PROGRESS.test(text) && !IN_PROGRESS.test(origNorm)) out.push({ claim: text.slice(0, 160), reason: `says a degree is in progress; the original states it as held (${where}) — state it as held` });
