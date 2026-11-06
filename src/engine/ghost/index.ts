@@ -6,7 +6,7 @@ import { findAts, matchTitle } from "./ats.js";
 import { research } from "./research.js";
 import { score } from "./score.js";
 import { readerFacts } from "./reader.js";
-import { jobKey, strip, companyKey, fingerprint, hamming, stripFurniture, CLEAN_SINCE, FULL_LIST_SINCE, isSiteRoot, looksLikeJob } from "./canon.js";
+import { jobKey, strip, companyKey, fingerprint, hamming, stripFurniture, CLEAN_SINCE, FULL_LIST_SINCE, isSiteRoot, looksLikeJob, canonicalPostingUrl } from "./canon.js";
 import type { PostingFacts, Scored } from "./types.js";
 
 const DAY = 86400e3;
@@ -190,9 +190,18 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
 /** A stored posting row as the card reads it (no re-score). */
 export const presentStored = (row: any): CheckResult => present(row, false);
 
+/** The link the card hands on (to Sharpen, to WhatsApp): the job's own page, never the search page someone first pasted.
+ *  A row's url is whatever form reached us first — a LinkedIn search with keywords, a tracking-laden share — and the job
+ *  key already names the posting; so for LinkedIn and Naukri the link is rebuilt from the key, for the rest it's the url. */
+export function jobLink(row: { job_key?: string | null; url?: string | null }): string {
+  const key = row.job_key ?? "";
+  const li = key.match(/^linkedin:(\d{6,})$/); if (li) return `www.linkedin.com/jobs/view/${li[1]}/`;
+  const nk = key.match(/^naukri:(\d{8,})$/); if (nk && !/naukri\.com\/job-listings-/i.test(row.url ?? "")) return `www.naukri.com/job-listings-${nk[1]}`;
+  try { return canonicalPostingUrl(row.url ?? "").replace(/^https?:\/\//, ""); } catch { return (row.url ?? "").replace(/^https?:\/\//, ""); }
+}
 function present(row: any, fresh: boolean): CheckResult {
   const g = row.ghost ?? {};
-  return { posting_id: row.id, job_key: row.job_key, link: (row.url ?? "").replace(/^https?:\/\//, ""), title: row.title ?? g.title ?? "", company: row.company ?? "", location: g.location ?? "",
+  return { posting_id: row.id, job_key: row.job_key, link: jobLink(row), title: row.title ?? g.title ?? "", company: row.company ?? "", location: g.location ?? "",
     score: row.score ?? 0, verdict: row.verdict === "Can’t verify" ? "Caution" : row.verdict === "Scam" ? "Ghost" : (row.verdict ?? "Caution"), signals: row.signals ?? [],
     // the count the card shows: flags raised over checks run. A flag is a fired signal that counts against the posting.
     flags: (row.signals ?? []).filter((x: any) => x?.kind === "bad").length, checks_run: (row.signals ?? []).filter((x: any) => x?.kind && x.kind !== "na").length, clear: (row.signals ?? []).filter((x: any) => x?.kind === "ok").length,
