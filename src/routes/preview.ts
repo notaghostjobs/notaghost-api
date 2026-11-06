@@ -1,3 +1,4 @@
+import { canonicalPostingUrl } from "../engine/ghost/canon.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -10,7 +11,7 @@ import { assess, fit, ENGINE_VERSION } from "../engine/fit.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../engine/sharpen.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, type Facts } from "../engine/told.js";
 
-const hashUrl = (u: string) => createHash("sha256").update(u.trim().toLowerCase()).digest("hex");
+const hashUrl = (u: string) => createHash("sha256").update(canonicalPostingUrl(u).trim().toLowerCase()).digest("hex");
 export const preview = new Hono<{ Variables: { user: User } }>();
 preview.use("*", requireUser);
 

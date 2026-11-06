@@ -1,3 +1,4 @@
+import { canonicalPostingUrl } from "./ghost/canon.js";
 import { notifyDocumentReady } from "../routes/whatsapp.js";
 import { db } from "../lib/db.js";
 import { extractText, fetchPosting } from "./extract.js";
@@ -56,7 +57,7 @@ export async function runShot(shotId: string) {
     let postingId: string | null = null;
     let postingText = input.posting_text ?? "";
     if (input.posting_url) {
-      const url_hash = createHash("sha256").update(input.posting_url.trim().toLowerCase()).digest("hex");
+      const url_hash = createHash("sha256").update(canonicalPostingUrl(input.posting_url).trim().toLowerCase()).digest("hex");
       const { data: cached } = await db.from("postings").select("id, raw_text").eq("url_hash", url_hash).maybeSingle();
       if (cached) { postingId = cached.id; postingText = cached.raw_text; }
       else {

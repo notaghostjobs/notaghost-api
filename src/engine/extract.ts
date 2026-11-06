@@ -1,7 +1,7 @@
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import { db } from "../lib/db.js";
-import { jobKey, stripFurniture, CLEAN_SINCE } from "./ghost/canon.js";
+import { jobKey, stripFurniture, CLEAN_SINCE, canonicalPostingUrl } from "./ghost/canon.js";
 
 /** Plain text out of a PDF or DOCX résumé. No AI here. */
 export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number }> {
@@ -22,7 +22,8 @@ function clean(s: string) {
 }
 
 /** Fetch a posting URL and reduce it to readable text. Pasted text goes straight through. */
-export async function fetchPosting(url: string): Promise<string> {
+export async function fetchPosting(url0: string): Promise<string> {
+  const url = canonicalPostingUrl(url0);   // a LinkedIn search link with currentJobId is the job's own page
   // the user's own browser usually read this posting seconds ago (the card) and sent it to us; that copy beats any
   // server fetch — and job boards like Naukri refuse the server outright
   try {
@@ -39,8 +40,11 @@ export async function fetchPosting(url: string): Promise<string> {
         headers: { "user-agent": "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello@notaghost.jobs)", "accept-language": "en-IN,en;q=0.9" },
         signal: AbortSignal.timeout(15000),
       });
-      if (g.ok) { const t = htmlToText(await g.text()); if (t.length > 200) return t; }
+      if (g.ok) { const t = htmlToText(await g.text()); if (t.length > 200 && !authwall(t)) return t; }
     } catch { /* fall through */ }
+    // the free check's reader has more ways in (guest API with retries, the public page, cached sightings): use it before giving up
+    try { const { readPosting } = await import("./ghost/read.js"); const r = await readPosting(url); const t = stripFurniture(r.text); if (t.length > 200 && !authwall(t)) return t; } catch { /* fall through */ }
+    throw Object.assign(new Error("LinkedIn didn’t let us read that posting just now. Open the job in Chrome with the Ghosted extension, or paste the posting text."), { status: 400 });
   }
   const r = await fetch(url, {
     headers: { "user-agent": "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello@notaghost.jobs)", "accept-language": "en-IN,en;q=0.9" },
@@ -49,7 +53,14 @@ export async function fetchPosting(url: string): Promise<string> {
   });
   if (!r.ok) throw Object.assign(new Error(`Couldn't open that link (${r.status}). Paste the posting text instead.`), { status: 400 });
   const html = await r.text();
-  return htmlToText(html);
+  const text = htmlToText(html);
+  if (authwall(text)) throw Object.assign(new Error("That page asks for a login before it shows the job. Paste the posting text instead."), { status: 400 });
+  return text;
+}
+/** A login wall or a search page came back instead of a job. */
+function authwall(t: string): boolean {
+  const head = t.slice(0, 1500).toLowerCase();
+  return /sign in to (view|see)|join linkedin|authwall|sign in\s+to continue|jobs in (bengaluru|bangalore|india)\s*[-|·]/.test(head) && !/responsibilit|requirements|qualifications|about the (job|role)/i.test(t);
 }
 
 export function htmlToText(html: string) {

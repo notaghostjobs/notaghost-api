@@ -103,3 +103,14 @@ export function looksLikeJob(raw: { text: string; job_ld?: boolean; title?: stri
   const hits = JD_MARKERS.reduce((n, re) => n + (re.test(t) ? 1 : 0), 0);
   return hits >= 3;
 }
+
+/** The one URL we fetch, cache and hash for a posting, whatever form the person pasted. LinkedIn search, collections and
+ *  "search-results" links carry the job as currentJobId — those become the job's own page; tracking parameters go. */
+export function canonicalPostingUrl(url: string): string {
+  const u = /^https?:\/\//i.test(url) ? url.trim() : `https://${url.trim()}`;
+  const li = u.match(/linkedin\.com\/jobs\/view\/(?:[^/?#]*-)?(\d{6,})/i) ?? u.match(/linkedin\.com\/jobs\/.*?[?&]currentJobId=(\d{6,})/i);
+  if (li) return `https://www.linkedin.com/jobs/view/${li[1]}/`;
+  const nk = u.match(/naukri\.com\/job-listings-[^?#]*?-(\d{8,})/i) ?? u.match(/naukri\.com\/[^?#]*?-(\d{8,})(?:[?#]|$)/i);
+  if (nk) { try { const x = new URL(u); x.search = ""; x.hash = ""; return x.toString(); } catch { /* fall through */ } }
+  return strip(u);
+}
