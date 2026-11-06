@@ -18,6 +18,7 @@ export interface RawRead {
   title?: string | null;
   location?: string | null;
   poster?: { name: string | null } | null;
+  job_ld?: boolean;          // the page carried schema.org JobPosting data
   source: PostingFacts["source"];
 }
 
@@ -99,7 +100,7 @@ export async function readPosting(url: string): Promise<RawRead> {
   if (text.length < 200) throw blocked(new URL(url).hostname);
   const ld = jsonLd(html) ?? jsonLd(first);
   const og = (h: string, k: string) => pick(h, new RegExp(`<meta[^>]+property="og:${k}"[^>]+content="([^"]+)"`, "i"));
-  return { text, html, source, title: ld?.title ?? og(first, "title") ?? og(html, "title") ?? null, company: ld?.hiringOrganization?.name ?? og(first, "site_name") ?? null,
+  return { text, html, source, job_ld: !!ld, title: ld?.title ?? og(first, "title") ?? og(html, "title") ?? null, company: ld?.hiringOrganization?.name ?? og(first, "site_name") ?? null,
     location: ld?.jobLocation?.address?.addressLocality ?? null,
     posted_text: ld?.datePosted ? `Posted ${new Date(ld.datePosted).toDateString()}` : pick(html, /(\d+\s+days?\s+ago|\d+\s+weeks?\s+ago|\d+\s+months?\s+ago)/i),
     posted_days: ld?.datePosted ? Math.floor((Date.now() - new Date(ld.datePosted).getTime()) / 86400e3) : null,

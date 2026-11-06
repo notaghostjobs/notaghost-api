@@ -201,7 +201,8 @@ async function handle(m: any) {
     await refund(caller, key).catch(() => {});
     const msg = (e as Error).message ?? "";
     console.error("[whatsapp] check", msg.slice(0, 200));
-    await send(from, "I couldn’t read that posting just now. If it’s a LinkedIn or Naukri link, open it in Chrome with the Ghosted extension — or try again in a minute.");
+    // a 422 is a message for the person (not a job posting, a search page, a page we can't read); anything else is ours
+    await send(from, (e as any)?.status === 422 && msg ? msg : "I couldn’t read that posting just now. If it’s a LinkedIn or Naukri link, open it in Chrome with the Ghosted extension — or try again in a minute.");
     return;
   }
   const token = await createSession(user.id);

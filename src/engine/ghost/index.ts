@@ -5,7 +5,7 @@ import { findAts, matchTitle } from "./ats.js";
 import { research } from "./research.js";
 import { score } from "./score.js";
 import { readerFacts } from "./reader.js";
-import { jobKey, strip, companyKey, fingerprint, hamming, stripFurniture, CLEAN_SINCE, FULL_LIST_SINCE } from "./canon.js";
+import { jobKey, strip, companyKey, fingerprint, hamming, stripFurniture, CLEAN_SINCE, FULL_LIST_SINCE, isSiteRoot, looksLikeJob } from "./canon.js";
 import type { PostingFacts, Scored } from "./types.js";
 
 const DAY = 86400e3;
@@ -37,6 +37,8 @@ async function observe(postingId: string, page: { posted_text?: string; applican
 /** Check a link (or pasted text). Returns the stored score if it's current; computes and stores otherwise. */
 export async function ghostCheck(input: { url?: string; text?: string; page?: { title?: string; company?: string; location?: string; posted_text?: string; applicants?: number; apply_url?: string; closed?: boolean; source?: string } }, opts: { force?: boolean; quick?: boolean } = {}): Promise<CheckResult> {
   const url = input.url ? (/^https?:\/\//i.test(input.url) ? input.url.trim() : `https://${input.url.trim()}`) : null;
+  const NOT_A_JOB = "That link isn’t a job posting. Open the job itself — LinkedIn, Naukri or the company’s careers page — and paste the link from its own page.";
+  if (url && isSiteRoot(url)) throw Object.assign(new Error(NOT_A_JOB), { status: 422 });
   const key = url ? jobKey(url).key : `text:${fingerprint(input.text ?? "").slice(0, 24)}`;
 
   // 1. existing, current score → return as-is (this is the stability rule)
@@ -47,7 +49,8 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   const tainted = (Array.isArray(existing?.signals) && (existing!.signals as any[]).some((s) => s?.n === 7))
     || (existing?.source === "linkedin" && !!existing?.scored_at && existing.scored_at < CLEAN_SINCE)
     || (claimsSystem && !existing?.sighting_id)   // scored before the link was stored: re-score once so the link lands
-    || (existing?.source === "ats" && !existing?.title && /myworkdayjobs\.com|greenhouse\.io|gh_jid=/i.test(url ?? ""));   // read before the Workday/Greenhouse API readers (5 Nov): no title, re-read once
+    || (existing?.source === "ats" && !existing?.title && /myworkdayjobs\.com|greenhouse\.io|gh_jid=/i.test(url ?? ""))   // read before the Workday/Greenhouse API readers (5 Nov): no title, re-read once
+    || (existing?.source === "careers" && !!existing?.raw_text && !looksLikeJob({ text: String(existing.raw_text), source: "careers" }));   // a non-job page scored before the job gate (6 Nov): re-read, and the gate decides
   // scored before every check became a line: re-score so the card shows the whole list (₹0 — rules and the reader), history kept
   const partial = !!existing?.scored_at && existing.scored_at < FULL_LIST_SINCE;
   if (existing?.scored_at && !opts.force && !tainted && !partial) {
@@ -85,6 +88,11 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   if (!check.ok) {
     if (!input.text) { try { await db.from("reader_control").upsert({ key: `unreadable:${key}`, value: { url, at: new Date().toISOString(), recovered: false, sent_chars: 0, stripped: raw.text.slice(0, 800), body_len: check.body_len }, updated_at: new Date().toISOString() }); } catch { /* diagnostics only */ } }
     throw Object.assign(new Error("Couldn’t read the posting on this page. Open the job in its own tab, or paste the posting text."), { status: 422 });
+  }
+  // a page that isn't one job posting (a homepage, a product page, an article) is refused, not scored
+  if (url && !input.text && !looksLikeJob(raw)) {
+    if (existing?.id) await db.from("postings").delete().eq("id", existing.id).then(() => {}, () => {});
+    throw Object.assign(new Error(NOT_A_JOB), { status: 422 });
   }
   // quick = the ₹0 reading: rules + the reader, no model, no web research. The default for every free check.
   const quick = opts.quick !== false;

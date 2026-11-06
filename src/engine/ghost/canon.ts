@@ -82,3 +82,24 @@ export function isListingPage(url: string): boolean {
   if (/glassdoor\.[a-z.]+\/Job\/.*SRCH/i.test(u)) return true;
   return false;
 }
+
+/** A bare domain or site root ("https://cursor.com/") is never a job posting. */
+export function isSiteRoot(url: string): boolean {
+  try { const u = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`); return (u.pathname === "/" || u.pathname === "") && !u.search; } catch { return false; }
+}
+const JD_MARKERS = [
+  /\bresponsibilit(?:y|ies)\b/i, /\brequirements?\b/i, /\bqualifications?\b/i, /\bwhat you.ll (?:do|be doing|bring)\b/i, /\bwhat we.re looking for\b/i,
+  /\bapply (?:now|for this (?:job|role|position))\b/i, /\bjob (?:description|type|id|ref)\b/i, /\babout the (?:role|job|position|team)\b/i,
+  /\byears? of experience\b/i, /\b(?:full|part)[- ]time\b/i, /\bemployment type\b/i, /\bwho you are\b/i, /\bnice to have\b/i, /\bpreferred (?:skills|qualifications)\b/i,
+  /\bmust[- ]have\b/i, /\bkey skills\b/i, /\brole overview\b/i, /\bwork location\b/i, /\bctc\b/i, /\bnotice period\b/i,
+];
+/** Does the page we read look like one job posting? Boards and ATS pages are trusted by URL; anything else must either
+ *  declare itself (schema.org JobPosting) or read like a JD: several of the usual sections present. A company homepage,
+ *  a blog post or a product page fails this and is refused instead of being scored. */
+export function looksLikeJob(raw: { text: string; job_ld?: boolean; title?: string | null; source: string }): boolean {
+  if (raw.source !== "careers") return true;
+  if (raw.job_ld) return true;
+  const t = raw.text.slice(0, 30000);
+  const hits = JD_MARKERS.reduce((n, re) => n + (re.test(t) ? 1 : 0), 0);
+  return hits >= 3;
+}
