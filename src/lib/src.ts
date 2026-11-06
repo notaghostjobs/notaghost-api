@@ -19,7 +19,7 @@ export function srcOf(c: Context): Src {
   return { first: cleanTag(c.req.header("x-ghosted-src-first") ?? c.req.query("src")), last: cleanTag(c.req.header("x-ghosted-src-last") ?? c.req.query("src")) };
 }
 
-export type EventKind = "click" | "check" | "signin" | "preview" | "shot" | "order" | "paid" | "wa_in";
+export type EventKind = "click" | "check" | "signin" | "preview" | "shot" | "order" | "paid" | "wa_in" | "wa_nudge";
 
 let eventsMissing = false;   // before migration 0010 the table does not exist; say so once, never fail a request over it
 export async function logEvent(kind: EventKind, e: { src?: Src | null; anon?: string | null; userId?: string | null; meta?: Record<string, unknown> }) {

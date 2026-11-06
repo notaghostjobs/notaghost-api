@@ -20,6 +20,16 @@ const trace = (kind: string, detail: unknown) => { waTrace.unshift({ at: new Dat
 const SITE = "https://notaghost.jobs";
 const GRAPH = "https://graph.facebook.com/v21.0";
 
+/** The four nudges for someone who said hello and never sent a link. One mention of the check (with the Share → WhatsApp flow),
+ *  three about what changes for them. Stops after four. Texts 3 and 4 are also the bodies of the two marketing templates. */
+export const NUDGE_TEXT = [
+  "Still here, and I don’t do the “we’ll get back to you” thing.\n\nSend me the job you were about to apply to and I’ll tell you in eight seconds if anyone’s actually hiring for it.\n\nFastest way: open the job on LinkedIn or Naukri, tap *Share → WhatsApp → Ghosted*. The link lands here by itself.",
+  "Honest maths. An application takes you about 40 minutes: form, résumé, the “why do you want to work here” essay nobody reads.\n\nOne in four of those postings is already gone from the employer’s own system. That’s an evening a week spent writing to nobody.\n\nSend me the link first and spend the evening on the ones that are real.",
+  "Good morning. Once a job comes back Real, I can do one more thing: read your résumé the way their screener reads it and show you the number before you pay a rupee.\n\nMost people find out they’ve done the work but never wrote it down, in the employer’s words. We fix the words. Nothing invented, ever.\n\nStart with a link.",
+  "Last message from me, promise. I’m the one job-search thing that won’t spam you.\n\nWhenever you next see a role you’d actually take, send me the link before you apply. I’ll still be here, it’ll still be free, and it was never you.",
+];
+const NUDGE_TEMPLATE: Record<number, string> = { 2: "ghosted_nudge_morning", 3: "ghosted_nudge_last" };
+
 /** The three launch templates, created through the Graph API (so the console isn't needed). Read-only listing at GET /templates;
  *  POST /templates creates any that are missing. Meta reviews them (minutes to a day); status shows here. */
 export const TEMPLATES = [
@@ -35,14 +45,17 @@ export const TEMPLATES = [
       { type: "BODY", text: "Receipt {{1}} from Ghosted: {{2}} for ₹{{3}}, paid on {{4}}. Tap to view or download.", example: { body_text: [["NAG-2026-00001", "Sharpen — 10 shots", "499", "2 Nov 2026"]] } },
       { type: "BUTTONS", buttons: [{ type: "URL", text: "View receipt", url: "https://notaghost.jobs/app.html#/receipts/{{1}}", example: ["NAG-2026-00001"] }] },
     ] },
+
+  // nudges 3 and 4 go out more than 24 hours after the person's last message, so they must be templates (Meta reviews them)
+  { name: "ghosted_nudge_morning", category: "MARKETING", language: "en",
+    components: [{ type: "BODY", text: NUDGE_TEXT[2] }] },
+  { name: "ghosted_nudge_last", category: "MARKETING", language: "en",
+    components: [{ type: "BODY", text: NUDGE_TEXT[3] }] },
 ];
-whatsapp.get("/templates", async (c) => {
-  if (!env.waWabaId || !env.waToken) return c.json({ error: "WA_WABA_ID / WA_TOKEN not set" }, 500);
-  const r = await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status,category,rejected_reason&limit=50`, { headers: { authorization: `Bearer ${env.waToken}` } });
-  return c.json(await r.json());
-});
-whatsapp.post("/templates", async (c) => {
-  if (!env.waWabaId || !env.waToken) return c.json({ error: "WA_WABA_ID / WA_TOKEN not set" }, 500);
+
+/** Creates any template we don't have yet. Called at boot (idempotent) and from POST /templates. */
+export async function ensureTemplates(): Promise<any[]> {
+  if (!env.waWabaId || !env.waToken) return [];
   const have = await (await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status&limit=50`, { headers: { authorization: `Bearer ${env.waToken}` } })).json();
   const names = new Set(((have as any).data ?? []).map((t: any) => t.name));
   const results: any[] = [];
@@ -51,7 +64,22 @@ whatsapp.post("/templates", async (c) => {
     const r = await fetch(`${GRAPH}/${env.waWabaId}/message_templates`, { method: "POST", headers: { authorization: `Bearer ${env.waToken}`, "content-type": "application/json" }, body: JSON.stringify(t) });
     results.push({ name: t.name, status: r.status, body: await r.json() });
   }
-  return c.json({ results });
+  return results;
+}
+async function templateApproved(name: string): Promise<boolean> {
+  try {
+    const r = await (await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status&name=${name}`, { headers: { authorization: `Bearer ${env.waToken}` } })).json();
+    return ((r as any).data ?? []).some((t: any) => t.name === name && t.status === "APPROVED");
+  } catch { return false; }
+}
+whatsapp.get("/templates", async (c) => {
+  if (!env.waWabaId || !env.waToken) return c.json({ error: "WA_WABA_ID / WA_TOKEN not set" }, 500);
+  const r = await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status,category,rejected_reason&limit=50`, { headers: { authorization: `Bearer ${env.waToken}` } });
+  return c.json(await r.json());
+});
+whatsapp.post("/templates", async (c) => {
+  if (!env.waWabaId || !env.waToken) return c.json({ error: "WA_WABA_ID / WA_TOKEN not set" }, 500);
+  return c.json({ results: await ensureTemplates() });
 });
 
 /** Meta's one-time handshake when the callback URL is saved: echo hub.challenge if the verify token matches. */
@@ -82,22 +110,57 @@ whatsapp.post("/webhook", async (c) => {
 const seen = new Map<string, number>();   // Meta re-delivers on any hiccup; a message id is handled once
 function once(id: string) { const now = Date.now(); for (const [k, t] of seen) if (now - t > 600e3) seen.delete(k); if (seen.has(id)) return false; seen.set(id, now); return true; }
 
-// 20 minutes after the opener with no link back: one nudge, once, with three roles live on employers’ own systems today.
-const nudges = new Map<string, ReturnType<typeof setTimeout>>();
-function cancelNudge(from: string) { const t = nudges.get(from); if (t) { clearTimeout(t); nudges.delete(from); } }
-function scheduleNudge(from: string) {
-  cancelNudge(from);
-  nudges.set(from, setTimeout(async () => {
-    nudges.delete(from);
-    try {
-      const { data } = await db.from("sightings").select("title,company_name,url").eq("blr", true).is("gone_at", null).not("url", "is", null).not("title", "is", null).not("source", "in", "(linkedin,naukri)")
-        .order("last_seen", { ascending: false }).limit(60);
-      const seenCo = new Set<string>(); const picks: any[] = [];
-      for (const r of data ?? []) { const co = String(r.company_name ?? "").trim(); if (!co || seenCo.has(co) || /\b(senior|lead|principal|director|manager|head|vp|staff)\b/i.test(r.title)) continue; seenCo.add(co); picks.push(r); if (picks.length === 3) break; }
-      const lines = picks.map((r) => `• ${String(r.title).slice(0, 60)} · ${r.company_name}\n${r.url}`).join("\n\n");
-      await send(from, "Still here whenever you find one." + (lines ? `\n\nIf it helps, these three are live on employers’ own systems in Bengaluru right now — send any one back and I’ll check it:\n\n${lines}` : "") + "\n\n_Ghosted · notaghost.jobs_");
-    } catch (e: any) { console.error("[whatsapp] nudge", e?.message ?? e); }
-  }, 20 * 60e3));
+// Nudges for a hello without a link. State lives in reader_control (survives deploys): key nudge:<digits>,
+// value { at: opened, sent: n, next: iso, done }. A tick every 5 minutes sends what is due. Any inbound link ends the sequence.
+const IST = 5.5 * 3600e3;
+function nextIstMorning(fromMs: number, daysAhead: number): number {
+  // 10:00 IST on the given number of days after `fromMs`
+  const d = new Date(fromMs + IST); d.setUTCHours(0, 0, 0, 0); d.setUTCDate(d.getUTCDate() + daysAhead); d.setUTCHours(10, 0, 0, 0);
+  return d.getTime() - IST;
+}
+function nudgeDue(step: number, openedMs: number): number {
+  if (step === 0) return openedMs + 20 * 60e3;          // 20 minutes
+  if (step === 1) return openedMs + 3 * 3600e3;          // 3 hours
+  if (step === 2) return nextIstMorning(openedMs, 1);     // next morning 10:00 IST
+  return nextIstMorning(openedMs, 3);                     // 3 days later, 10:00 IST, then stop
+}
+async function startNudges(from: string) {
+  const key = `nudge:${from}`;
+  const { data } = await db.from("reader_control").select("value").eq("key", key).maybeSingle();
+  if (data) return;                                      // anyone we have ever nudged, or who ever sent a link, is left alone
+  const at = Date.now();
+  await db.from("reader_control").upsert({ key, value: { at, sent: 0, next: new Date(nudgeDue(0, at)).toISOString(), done: false }, updated_at: new Date().toISOString() });
+}
+async function endNudges(from: string) {
+  const key = `nudge:${from}`;
+  await db.from("reader_control").upsert({ key, value: { done: true, sent: -1, linked: true }, updated_at: new Date().toISOString() });
+}
+export async function runNudges(): Promise<number> {
+  const now = Date.now();
+  const { data } = await db.from("reader_control").select("key,value").like("key", "nudge:%").limit(500);
+  let n = 0;
+  for (const row of data ?? []) {
+    const v: any = row.value ?? {}; if (v.done || !v.next || Date.parse(v.next) > now) continue;
+    const from = row.key.slice("nudge:".length), step = Number(v.sent ?? 0);
+    let ok = false;
+    const tpl = NUDGE_TEMPLATE[step];
+    if (tpl) {
+      if (!(await templateApproved(tpl))) {
+        // not approved yet: try again in an hour, but never let a step slip past the next one's time
+        const retry = Math.min(now + 3600e3, step < 3 ? nudgeDue(step + 1, Number(v.at)) : now + 3600e3);
+        const give_up = step === 3 && now > nudgeDue(3, Number(v.at)) + 48 * 3600e3;
+        await db.from("reader_control").upsert({ key: row.key, value: give_up ? { ...v, done: true } : { ...v, next: new Date(retry).toISOString() }, updated_at: new Date().toISOString() });
+        continue;
+      }
+      ok = await graph("messages", { messaging_product: "whatsapp", to: from, type: "template", template: { name: tpl, language: { code: "en" } } });
+    } else {
+      ok = await send(from, NUDGE_TEXT[step] + "\n\n_Ghosted · notaghost.jobs_");
+    }
+    const sent = step + 1, done = sent >= NUDGE_TEXT.length || !ok;
+    await db.from("reader_control").upsert({ key: row.key, value: { ...v, sent, done, next: done ? null : new Date(nudgeDue(sent, Number(v.at))).toISOString() }, updated_at: new Date().toISOString() });
+    if (ok) { n++; void logEvent("wa_nudge", { meta: { step: sent } }); }
+  }
+  return n;
 }
 
 async function handle(m: any) {
@@ -114,11 +177,10 @@ async function handle(m: any) {
     await send(from, opener
       ? "You’ve come to the right place. Let’s end that together.\n\nSend me any job link and in about eight seconds I’ll tell you if the role is real — with every reason.\n\nFastest way: in LinkedIn or Naukri, on the job you’re looking at, tap *Share → WhatsApp → Ghosted*. The link lands here on its own.\n\n_Ghosted · notaghost.jobs_"
       : "I need the link itself — on the job, tap *Share → Copy link*, then paste it here. LinkedIn, Naukri or any careers page.\n\n_Ghosted · notaghost.jobs_");
-    // nudge paused (6 Nov): it listed other companies' job links, which sends people off Ghosted and can't know what fits them. To be reworked.
-    void scheduleNudge; void opener;
+    startNudges(from).catch((e) => console.error("[whatsapp] nudge start", e?.message ?? e));
     return;
   }
-  cancelNudge(from);
+  endNudges(from).catch(() => {});
   const user = await userFor(from);
   await stampUser(user.id, { first: tag ?? "wa-direct", last: tag ?? "wa-direct" });
   const src = await srcOfUser(user.id);
