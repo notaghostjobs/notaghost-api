@@ -1,3 +1,4 @@
+import { placeTold } from "./refile.js";
 import { json, FAST, MODEL } from "./claude.js";
 import { checkRules, tidy } from "./rules.js";
 import { fit, target, v2On } from "./fit.js";
@@ -101,6 +102,7 @@ export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, mo
   return json<Rewrite>(
     `You sharpen a résumé for one specific posting. Rules, in order of importance:
 0. CHECKLIST. You are given the requirements with their current status. Every requirement marked "have_not_said" MUST end up clearly stated in the rewrite, using the evidence quoted, in the employer's words — in the relevant block AND in the role where the evidence lives. Requirements marked "missing" are never claimed. Stating a have_not_said item means putting the QUOTED EVIDENCE in the employer's framing — never adding a verb the evidence doesn't support ("set targets", "made decisions from data", "owned end-to-end") unless the original says it. If the evidence genuinely doesn't carry the requirement, leave it unsaid and say so in fit_line.
+0a. A requirement marked told:true was answered by the candidate in our questionnaire; its line is theirs, not any employer's. Put that line in the relevant block, exactly as given. Put it inside a role ONLY if the line itself names that employer ("… at Ninjacart"); never file it under any other company, however plausible.
 0b. Facts that sit in the original's profile/summary (e.g. "led teams of 250", "reduced CAC") stay in the summary or relevant block; do NOT pin them to a specific employer unless the original does. No derived numbers (years in a sector, totals, averages).
 1. NEVER invent. No new employers, titles, dates, degrees, tools, numbers or outcomes. Every bullet must be traceable to the original résumé.
 2. The posting's priorities drive the structure. Whatever the role is built around (its first three "own/responsibilities" items) must be visible in the headline area, the summary, the relevant block and the first bullet of the most recent role — if the candidate has evidence for it anywhere, including older roles, ventures or projects, pull it forward. Mirror the posting's language where it is true of the candidate. NEVER cut a bullet: every bullet of the original stays in its own role with every number, name, tool and outcome it carries — you may reorder, reword into the employer's language, or split one bullet into two; you may not delete, merge away, or move a bullet to another role or section. A venture or side project that is the candidate's best evidence for the role moves UP, into or next to Experience, not buried at the end.
@@ -379,6 +381,9 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   //     remain, the shot FAILS and is refunded — a wrong résumé is never delivered.
   const kept = preserveFacts(rewrite, resume);
   if (kept.n) { rewrite = kept.rewrite; timing.preserved = kept.n; console.error("[sharpen] PRESERVED FACTS", kept.n, kept.log); }
+  // a questionnaire line sits inside a role only when it names that employer; otherwise it is the candidate's own claim, at the top
+  const placedTold = placeTold(rewrite, matches.filter((m) => m.told && m.line), resume);
+  if (placedTold.log.length) { rewrite = placedTold.rewrite; timing.told_moved = placedTold.log.length; console.error("[sharpen] TOLD LINES PLACED", placedTold.log); }
   let foreign = factAudit(rewrite, resume);
   if (foreign.length) {
     t0 = t("Checking every number");

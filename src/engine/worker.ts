@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { fit, target } from "../engine/fit.js";
 import { addedFacts } from "./told.js";
 import { takeDraft, draftKey } from "./prewarm.js";
+import { refileBullets } from "./refile.js";
 
 /** Called right after upload. Extracts + parses once; stores text and profile. */
 export async function processResume(resumeId: string) {
@@ -18,9 +19,13 @@ export async function processResume(resumeId: string) {
   const buf = Buffer.from(await file.data.arrayBuffer());
   const { text, pages } = await extractText(buf, row.filename ?? "resume.pdf");
   if (text.length < 300) throw Object.assign(new Error("Couldn't read text from that file. Export it as a text PDF, not a scan."), { status: 400 });
-  const parsed = await parseResume(text, pages);
+  let parsed = await parseResume(text, pages);
   const layout = layoutWarning(text, pages);
   (parsed as any).layout_warning = layout;
+  // the parse is checked against the text it came from: a bullet filed under the neighbouring employer goes back to its own
+  const refiled = refileBullets(parsed, text);
+  if (refiled.log.length) { parsed = refiled.profile; console.error("[resume] REFILED", resumeId, refiled.log); }
+  (parsed as any).refiled = true;
   await db.from("resumes").update({ text, parsed }).eq("id", resumeId);
   return parsed;
 }
@@ -33,7 +38,14 @@ export async function runShot(shotId: string) {
   try {
     const { data: res } = await db.from("resumes").select("parsed, text").eq("id", shot.resume_id).single();
     if (!res?.parsed) throw new Error("Résumé not parsed yet.");
-    const profile = res.parsed as ResumeProfile;
+    let profile = res.parsed as ResumeProfile;
+    // profiles parsed before 6 Nov were never checked against their text; check now, and keep the corrected parse
+    if (res.text && !(profile as any).refiled) {
+      const refiled = refileBullets(profile, res.text);
+      profile = { ...refiled.profile, refiled: true } as ResumeProfile;
+      if (refiled.log.length) console.error("[shot] REFILED", shot.resume_id, refiled.log);
+      await db.from("resumes").update({ parsed: profile }).eq("id", shot.resume_id).then(() => {}, () => {});
+    }
 
     // posting: fetch or pasted; cache by url hash
     const input = shot.input as { posting_url?: string; posting_text?: string; preview_id?: string; fresh?: boolean };
