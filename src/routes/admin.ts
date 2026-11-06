@@ -20,7 +20,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -150,6 +150,24 @@ admin.get("/diag/posting", async (c) => {
   } catch (e) { out.fresh = { ...(out.fresh ?? {}), error: (e as Error).message }; }
   out.ms = Date.now() - t0;
   return c.json(out);
+});
+
+/** One shot, for a fact-guard post-mortem: the parsed profile the engine was given (roles with their bullets), what the
+ *  candidate told the questionnaire, and the roles of the document that went out — enough to see where a line moved or
+ *  appeared, without the PDF. Read-only. ?id= a shot id prefix, or the latest shot when omitted. */
+admin.get("/diag/shot", async (c) => {
+  const id = c.req.query("id") ?? "";
+  let q = db.from("shots").select("id, created_at, status, resume_id, user_id, input, output").order("created_at", { ascending: false }).limit(1);
+  if (id) q = q.like("id", `${id}%`);
+  const { data: rows } = await q; const shot: any = rows?.[0]; if (!shot) return c.json({ error: "no shot" }, 404);
+  const { data: res } = await db.from("resumes").select("parsed, text, created_at, filename").eq("id", shot.resume_id).maybeSingle();
+  const roles = (rs: any[] | undefined) => (rs ?? []).map((r) => ({ company: r.company, title: r.title, start: r.start, end: r.end, bullets: r.bullets ?? [] }));
+  const o = shot.output ?? {};
+  return c.json({ id: shot.id, at: shot.created_at, status: shot.status, input: { url: shot.input?.posting_url, preview_id: shot.input?.preview_id, fresh: shot.input?.fresh },
+    resume: res ? { created_at: (res as any).created_at, filename: (res as any).filename, text_len: (res.text ?? "").length, text_head: (res.text ?? "").slice(0, 300), parsed_roles: roles((res.parsed as any)?.roles), parsed_extra: (res.parsed as any)?.extra_sections, parsed_skills: ((res.parsed as any)?.skills ?? []).map((s: any) => s?.name ?? s) } : null,
+    told: o.told ?? o.candidate_added_facts ?? null,
+    rewrite: o.rewrite ? { headline: o.rewrite.headline, summary: o.rewrite.summary, relevant: o.rewrite.relevant, roles: roles(o.rewrite.roles), extra_sections: o.rewrite.extra_sections } : null,
+    timing: o.timing, before: o.before, after: o.after });
 });
 
 /** The last pages the reader refused as unreadable: what the extension sent, and what was left after furniture stripping. */
