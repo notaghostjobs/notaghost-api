@@ -20,7 +20,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -168,6 +168,15 @@ admin.get("/diag/shot", async (c) => {
     told: o.told ?? o.candidate_added_facts ?? null,
     rewrite: o.rewrite ? { headline: o.rewrite.headline, summary: o.rewrite.summary, relevant: o.rewrite.relevant, roles: roles(o.rewrite.roles), extra_sections: o.rewrite.extra_sections } : null,
     timing: o.timing, before: o.before, after: o.after });
+});
+
+/** The latest résumé uploads as the clerk read them: roles with their lines, so a parse can be checked against the file
+ *  without a shot. Read-only. ?n= how many (default 3). */
+admin.get("/diag/resumes", async (c) => {
+  const n = Math.min(10, Math.max(1, Number(c.req.query("n") ?? 3)));
+  const { data } = await db.from("resumes").select("id, created_at, filename, text, parsed").order("created_at", { ascending: false }).limit(n);
+  return c.json((data ?? []).map((r: any) => ({ id: r.id, created_at: r.created_at, filename: r.filename, text_len: (r.text ?? "").length, pages: r.parsed?.pages, refiled: !!r.parsed?.refiled, source_is_ghosted: !!r.parsed?.source_is_ghosted, layout_warning: r.parsed?.layout_warning ?? null,
+    name: r.parsed?.name, roles: (r.parsed?.roles ?? []).map((x: any) => ({ company: x.company, title: x.title, start: x.start, end: x.end, bullets: x.bullets })), skills: (r.parsed?.skills ?? []).length, education: r.parsed?.education, extra: (r.parsed?.extra_sections ?? []).map((x: any) => `${x.title} (${x.items?.length ?? 0})`) })));
 });
 
 /** The last pages the reader refused as unreadable: what the extension sent, and what was left after furniture stripping. */
