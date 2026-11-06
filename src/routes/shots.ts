@@ -122,6 +122,19 @@ shots.get("/:id/pdf", async (c) => {
   return new Response(f.data, { headers: { "content-type": "application/pdf", "content-disposition": `attachment; filename="resume-sharpened.pdf"` } });
 });
 
+/** Everything this person has sharpened, newest first: the role, the numbers, and a signed link to each document. */
+shots.get("/history", async (c) => {
+  const { data } = await db.from("shots").select("id, status, created_at, done_at, output").eq("user_id", c.get("user").id).eq("status", "done").order("created_at", { ascending: false }).limit(50);
+  const rows = (data ?? []).map((r) => {
+    const o = (r.output ?? {}) as { posting?: { title?: string; company?: string; location?: string }; before?: number; after?: number; pdf_path?: string; repeat?: boolean };
+    const title = o.posting?.title ?? "Role", company = o.posting?.company ?? "";
+    const name = `Resume-${String(company || "sharpened").replace(/[^A-Za-z0-9]+/g, "-")}.pdf`;
+    return { id: r.id, at: r.done_at ?? r.created_at, title, company, location: o.posting?.location ?? "", before: o.before ?? null, after: o.after ?? null,
+      pdf: o.pdf_path ? docLink(r.id, 7 * 86400, name) : null };
+  });
+  return c.json({ shots: rows });
+});
+
 shots.get("/:id", async (c) => {
   const { data } = await db
     .from("shots").select("*").eq("id", c.req.param("id")).eq("user_id", c.get("user").id).maybeSingle();
