@@ -145,7 +145,7 @@ admin.get("/diag/posting", async (c) => {
 
 /** The last pages the reader refused as unreadable: what the extension sent, and what was left after furniture stripping. */
 admin.get("/unreadable", async (c) => {
-  const { data } = await db.from("reader_control").select("key,value,updated_at").like("key", "unreadable:%").order("updated_at", { ascending: false }).limit(40);
+  const { data } = await db.from("reader_control").select("key,value,updated_at").or("key.like.unreadable:%,key.like.sharpen_fail:%").order("updated_at", { ascending: false }).limit(40);
   return c.json(data ?? []);
 });
 

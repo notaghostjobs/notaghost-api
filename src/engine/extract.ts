@@ -45,16 +45,24 @@ export async function fetchPosting(url0: string, opts: { bypassCache?: boolean }
   // LinkedIn: the guest endpoint returns the posting without a login wall and rarely rate-limits
   const li = url.match(/linkedin\.com\/jobs\/view\/(?:[^/?]*-)?(\d{6,})/i);
   if (li) {
-    try {
-      const g = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${li[1]}`, {
-        headers: { "user-agent": "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello@notaghost.jobs)", "accept-language": "en-IN,en;q=0.9" },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (g.ok) { const t = htmlToText(await g.text()); if (t.length > 200 && !authwall(t)) return t; }
-    } catch { /* fall through */ }
-    // the free check's reader has more ways in (guest API with retries, the public page, cached sightings): use it before giving up
-    try { const { readPosting } = await import("./ghost/read.js"); const r = await readPosting(url); const t = stripFurniture(r.text); if (t.length > 200 && !authwall(t)) return t; } catch { /* fall through */ }
-    throw Object.assign(new Error("LinkedIn didn’t let us read that posting just now. Open the job in Chrome with the Ghosted extension, or paste the posting text."), { status: 400 });
+    const why: string[] = [];
+    // guest endpoint, three tries with a pause: it answers 429 in bursts and recovers within a second or two
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const g = await fetch(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${li[1]}`, {
+          headers: { "user-agent": "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello@notaghost.jobs)", "accept-language": "en-IN,en;q=0.9" },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (g.ok) { const t = htmlToText(await g.text()); if (t.length > 200 && !authwall(t)) return t; why.push(`guest ok but ${t.length} chars${authwall(t) ? " (authwall)" : ""}`); break; }
+        why.push(`guest ${g.status}`);
+        if (g.status !== 429 && g.status < 500) break;
+      } catch (e) { why.push(`guest ${(e as Error).name}`); }
+      await new Promise((r) => setTimeout(r, 1200 + attempt * 1300));
+    }
+    // the free check's reader has more ways in (the public page, cached sightings): use it before giving up
+    try { const { readPosting } = await import("./ghost/read.js"); const r = await readPosting(url); const t = stripFurniture(r.text); if (t.length > 200 && !authwall(t)) return t; why.push(`reader ${t.length} chars`); } catch (e) { why.push(`reader: ${(e as Error).message.slice(0, 80)}`); }
+    try { await db.from("reader_control").upsert({ key: `sharpen_fail:linkedin:${li[1]}`, value: { at: new Date().toISOString(), url, why }, updated_at: new Date().toISOString() }); } catch { /* fine */ }
+    throw Object.assign(new Error("LinkedIn didn’t let us read that posting just now. Open the job in Chrome with the Ghosted extension, or paste the posting text."), { status: 400, why });
   }
   const r = await fetch(url, {
     headers: { "user-agent": "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello@notaghost.jobs)", "accept-language": "en-IN,en;q=0.9" },
