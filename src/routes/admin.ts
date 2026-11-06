@@ -158,7 +158,7 @@ admin.get("/diag/posting", async (c) => {
 admin.get("/diag/shot", async (c) => {
   const id = c.req.query("id") ?? "";
   let q = db.from("shots").select("id, created_at, status, resume_id, user_id, input, output").order("created_at", { ascending: false }).limit(1);
-  if (id) q = q.like("id", `${id}%`);
+  if (id) q = /^[0-9a-f-]{36}$/.test(id) ? q.eq("id", id) : q.filter("id::text", "like", `${id}%`);
   const { data: rows } = await q; const shot: any = rows?.[0]; if (!shot) return c.json({ error: "no shot" }, 404);
   const { data: res } = await db.from("resumes").select("parsed, text, created_at, filename").eq("id", shot.resume_id).maybeSingle();
   const roles = (rs: any[] | undefined) => (rs ?? []).map((r) => ({ company: r.company, title: r.title, start: r.start, end: r.end, bullets: r.bullets ?? [] }));
