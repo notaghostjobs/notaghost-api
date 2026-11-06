@@ -307,7 +307,10 @@ function bouncedToListing(from: string, finalUrl: string | undefined): boolean {
     if (a.pathname.replace(/\/$/, "") === b.pathname.replace(/\/$/, "")) return false;
     const path = b.pathname.replace(/\/$/, "");
     // a job URL that lands on the site root, a locale root, or a jobs/careers/search index has lost its job
-    return path === "" || /^\/[a-z]{2}(?:[-_][a-z]{2})?$/i.test(path) || /^\/(?:[a-z]{2}(?:[-_][a-z]{2})?\/)?(?:global\/[a-z]{2}|jobs|careers|search|job-search|opportunities|openings|positions|vacancies|en)\/?$/i.test(path) || /[?&]error=true/i.test(finalUrl) || /\/jobs-in-[a-z-]+$/i.test(path);
+    const segs = path.split("/").filter(Boolean), last = (segs[segs.length - 1] ?? "").toLowerCase();
+    const indexWord = /^(?:jobs|careers|career|search|job-search|jobsearch|opportunities|openings|positions|vacancies|en|global|home|all-jobs|joblist)$/.test(last);
+    // the site root, a locale root, a short index path ("/careers/search", "/global/en", "/jobs"), an explicit error flag, or Naukri's search page
+    return path === "" || /^\/[a-z]{2}(?:[-_][a-z]{2})?$/i.test(path) || (segs.length <= 3 && indexWord && !/\d{4,}/.test(path)) || /[?&]error=true/i.test(finalUrl) || /\/jobs-in-[a-z-]+$/i.test(path);
   } catch { return false; }
 }
 function pick(html: string, re: RegExp) { const m = html.match(re); return m ? htmlToText(m[1]).trim() || null : null; }
