@@ -1,4 +1,4 @@
-import { canonicalPostingUrl } from "../engine/ghost/canon.js";
+import { canonicalPostingUrl, asUrl } from "../engine/ghost/canon.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -46,7 +46,7 @@ preview.post("/warm", async (c) => {
 
 preview.post("/", async (c) => {
   const u = c.get("user");
-  const body = z.object({ posting_url: z.string().url().optional(), posting_text: z.string().min(80).optional() })
+  const body = z.object({ posting_url: z.string().min(8).transform(asUrl).optional(), posting_text: z.string().min(80).optional() })
     .refine((b) => b.posting_url || b.posting_text, "Give a link or paste the posting.").safeParse(await c.req.json());
   if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
 

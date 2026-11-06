@@ -12,11 +12,12 @@ resumes.post("/", async (c) => {
   const user = c.get("user");
   const form = await c.req.formData();
   const file = form.get("file");
-  if (!(file instanceof File)) return c.json({ error: "Attach a PDF or DOCX." }, 400);
+  if (!(file instanceof File)) return c.json({ error: "Attach a PDF, .docx or .doc." }, 400);
+  if (!/\.(pdf|docx|doc)$/i.test(file.name)) return c.json({ error: "Upload a PDF, .docx or .doc résumé." }, 400);
   if (file.size > 5 * 1024 * 1024) return c.json({ error: "Keep it under 5 MB." }, 400);
 
   const id = crypto.randomUUID();
-  const ext = file.name.toLowerCase().endsWith(".docx") ? "docx" : "pdf";
+  const ext = file.name.toLowerCase().endsWith(".docx") ? "docx" : file.name.toLowerCase().endsWith(".doc") ? "doc" : "pdf";
   const path = `${user.id}/${id}.${ext}`;
   const buf = Buffer.from(await file.arrayBuffer());
 

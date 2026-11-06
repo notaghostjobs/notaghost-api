@@ -114,3 +114,14 @@ export function canonicalPostingUrl(url: string): string {
   if (nk) { try { const x = new URL(u); x.search = ""; x.hash = ""; return x.toString(); } catch { /* fall through */ } }
   return strip(u);
 }
+
+/** A pasted or page URL, however rough (no scheme, spaces, LinkedIn search form), as a proper absolute URL — or null. */
+export function asUrl(raw: string): string {
+  const t = raw.trim();
+  const m = t.match(/https?:\/\/\S+/i);
+  let u = m ? m[0] : t;
+  if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+  u = u.replace(/ /g, "%20");
+  try { new URL(u); } catch { throw Object.assign(new Error("That doesn’t look like a job link. Copy the link from the job’s own page."), { status: 400 }); }
+  return canonicalPostingUrl(u);
+}

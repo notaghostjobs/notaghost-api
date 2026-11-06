@@ -1,3 +1,4 @@
+import { asUrl } from "../engine/ghost/canon.js";
 import { docLink } from "./doc.js";
 import { Hono } from "hono";
 import { prewarm, draftKey } from "../engine/prewarm.js";
@@ -57,7 +58,7 @@ shots.post("/", async (c) => {
   const body = z
     .object({
       product: z.enum(["sharpen", "build"]),
-      posting_url: z.string().url().optional(),
+      posting_url: z.string().min(8).transform(asUrl).optional(),
       posting_text: z.string().min(80).optional(),
       preview_id: z.string().uuid().optional(),
       fresh: z.boolean().optional(),            // "Sharpen anyway" on a pair that already has a document: run anew, spend the shot

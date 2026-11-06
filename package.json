@@ -22,6 +22,7 @@
     "pdfkit": "^0.20.2",
     "playwright-core": "1.64.1",
     "razorpay": "^2.9.4",
+    "word-extractor": "^1.0.4",
     "zod": "^3.23.8"
   },
   "devDependencies": {

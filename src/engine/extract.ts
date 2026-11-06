@@ -5,7 +5,17 @@ import { jobKey, stripFurniture, CLEAN_SINCE, canonicalPostingUrl } from "./ghos
 
 /** Plain text out of a PDF or DOCX résumé. No AI here. */
 export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number }> {
-  if (filename.toLowerCase().endsWith(".docx")) {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".doc")) {
+    // Word 97–2003: still common on Indian campuses. word-extractor reads the binary format without Office installed.
+    const { default: WordExtractor } = await import("word-extractor");
+    const doc = await new WordExtractor().extract(buf);
+    const text = clean(doc.getBody());
+    if (text.length < 80) throw Object.assign(new Error("We couldn’t read text from that .doc file. Save it as PDF or .docx and upload again."), { status: 400 });
+    return { text, pages: Math.max(1, Math.round(text.length / 3000)) };
+  }
+  if (!lower.endsWith(".pdf") && !lower.endsWith(".docx")) throw Object.assign(new Error("Upload a PDF, .docx or .doc résumé."), { status: 400 });
+  if (lower.endsWith(".docx")) {
     const r = await mammoth.extractRawText({ buffer: buf });
     const text = clean(r.value);
     return { text, pages: Math.max(1, Math.round(text.length / 3000)) };
