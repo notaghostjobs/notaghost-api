@@ -103,12 +103,13 @@ export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, mo
 0. CHECKLIST. You are given the requirements with their current status. Every requirement marked "have_not_said" MUST end up clearly stated in the rewrite, using the evidence quoted, in the employer's words — in the relevant block AND in the role where the evidence lives. Requirements marked "missing" are never claimed. Stating a have_not_said item means putting the QUOTED EVIDENCE in the employer's framing — never adding a verb the evidence doesn't support ("set targets", "made decisions from data", "owned end-to-end") unless the original says it. If the evidence genuinely doesn't carry the requirement, leave it unsaid and say so in fit_line.
 0b. Facts that sit in the original's profile/summary (e.g. "led teams of 250", "reduced CAC") stay in the summary or relevant block; do NOT pin them to a specific employer unless the original does. No derived numbers (years in a sector, totals, averages).
 1. NEVER invent. No new employers, titles, dates, degrees, tools, numbers or outcomes. Every bullet must be traceable to the original résumé.
-2. The posting's priorities drive the structure. Whatever the role is built around (its first three "own/responsibilities" items) must be visible in the headline area, the summary, the relevant block and the first bullet of the most recent role — if the candidate has evidence for it anywhere, including older roles, ventures or projects, pull it forward. Mirror the posting's language where it is true of the candidate. Cut bullets that don't serve this role (list what you cut in changes). A venture or side project that is the candidate's best evidence for the role moves UP, into or next to Experience, not buried at the end.
+2. The posting's priorities drive the structure. Whatever the role is built around (its first three "own/responsibilities" items) must be visible in the headline area, the summary, the relevant block and the first bullet of the most recent role — if the candidate has evidence for it anywhere, including older roles, ventures or projects, pull it forward. Mirror the posting's language where it is true of the candidate. NEVER cut a bullet: every bullet of the original stays in its own role with every number, name, tool and outcome it carries — you may reorder, reword into the employer's language, or split one bullet into two; you may not delete, merge away, or move a bullet to another role or section. A venture or side project that is the candidate's best evidence for the role moves UP, into or next to Experience, not buried at the end.
 2b. Do not leave generic lines ("collaborated with teams to drive growth") in the two most recent roles; either make them specific from facts elsewhere in the résumé or cut them.
-3. EXPAND, don't pad. Most résumés under-write. Where a bullet compresses real work ("managed P&L for key categories"), unpack it into 2-3 specific bullets using only facts present anywhere in the résumé (summary, competencies, other roles). Each unpacked bullet must still be traceable. Never add numbers, tools or outcomes that aren't in the source. Target: a dense page — 4-6 bullets per recent role, 2-3 for older ones. EVERY role keeps its OWN bullets about the work done in THAT role: never leave a role with only a title and dates, never move a role's lines into another role or into an extras block (ventures, technical background). Pulling evidence forward means mentioning it in the summary or relevant block, not stripping it from its role.
+3. EXPAND, don't pad. Most résumés under-write. Where a bullet compresses real work ("managed P&L for key categories"), unpack it into 2-3 specific bullets using only facts present anywhere in the résumé (summary, competencies, other roles). Each unpacked bullet must still be traceable. Never add numbers, tools or outcomes that aren't in the source. All of the original's bullets stay; unpacked bullets are added on top, only when traceable. EVERY role keeps its OWN bullets about the work done in THAT role: never leave a role with only a title and dates, never move a role's lines into another role or into an extras block (ventures, technical background). Pulling evidence forward means mentioning it in the summary or relevant block, not stripping it from its role.
 3b. relevant: 3-4 statements, each a complete sentence of at most 28 words, mapping the candidate's proof to the posting's must-haves, in the employer's language (e.g. "Category P&L: ran FMCG & grocery P&L at Ninjacart; 60% of revenue, 5x volume in 100 days"). Only requirements with real evidence — never an absent one.
 3c. extra_sections: keep the résumé's own extra blocks (ventures, certifications, languages) tightened to what serves this role; drop personal details.
-3d. Length: ${resume.pages} page(s) in, ${resume.pages} page(s) out — full pages, not half.
+3d. Length: ${resume.pages} page(s) in; keep to ${resume.pages} if every fact fits, otherwise one more page. Never cut a fact to fit — shorten the summary and the relevant block first.
+3e. TODAY is ${new Date().toISOString().slice(0, 10)}. A role or degree whose end date is before today is finished: a completed degree is stated as held ("MBA, Mannheim Business School"), never as "candidate", "pursuing" or "in progress"; an ended role is never described as current. Education entries keep their school, degree and dates exactly.
 4. Bullets: start with a verb, one line each, concrete, numbers kept exactly as the original had them.
 5. headline: the candidate's real current (or most recent) title, at most 6 words, no pipes or lists (e.g. "Director, FMCG and Grocery"). NEVER the posting's title. The summary (not the headline) is where you frame them for this role. summary: 2-3 lines for this posting, no adjectives like "passionate" or "results-driven".
 6. referral_note: ~60 words, first person, to someone at the company — names the role, gives one specific reason the candidate fits, asks for a referral. No flattery.
@@ -125,7 +126,7 @@ export function verifyRewrite(original: ResumeProfile, rewrite: Rewrite) {
   return json<Verification>(
     `You are an auditor. Compare a rewritten résumé against the original profile. Flag ANY claim in the rewrite that the original does not support: a tool, number, outcome, title, employer, date, degree, or responsibility that isn't there. Rewording, reordering, tense changes and synonyms (launched/ran/built; managed/owned) are fine. Mirroring an employer's phrase is fine if the underlying fact exists. Flag only a different FACT: a number, tool, employer, title, date, degree, scope or outcome that the original does not contain. Attributing a fact to the wrong employer/role IS a problem. If nothing is unsupported, ok=true with an empty list.`,
     `ORIGINAL:\n${JSON.stringify(original)}\n\nREWRITE:\n${JSON.stringify({ headline: rewrite.headline, summary: rewrite.summary, relevant: rewrite.relevant, roles: rewrite.roles, skills: rewrite.skills, education: rewrite.education, extra_sections: rewrite.extra_sections })}\n\nReturn: {ok: boolean, problems:[{claim, reason}]}`,
-    3000, FAST
+    3000, MODEL
   );
 }
 
@@ -269,7 +270,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     // one repair pass on the fast model: feed back problems + broken rules
     t0 = t("Fixing a few things");
     rewrite = await json<Rewrite>(
-      `Fix a résumé rewrite. For each flagged claim: delete the unsupported words or move the fact back to where the original has it (summary vs. role). Prefer deleting to rewording. Change nothing else. Rules: title = candidate's real title (≤6 words); summary 35–80 words; relevant 3–4 lines ≤30 words; bullets ≤30 words, start with a verb, none repeated, 4–6 on the two most recent roles and 2–4 on older ones; skills 6–14; no personal details; no numbers that aren't in the original. Keep the same JSON shape.`,
+      `Fix a résumé rewrite. For each flagged claim: delete the unsupported words or move the fact back to where the original has it (summary vs. role). Prefer deleting to rewording. Change nothing else. Rules: title = candidate's real title (≤6 words); summary 35–80 words; relevant 3–4 lines ≤30 words; bullets ≤30 words, start with a verb, none repeated; every original bullet stays in its role; skills 6–14; no personal details; no numbers that aren't in the original. Keep the same JSON shape.`,
       `ORIGINAL:\n${JSON.stringify(resume)}\n\nREWRITE:\n${JSON.stringify(rewrite)}\n\nUNSUPPORTED CLAIMS:\n${JSON.stringify(verification.problems)}\n\nRULE BREAKS:\n${JSON.stringify(broken)}`,
       16000, MODEL
     );
@@ -370,6 +371,29 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   // never ship a role stripped of its work: any role the original describes keeps at least its share of bullets
   const restored = restoreRoles(rewrite, resume);
   if (restored.n) { rewrite = restored.rewrite; broken = checkRules(rewrite, resume, posting); timing.restored = restored.n; console.error("[sharpen] RESTORED ROLE BULLETS", restored.n); }
+  // FACT GUARD (deterministic, after every model pass). Two halves:
+  //  1. nothing of the original is lost — every bullet (by its numbers and words), skill, education entry and extras item is
+  //     in the document, in its own place; anything missing is put back verbatim and the weaker paraphrase it replaced removed;
+  //  2. nothing is in the document that the original doesn't have — every number in the output must appear in the original
+  //     (or in what the candidate told us); a finished degree is never "candidate". Leftovers get one deletion pass; if any
+  //     remain, the shot FAILS and is refunded — a wrong résumé is never delivered.
+  const kept = preserveFacts(rewrite, resume);
+  if (kept.n) { rewrite = kept.rewrite; timing.preserved = kept.n; console.error("[sharpen] PRESERVED FACTS", kept.n, kept.log); }
+  let foreign = factAudit(rewrite, resume);
+  if (foreign.length) {
+    t0 = t("Checking every number");
+    const fixed = tidy(await json<Rewrite>(
+      `A résumé rewrite contains claims the original résumé does not support. For each item below, DELETE the unsupported number or phrase from the sentence it appears in (do not reword, do not substitute another number), leaving a grammatical sentence; where the item says a degree is finished, state it as held. Change nothing else. Same JSON shape.`,
+      `ORIGINAL:\n${JSON.stringify(resume)}\n\nREWRITE:\n${JSON.stringify(rewrite)}\n\nUNSUPPORTED:\n${JSON.stringify(foreign)}`, 16000, MODEL));
+    const again = preserveFacts(fixed, resume);
+    const f2 = factAudit(again.rewrite, resume);
+    if (f2.length < foreign.length) { rewrite = again.rewrite; foreign = f2; verification = await verifyRewrite(resume, rewrite); broken = checkRules(rewrite, resume, posting); }
+    timing.factfix = Date.now() - t0;
+  }
+  if (foreign.length) {
+    console.error("[sharpen] FACT AUDIT FAILED — shot refused", foreign);
+    throw Object.assign(new Error("We couldn’t verify every line of the result against your résumé, so we didn’t deliver it. Nothing was used — try again in a minute."), { status: 500, foreign });
+  }
   return { posting, matches, after_matches, rewrite, verification, broken, needs_review: needs_review || !verification.ok || broken.length > 0, timing, first_pass };
 }
 
@@ -430,4 +454,115 @@ export function restoreRoles(rw: Rewrite, resume: ResumeProfile): { rewrite: Rew
   });
   next.extra_sections = (next.extra_sections ?? []).filter((x) => x.items.length);
   return { rewrite: next, n };
+}
+
+
+// ---------- fact guard ----------
+/** "MBA candidate", "master's student", "pursuing", "in progress", "currently enrolled": a degree described as unfinished.
+ *  (The bare word "candidate" is not enough — "Outstanding Candidate Scholarship" is a real award.) */
+const IN_PROGRESS = /\b(?:mba|pgdm|m\.?tech|b\.?tech|m\.?sc|b\.?sc|ms|ma|ba|phd|master'?s?|bachelor'?s?|degree)\s+(?:candidate|student)\b|\b(?:pursuing|in progress|currently enrolled|expected graduation)\b/i;
+const normT = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+/** Number tokens as a screener reads them: "34%", "$1.12", "16.7M", "2.8pp", "12,000", "2019" → their digit cores ("34", "1.12", "16.7", "2.8", "12000", "2019"). */
+export function numbersIn(t: string): string[] {
+  return [...t.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((m) => m[0].replace(/,/g, "")).filter((d) => d.length > 0);
+}
+const contentWords = (t: string) => normT(t).split(" ").filter((w) => w.length > 3 && !STOP.has(w));
+const STOP = new Set(["with","from","that","this","then","than","into","over","across","through","their","them","there","were","have","been","while","after","before","which","where","when","what","your","about","also","more","most","such","only","both","each","other","using","used","within","without","under","between","including","against"]);
+/** Is an original bullet covered by the text of its role in the rewrite? All of its numbers must be there and most of its words. */
+function covered(orig: string, roleText: string): boolean {
+  const nums = numbersIn(orig), haveNums = new Set(numbersIn(roleText));
+  if (nums.some((n) => !haveNums.has(n))) return false;
+  const words = contentWords(orig); if (!words.length) return true;
+  const hay = new Set(contentWords(roleText));
+  const hit = words.filter((w) => hay.has(w) || hay.has(w.replace(/s$/, "")) || hay.has(w + "s")).length;
+  return hit / words.length >= 0.6;
+}
+/** Nothing of the original is lost. Returns the repaired rewrite and what it had to put back. */
+export function preserveFacts(rw: Rewrite, resume: ResumeProfile): { rewrite: Rewrite; n: number; log: string[] } {
+  const next: Rewrite = JSON.parse(JSON.stringify(rw));
+  const log: string[] = [];
+  const key = (r: { company: string; title: string }) => normT(r.company) + "|" + normT(r.title);
+  // roles and their bullets
+  resume.roles.forEach((orig, i) => {
+    let role = next.roles.find((r) => key(r) === key(orig)) ?? next.roles.find((r) => normT(r.company) === normT(orig.company) && normT(r.start) === normT(orig.start)) ?? next.roles.find((r) => normT(r.company) === normT(orig.company));
+    if (!role) {
+      role = { company: orig.company, title: orig.title, start: orig.start, end: orig.end, bullets: [] };
+      const at = next.roles.findIndex((r) => resume.roles.findIndex((o) => key(o) === key(r)) > i);
+      if (at < 0) next.roles.push(role); else next.roles.splice(at, 0, role);
+      log.push(`role restored: ${orig.company}`);
+    }
+    // dates and title exactly as the original
+    if (normT(role.start) !== normT(orig.start) || normT(role.end) !== normT(orig.end)) { log.push(`dates restored: ${orig.company}`); role.start = orig.start; role.end = orig.end; }
+    if (normT(role.title) !== normT(orig.title)) { log.push(`title restored: ${orig.company} (${role.title} → ${orig.title})`); role.title = orig.title; }
+    for (const b of orig.bullets) {
+      if (!b.trim()) continue;
+      if (covered(b, role.bullets.join(" \n "))) continue;
+      // the draft's weaker version of this bullet (same words, numbers gone) makes way for the original
+      const ow = new Set(contentWords(b));
+      role.bullets = role.bullets.filter((x) => { const w = contentWords(x); const hit = w.filter((t) => ow.has(t)).length; return !(w.length && hit / w.length >= 0.6 && numbersIn(x).length < numbersIn(b).length); });
+      // a role's own line that a draft moved into an extras block goes back to the role
+      const core = normT(b).split(" ").slice(0, 8).join(" ");
+      for (const sec of next.extra_sections ?? []) sec.items = sec.items.filter((it) => !normT(it).includes(core));
+      role.bullets.push(b.trim());
+      log.push(`bullet restored: ${orig.company}: ${b.slice(0, 60)}`);
+    }
+  });
+  // skills: every original skill name present
+  const skillText = normT((next.skills ?? []).join(" | "));
+  for (const sk of resume.skills ?? []) {
+    const name = (typeof sk === "string" ? sk : sk?.name ?? "").trim(); if (!name) continue;
+    if (!skillText.includes(normT(name))) { next.skills = [...(next.skills ?? []), name]; log.push(`skill restored: ${name}`); }
+  }
+  // education: every original entry, with its school, degree and year
+  for (const ed of resume.education ?? []) {
+    const have = (next.education ?? []).find((e) => normT(e.school) === normT(ed.school) || (normT(e.degree) === normT(ed.degree) && normT(e.degree)));
+    if (!have) { next.education = [...(next.education ?? []), ed]; log.push(`education restored: ${ed.degree}`); continue; }
+    if (normT(have.degree) !== normT(ed.degree)) { log.push(`degree restored: ${have.degree} → ${ed.degree}`); have.degree = ed.degree; }
+    if (ed.year && normT(have.year ?? "") !== normT(ed.year)) { have.year = ed.year; log.push(`education year restored: ${ed.year}`); }
+    if (ed.school && normT(have.school) !== normT(ed.school)) have.school = ed.school;
+  }
+  // extra sections (awards, languages, certifications…): every original item present somewhere in the document
+  const docText = () => normT(JSON.stringify(docOf(next)));
+  for (const sec of resume.extra_sections ?? []) {
+    for (const it of sec.items ?? []) {
+      if (!it.trim()) continue;
+      const core = normT(it).split(" ").slice(0, 6).join(" ");
+      if (core && docText().includes(core)) continue;
+      if (covered(it, JSON.stringify(docOf(next)))) continue;
+      let target = (next.extra_sections ?? []).find((x) => normT(x.title) === normT(sec.title)) ?? (next.extra_sections ?? []).find((x) => normT(x.title).includes(normT(sec.title).split(" ")[0]));
+      if (!target) { target = { title: sec.title, items: [] }; next.extra_sections = [...(next.extra_sections ?? []), target]; }
+      target.items.push(it.trim());
+      log.push(`extra restored: ${sec.title}: ${it.slice(0, 50)}`);
+    }
+  }
+  // a finished degree is held, not pursued
+  const origAll = normT(JSON.stringify(resume));
+  if (IN_PROGRESS.test(next.headline) && !IN_PROGRESS.test(origAll)) {
+    const fallback = (resume.headline || "").trim() || resume.roles[0]?.title || next.headline;
+    log.push(`headline restored: ${next.headline} → ${fallback}`);
+    next.headline = fallback;
+  }
+  next.extra_sections = (next.extra_sections ?? []).filter((x) => x.items.length);
+  return { rewrite: next, n: log.length, log };
+}
+/** Nothing in the document that the original doesn't have: every number in the output must be in the original or in what
+ *  the candidate told us; a degree the original holds is not "candidate". Returns the list of offending claims (empty = clean). */
+export function factAudit(rw: Rewrite, resume: ResumeProfile): { claim: string; reason: string }[] {
+  const out: { claim: string; reason: string }[] = [];
+  const origText = JSON.stringify(resume);
+  const allowed = new Set(numbersIn(origText));
+  const doc = docOf(rw);
+  const fields: [string, string][] = [["headline", doc.headline ?? ""], ["summary", doc.summary ?? ""], ...(doc.relevant ?? []).map((l, i) => [`relevant ${i + 1}`, l] as [string, string])];
+  for (const r of doc.roles ?? []) { r.bullets.forEach((b, i) => fields.push([`${r.company} bullet ${i + 1}`, b])); fields.push([`${r.company} dates`, `${r.start} ${r.end}`]); }
+  for (const sec of doc.extra_sections ?? []) sec.items.forEach((it, i) => fields.push([`${sec.title} ${i + 1}`, it]));
+  for (const [where, text] of fields) {
+    for (const n of numbersIn(text)) if (!allowed.has(n)) out.push({ claim: text.slice(0, 160), reason: `"${n}" is not in the original (${where})` });
+  }
+  const origNorm = normT(origText);
+  for (const [where, text] of [["headline", doc.headline ?? ""], ["summary", doc.summary ?? ""]]) {
+    if (IN_PROGRESS.test(text) && !IN_PROGRESS.test(origNorm)) out.push({ claim: text.slice(0, 160), reason: `says a degree is in progress; the original states it as held (${where}) — state it as held` });
+  }
+  // de-duplicate identical claims
+  const seen = new Set<string>();
+  return out.filter((o) => { const k = o.claim + o.reason; if (seen.has(k)) return false; seen.add(k); return true; });
 }

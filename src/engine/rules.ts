@@ -28,8 +28,8 @@ export function checkRules(r: Rewrite, orig: ResumeProfile, posting: PostingProf
   r.roles.forEach((ro, i) => {
     const n = ro.bullets.length;
     const recent = i < 2;
-    if (recent && (n < 4 || n > 6)) bad.push(`R8 ${ro.company}: ${n} bullets (recent roles need 4–6)`);
-    if (!recent && (n < 2 || n > 4)) bad.push(`R8 ${ro.company}: ${n} bullets (older roles need 2–4)`);
+    if (recent && n < 4) bad.push(`R8 ${ro.company}: ${n} bullets (recent roles need at least 4)`);
+    if (!recent && n < 2) bad.push(`R8 ${ro.company}: ${n} bullets (older roles need at least 2)`);
     ro.bullets.forEach((b) => {
       if (words(b) > 34) bad.push(`R8 bullet too long (${words(b)} words): "${b.slice(0, 50)}…"`);
       if (!/^[A-Z][a-z]+/.test(b.trim())) bad.push(`R8 bullet doesn't start with a verb: "${b.slice(0, 40)}…"`);
