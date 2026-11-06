@@ -67,8 +67,9 @@ export async function readPosting(url: string): Promise<RawRead> {
   if (source === "naukri") {
     const id = key.split(":")[1];
     try {
-      const r = await get(`https://www.naukri.com/jobapi/v4/job/${id}`, { appid: "121", systemid: "Naukri", "content-type": "application/json" });
-      if (r.status === 404 || r.status === 410) throw gone();
+      const r = await fetch(`https://www.naukri.com/jobapi/v4/job/${id}`, { headers: { ...H, appid: "121", systemid: "Naukri", "content-type": "application/json" }, redirect: "manual", signal: AbortSignal.timeout(15000) });
+      // Naukri answers a job that no longer exists with a 303 to its search page (and the page itself 301s to "jobs-in-india")
+      if (r.status === 404 || r.status === 410 || r.status === 303 || r.status === 301 || r.status === 302) throw gone();
       if (r.ok) {
         const j: any = await r.json();
         const d = j?.jobDetails;
@@ -81,6 +82,7 @@ export async function readPosting(url: string): Promise<RawRead> {
         }
       }
     } catch { /* fall through to browser */ }
+    try { const probe = await fetch(url, { headers: H, redirect: "manual", signal: AbortSignal.timeout(15000) }); if ([301, 302, 303, 307, 308].includes(probe.status) && bouncedToListing(url, probe.headers.get("location") ?? undefined)) throw gone(); } catch (e) { if ((e as any).gone) throw e; }
     const html = await renderWithBrowser(url);
     const text = htmlToText(html);
     if (text.length < 200) throw blocked("Naukri");
@@ -301,11 +303,11 @@ function gone() { return Object.assign(new Error(GONE_MSG), { status: 422, gone:
 function bouncedToListing(from: string, finalUrl: string | undefined): boolean {
   if (!finalUrl) return false;
   try {
-    const a = new URL(from), b = new URL(finalUrl);
+    const a = new URL(from), b = new URL(finalUrl, from);
     if (a.pathname.replace(/\/$/, "") === b.pathname.replace(/\/$/, "")) return false;
     const path = b.pathname.replace(/\/$/, "");
     // a job URL that lands on the site root, a locale root, or a jobs/careers/search index has lost its job
-    return path === "" || /^\/[a-z]{2}(?:[-_][a-z]{2})?$/i.test(path) || /^\/(?:[a-z]{2}(?:[-_][a-z]{2})?\/)?(?:global\/[a-z]{2}|jobs|careers|search|job-search|opportunities|openings|positions|vacancies|en)\/?$/i.test(path) || /[?&]error=true/i.test(finalUrl);
+    return path === "" || /^\/[a-z]{2}(?:[-_][a-z]{2})?$/i.test(path) || /^\/(?:[a-z]{2}(?:[-_][a-z]{2})?\/)?(?:global\/[a-z]{2}|jobs|careers|search|job-search|opportunities|openings|positions|vacancies|en)\/?$/i.test(path) || /[?&]error=true/i.test(finalUrl) || /\/jobs-in-[a-z-]+$/i.test(path);
   } catch { return false; }
 }
 function pick(html: string, re: RegExp) { const m = html.match(re); return m ? htmlToText(m[1]).trim() || null : null; }
