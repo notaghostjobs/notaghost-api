@@ -72,11 +72,12 @@ preview.post("/", async (c) => {
   // almost nothing and every later visitor would inherit the 8%. Fewer than three requirements from a link = read it fresh,
   // bypassing the cache, and overwrite the row. Still nothing = tell the person plainly instead of showing a hollow number.
   const thin = (pp: any) => ((pp?.must_have?.length ?? 0) + (pp?.nice_to_have?.length ?? 0)) < 3;
+  let refreshed = false;
   if (body.data.posting_url && thin(posting)) {
     const fresh = await fetchPosting(body.data.posting_url, { bypassCache: true }).catch(() => "");
     if (fresh.length >= 80) {
       const again = await parsePosting(fresh);
-      if (!thin(again)) { posting = again; postingText = fresh; parsed = null; if (postingId) await db.from("postings").update({ raw_text: fresh }).eq("id", postingId); }
+      if (!thin(again)) { posting = again; postingText = fresh; parsed = null; refreshed = true; if (postingId) await db.from("postings").update({ raw_text: fresh }).eq("id", postingId); }
     }
     if (thin(posting)) return c.json({ error: "We couldn’t read the requirements on that page. Open the job, copy everything on it, and paste the description instead — no shot is used." }, 400);
   }
@@ -92,7 +93,7 @@ preview.post("/", async (c) => {
   let matches: Match[], fits: string | null, previewId: string | null;   // matches may gain options below
   const similar_open = await similarOpen(posting.title);
   // a prior read with fewer than three requirements was a hollow page, not a fit: never replay it
-  const priorUsable = !!prior?.matches && (prior.matches as Match[]).length >= 3;
+  const priorUsable = !refreshed && !!prior?.matches && (prior.matches as Match[]).length >= 3 && !thin((prior as any).posting);
   if (priorUsable) { matches = prior!.matches as Match[]; fits = null; previewId = prior!.id; }
   else {
     const g = await matchAndGrade(resume.parsed as ResumeProfile, posting);

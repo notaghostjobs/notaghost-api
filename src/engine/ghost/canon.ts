@@ -56,8 +56,15 @@ export function stripFurniture(text: string) {
   // the head is our own five lines (title, company, location, posted, applicants); anything else before "About the job" is the board's
   const head = start > 0 ? text.slice(0, start).split("\n").slice(0, 6).join("\n").trimEnd() + "\n\n" : "";
   let body = start >= 0 ? text.slice(start) : text;
-  const end = body.slice(14).search(FURNITURE_END);
-  if (end >= 0) body = body.slice(0, 14 + end);
+  // Cut at the first furniture heading that comes AFTER the job itself. Employers' own descriptions often open with
+  // "About the company" / "About us" (Myntra, 6 Nov): cutting there threw away the whole posting. So a candidate heading
+  // only counts once the text before it already reads like a job (responsibilities, requirements, qualifications…).
+  const JD = /responsibilit|requirements?|qualifications?|what you.ll (?:do|bring)|who you are|about the (?:role|job|position)|you will\b|skills?\b|experience\b/i;
+  const re = new RegExp(FURNITURE_END.source, "gi");
+  let m: RegExpExecArray | null, cut = -1;
+  re.lastIndex = 14;
+  while ((m = re.exec(body))) { if (JD.test(body.slice(0, m.index))) { cut = m.index; break; } re.lastIndex = m.index + 1; }
+  if (cut >= 0) body = body.slice(0, cut);
   return (head + body).replace(FURNITURE_LINES, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
