@@ -8,6 +8,8 @@ import { selftest } from "./selftest.js";
 import { snapshotDue } from "../engine/ghost/index.js";
 import { companyKey } from "../engine/ghost/canon.js";
 import { fetchPosting } from "../engine/extract.js";
+import { asUrl } from "../engine/ghost/canon.js";
+import { createHash } from "node:crypto";
 import { parsePosting } from "../engine/sharpen.js";
 
 export const admin = new Hono();
@@ -135,6 +137,13 @@ admin.get("/diag/posting", async (c) => {
   const url = c.req.query("url"); if (!url) return c.json({ error: "url" }, 400);
   const out: any = { url };
   const t0 = Date.now();
+  // exactly what POST /preview sees for this link: the row by url_hash and its stored parse
+  try {
+    const canon = asUrl(url); const url_hash = createHash("sha256").update(canon.trim().toLowerCase()).digest("hex");
+    const { data: row } = await db.from("postings").select("id, raw_text, parsed, created_at").eq("url_hash", url_hash).maybeSingle();
+    out.preview_row = row ? { id: row.id, created_at: row.created_at, raw_len: (row.raw_text ?? "").length, parsed_must: row.parsed?.must_have?.length ?? null, parsed_nice: row.parsed?.nice_to_have?.length ?? null, parsed_title: row.parsed?.title ?? null } : null;
+    out.canonical = canon;
+  } catch (e) { out.preview_row = { error: (e as Error).message }; }
   try { const cached = await fetchPosting(url); out.cached = { len: cached.length, head: cached.slice(0, 240) }; } catch (e) { out.cached = { error: (e as Error).message }; }
   try { const fresh = await fetchPosting(url, { bypassCache: true }); out.fresh = { len: fresh.length, head: fresh.slice(0, 240) };
     const p = await parsePosting(fresh); out.parsed = { title: p.title, company: p.company, must: p.must_have?.length ?? 0, nice: p.nice_to_have?.length ?? 0, sample: (p.must_have ?? []).slice(0, 3) };
