@@ -1,7 +1,7 @@
 // Employer names by sector, from the model with web search. Names only — no listings, no board is read.
 import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../../lib/env.js";
-import { FAST } from "../../engine/claude.js";
+import { HOUSEKEEPING as FAST } from "../../engine/claude.js";
 import { db } from "../../lib/db.js";
 import { companyKey } from "../../engine/ghost/canon.js";
 

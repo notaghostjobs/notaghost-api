@@ -3,7 +3,10 @@ import { env } from "../lib/env.js";
 
 const client = new Anthropic({ apiKey: env.anthropicKey });
 export const MODEL = "claude-sonnet-5-5";
-export const FAST = "claude-haiku-5-5";
+/** Every step that reads or writes a person's résumé runs on the main model — the fast one is kept only for the reader's own
+ *  housekeeping (sector tagging of employers), never for anything a candidate will be judged on. Decided 6 Nov: accuracy over time. */
+export const FAST = MODEL;
+export const HOUSEKEEPING = "claude-haiku-5-5";
 
 /** One structured call: system + user -> JSON of shape T. Retries once on bad JSON. */
 export async function json<T>(system: string, user: string, maxTokens = 4000, model = MODEL): Promise<T> {
