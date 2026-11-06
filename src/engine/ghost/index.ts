@@ -50,7 +50,8 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
     || (existing?.source === "linkedin" && !!existing?.scored_at && existing.scored_at < CLEAN_SINCE)
     || (claimsSystem && !existing?.sighting_id)   // scored before the link was stored: re-score once so the link lands
     || (existing?.source === "ats" && !existing?.title && /myworkdayjobs\.com|greenhouse\.io|gh_jid=/i.test(url ?? ""))   // read before the Workday/Greenhouse API readers (5 Nov): no title, re-read once
-    || (existing?.source === "careers" && !!existing?.raw_text && !looksLikeJob({ text: String(existing.raw_text), source: "careers" }));   // a non-job page scored before the job gate (6 Nov): re-read, and the gate decides
+    || ((existing?.source === "careers" || existing?.source === "board") && !!existing?.raw_text && !looksLikeJob({ text: String(existing.raw_text), source: existing.source }))   // a non-job page scored before the job gate (6 Nov): re-read, and the gate decides
+    || (!!url && !!existing?.scored_at && !existing?.title && !existing?.company);   // scored with neither a title nor a company: a 404, a bounce or a login wall was read as a job — re-read, and the reader now says gone/refused
   // scored before every check became a line: re-score so the card shows the whole list (₹0 — rules and the reader), history kept
   const partial = !!existing?.scored_at && existing.scored_at < FULL_LIST_SINCE;
   if (existing?.scored_at && !opts.force && !tainted && !partial) {
