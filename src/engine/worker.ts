@@ -10,22 +10,6 @@ import { addedFacts } from "./told.js";
 import { takeDraft, draftKey } from "./prewarm.js";
 import { refileBullets } from "./refile.js";
 
-/** Is this text one of the documents we delivered to this person? Half or more of its long lines appearing verbatim in a
- *  delivered rewrite means yes (documents made before the metadata stamp, or re-saved through another tool). */
-async function isOurDocument(userId: string, text: string): Promise<boolean> {
-  const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
-  const lines = text.split(/\n/).map((l) => l.trim()).filter((l) => l.split(/\s+/).length >= 8).map(norm);
-  if (lines.length < 6) return false;
-  const { data } = await db.from("shots").select("output").eq("user_id", userId).eq("status", "done").order("created_at", { ascending: false }).limit(30);
-  for (const s of data ?? []) {
-    const rw = (s as any).output?.rewrite; if (!rw) continue;
-    const hay = " " + norm(JSON.stringify({ s: rw.summary, r: rw.relevant, roles: rw.roles, x: rw.extra_sections })) + " ";
-    const hit = lines.filter((l) => hay.includes(" " + l.split(" ").slice(0, 8).join(" ") + " ")).length;
-    if (hit / lines.length >= 0.5) return true;
-  }
-  return false;
-}
-
 /** Called right after upload. Extracts + parses once; stores text and profile. */
 export async function processResume(resumeId: string) {
   const { data: row } = await db.from("resumes").select("*").eq("id", resumeId).single();
@@ -34,10 +18,11 @@ export async function processResume(resumeId: string) {
   if (file.error) throw file.error;
   const buf = Buffer.from(await file.data.arrayBuffer());
   const { text, pages, ours } = await extractText(buf, row.filename ?? "resume.pdf");
-  if (text.length < 300) throw Object.assign(new Error("Couldn't read text from that file. Export it as a text PDF, not a scan."), { status: 400 });
-  // a Ghosted document is never a source: every line of a result is checked against the original, so the original has to be theirs
-  if (ours || await isOurDocument(row.user_id, text)) throw Object.assign(new Error("That’s a document Ghosted made, not your original résumé. Upload the résumé you wrote yourself — every line of a result is checked against your own words, so the source has to be yours."), { status: 400 });
-  let parsed = await parseResume(text, pages);
+  if (text.length < 300) throw Object.assign(new Error("Couldn't read text from that file. Upload it as a PDF, .docx or .doc with real text — not a scan or an image."), { status: 400 });
+  // the clerk reads the page itself (PDF) so columns and sidebars come out in reading order; the extracted text rides along for exact characters
+  const isPdf = !/\.docx?$/i.test(row.filename ?? "");
+  let parsed = await parseResume(text, pages, isPdf ? buf : undefined);
+  (parsed as any).source_is_ghosted = !!ours;   // a document we made, re-uploaded as the source: allowed; noted for diagnosis
   const layout = layoutWarning(text, pages);
   (parsed as any).layout_warning = layout;
   // the parse is checked against the text it came from: a bullet filed under the neighbouring employer goes back to its own

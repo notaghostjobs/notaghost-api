@@ -20,19 +20,21 @@ export function checkRules(r: Rewrite, orig: ResumeProfile, posting: PostingProf
 
   // 7. relevant block
   const rel = r.relevant ?? [];
-  if (rel.length < 3 || rel.length > 4) bad.push(`R7 relevant has ${rel.length} lines (3–4)`);
-  rel.forEach((l, i) => { if (words(l) > 34) bad.push(`R7 relevant line ${i + 1} is ${words(l)} words (≤30)`); });
+  if (rel.length > 3) bad.push(`R7 relevant has ${rel.length} lines (at most 3)`);
+  rel.forEach((l, i) => { if (words(l) > 28) bad.push(`R7 relevant line ${i + 1} is ${words(l)} words (≤24)`); });
 
   // 8. bullets
   const all: string[] = [];
   r.roles.forEach((ro, i) => {
     const n = ro.bullets.length;
-    const recent = i < 2;
-    if (recent && n < 4) bad.push(`R8 ${ro.company}: ${n} bullets (recent roles need at least 4)`);
-    if (!recent && n < 2) bad.push(`R8 ${ro.company}: ${n} bullets (older roles need at least 2)`);
+    // no minimum bullet count: a role keeps exactly the lines the candidate wrote (decided 6 Nov) — a role with none is
+    // caught by restoreRoles, never by asking the model to write more
+    const origRole = orig.roles.find((o) => norm(o.company) === norm(ro.company) && norm(o.title) === norm(ro.title)) ?? orig.roles.find((o) => norm(o.company) === norm(ro.company));
+    const origSet = new Set((origRole?.bullets ?? []).map(norm));
     ro.bullets.forEach((b) => {
-      if (words(b) > 34) bad.push(`R8 bullet too long (${words(b)} words): "${b.slice(0, 50)}…"`);
-      if (!/^[A-Z][a-z]+/.test(b.trim())) bad.push(`R8 bullet doesn't start with a verb: "${b.slice(0, 40)}…"`);
+      const verbatim = origSet.has(norm(b));   // the candidate's own line, as written: never flagged for length or wording
+      if (!verbatim && words(b) > 34) bad.push(`R8 bullet too long (${words(b)} words): "${b.slice(0, 50)}…"`);
+      if (!verbatim && !/^[A-Z][a-z]+/.test(b.trim())) bad.push(`R8 bullet doesn't start with a verb: "${b.slice(0, 40)}…"`);
       for (const prev of all) if (overlap(norm(b), norm(prev)) >= 0.7) { bad.push(`R8 repeated bullet: "${b.slice(0, 50)}…"`); break; }
       all.push(b);
     });

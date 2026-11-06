@@ -9,7 +9,7 @@ import { requireUser } from "../lib/auth.js";
 import { fetchPosting } from "../engine/extract.js";
 import { assess, fit, ENGINE_VERSION } from "../engine/fit.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../engine/sharpen.js";
-import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, type Facts } from "../engine/told.js";
+import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, type Facts } from "../engine/told.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(canonicalPostingUrl(u).trim().toLowerCase()).digest("hex");
 export const preview = new Hono<{ Variables: { user: User } }>();
@@ -98,6 +98,8 @@ preview.post("/", async (c) => {
   else {
     const g = await matchAndGrade(resume.parsed as ResumeProfile, posting);
     matches = g.matches; fits = g.fits ?? null;
+    // what they told us on earlier postings answers the same question here, before they are asked again
+    try { const bank = await recallAnswers(u.id); const re = applyRemembered(matches, bank); if (re.n) { matches = re.matches; console.error("[preview] remembered answers applied", re.n); } } catch {}
     const a0 = assess(matches);
     // remember this exact match so the paid run scores against the same list the user saw
     const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting: { ...posting, __engine: ENGINE_VERSION }, matches, score_before: a0.current, score_after: a0.promised }).select("id").single();
@@ -164,6 +166,12 @@ preview.post("/:id/answer", async (c) => {
   }
   const a = assess(next);
   await db.from("previews").update({ matches: next, score_after: a.promised }).eq("id", pv.id);
+  // the answers bank: remembered on the account for every later posting; taken out when withdrawn
+  try {
+    const now = next.find((x) => x.requirement === m.requirement);
+    if (body.data.withdraw) await forgetAnswer(u.id, m.requirement);
+    else if (now?.told && now.line) await rememberAnswer(u.id, { requirement: m.requirement, fact: now.evidence, line: now.line });
+  } catch (e) { console.error("[preview] answers bank", (e as Error).message); }
   return c.json({ ok: true, line: next.find((x) => x.requirement === m.requirement)?.line ?? null, score_before: a.current, score_after: a.promised, can_lift: a.can_lift, floor_shown: a.floor_shown, gaps: gapsOf(next) });
 });
 

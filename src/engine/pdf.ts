@@ -74,12 +74,12 @@ export function resumeHtml(r: Rewrite, o: ResumeProfile) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(o.name)}</title>
 <style>
 ${fontCss}
-:root{ --s:1; --ink:#15171a; --mid:#4a4f57; --faint:#7d838c; --accent:#6b5d4a; --rule:#2a2d31; --chip:#f1efeb; }
+:root{ --s:1; --g:1; --ink:#15171a; --mid:#4a4f57; --faint:#7d838c; --accent:#6b5d4a; --rule:#2a2d31; --chip:#f1efeb; }
 *{box-sizing:border-box;margin:0;padding:0}
 @page{ size:A4; margin:16mm 0 15mm }
 html,body{ width:210mm; }
 body{ font-family:Inter,system-ui,sans-serif; color:var(--ink); -webkit-font-smoothing:antialiased;
-      font-size:calc(10pt * var(--s)); line-height:1.42; }
+      font-size:calc(10pt * var(--s)); line-height:calc(1.42 - 0.12 * (1 - var(--g))); }
 .page{ padding:0 17mm; }
 header .name{ font-size:calc(27pt * var(--s)); font-weight:800; letter-spacing:-0.02em; line-height:1.05; }
 header .head{ font-size:calc(11.5pt * var(--s)); color:var(--mid); margin-top:calc(3pt * var(--s)); font-weight:500; }
@@ -88,7 +88,7 @@ header .contact{ display:flex; flex-wrap:wrap; gap:calc(2pt * var(--s)) calc(14p
 header .contact span{ display:inline-flex; align-items:center; gap:calc(4pt * var(--s)); }
 header .contact i{ display:inline-flex; width:1.05em; height:1.05em; color:var(--accent); }
 header .contact i svg{ width:100%; height:100%; }
-section{ margin-top:calc(13pt * var(--s)); }
+section{ margin-top:calc(13pt * var(--s) * var(--g)); }
 h2{ break-after:avoid; }
 .role-h, li{ break-inside:avoid; }
 .role-h{ break-after:avoid; }
@@ -96,7 +96,7 @@ h2{ break-after:avoid; }
 h2{ font-size:calc(8.2pt * var(--s)); font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:var(--mid);
     padding-bottom:calc(3pt * var(--s)); border-bottom:0.9pt solid var(--rule); margin-bottom:calc(7pt * var(--s)); }
 p.sum{ color:var(--ink); }
-.role + .role{ margin-top:calc(9pt * var(--s)); }
+.role + .role{ margin-top:calc(9pt * var(--s) * var(--g)); }
 .role-h{ display:flex; justify-content:space-between; align-items:baseline; gap:12pt; }
 .role-h .t{ font-weight:700; font-size:calc(11.6pt * var(--s)); letter-spacing:-0.005em; }
 .role-h .c{ color:var(--accent); font-weight:500; font-size:calc(9.6pt * var(--s)); margin-top:1pt; }
@@ -104,7 +104,7 @@ p.sum{ color:var(--ink); }
 ul{ list-style:none; margin-top:calc(4pt * var(--s)); }
 ul.rel{ margin-top:calc(6pt * var(--s)); }
 ul.rel li{ font-weight:500; }
-li{ position:relative; padding-left:calc(11pt * var(--s)); margin-top:calc(2.2pt * var(--s)); }
+li{ position:relative; padding-left:calc(11pt * var(--s)); margin-top:calc(2.2pt * var(--s) * var(--g)); }
 li::before{ content:""; position:absolute; left:2pt; top:calc(0.58em - 1.2pt); width:3.2pt; height:3.2pt; border-radius:50%; background:var(--accent); }
 .chips{ display:flex; flex-wrap:wrap; gap:calc(5pt * var(--s)) calc(6pt * var(--s)); }
 .chips span{ background:var(--chip); padding:calc(3pt * var(--s)) calc(8pt * var(--s)); border-radius:3pt; font-size:calc(9.2pt * var(--s)); font-weight:500; color:var(--ink); }
@@ -128,11 +128,35 @@ ${r.education.length ? sec("Education", edu) : ""}
  * (shrinks into fewer pages when the overflow is small, otherwise fills the extra page),
  * then scales type/spacing (CSS --s) so the pages end near the bottom margin.
  */
+/** The document keeps the original's page count and never exceeds two pages (decided 6 Nov). Fitting order: spacing, then
+ *  type scale within the range that still looks right, then the summary and relevant block give — experience lines never do. */
 export async function resumePdf(r: Rewrite, o: ResumeProfile): Promise<Buffer> {
-  return stamp(await htmlToPdf(resumeHtml(r, o)), o.name);
+  const target = Math.min(2, Math.max(1, Number(o.pages) || 1));
+  let doc = r;
+  let out = await htmlToPdf(resumeHtml(doc, o), { target });
+  if (out.pages > target) {
+    // still long at the tightest acceptable setting: the summary and the relevant block give way, never a bullet
+    const trimmed: Rewrite = { ...doc, relevant: [], summary: firstWords(doc.summary ?? "", 45) };
+    const again = await htmlToPdf(resumeHtml(trimmed, o), { target });
+    if (again.pages <= out.pages) { doc = trimmed; out = again; }
+  }
+  if (out.pages > 2) {
+    // last resort, never three pages: a tighter floor on type scale
+    const last = await htmlToPdf(resumeHtml(doc, o), { target: 2, floor: 0.74 });
+    if (last.pages <= out.pages) out = last;
+  }
+  if (out.pages > 2) console.error("[pdf] still over two pages at the floor", { name: o.name, pages: out.pages });
+  return stamp(out.pdf, o.name);
+}
+function firstWords(t: string, n: number): string {
+  const sents = t.split(/(?<=[.!?])\s+/).filter(Boolean); let out = "";
+  for (const s of sents) { if ((out + " " + s).trim().split(/\s+/).length > n && out) break; out = (out + " " + s).trim(); }
+  return out || t.split(/\s+/).slice(0, n).join(" ");
 }
 
-export async function htmlToPdf(html: string): Promise<Buffer> {
+export async function htmlToPdf(html: string, opts: { target?: number; floor?: number } = {}): Promise<{ pdf: Buffer; pages: number }> {
+  const TARGET = opts.target ?? 0;          // 0 = natural page count (other documents)
+  const FLOOR = opts.floor ?? 0.84;         // smallest type scale that still reads as the same design
   const b = await browser();
   const page = await b.newPage();
   try {
@@ -147,14 +171,23 @@ export async function htmlToPdf(html: string): Promise<Buffer> {
       const slackFor = (n) => n > 1 ? 0.94 : 0.985;  // page breaks lose a little height
       const fits = (s, n) => { set(s); return h() <= PAGE * n * slackFor(n); };
 
+      const TARGET = ${TARGET}, FLOOR = ${FLOOR};
+      const gap = (g) => document.documentElement.style.setProperty("--g", String(g));
       // 1. How many pages does it naturally need at scale 1?
-      set(1); const natural = Math.max(1, Math.ceil(h() / (PAGE * 0.985)));
+      gap(1); set(1); const natural = Math.max(1, Math.ceil(h() / (PAGE * 0.985)));
       // 2. If the last page would be mostly empty, try to shrink into one fewer page (down to 0.86).
       let pages = natural;
       const lastFrac = (h() - PAGE * (natural - 1)) / PAGE;
       if (natural > 1 && lastFrac < 0.45 && fits(0.86, natural - 1)) pages = natural - 1;
+      // 2b. A target page count (the original's, at most two): spacing gives first, then type scale down to the floor.
+      if (TARGET && pages > TARGET) {
+        let done = false;
+        for (const g of [0.85, 0.7, 0.55]) { gap(g); if (fits(1, TARGET)) { done = true; break; } }
+        if (!done) for (const g of [0.7, 0.55]) { gap(g); if (fits(FLOOR, TARGET)) { done = true; break; } }
+        if (done) pages = TARGET; else gap(0.55);
+      }
       // 3. Largest scale that fits in the chosen page count.
-      let lo = 0.86, hi = 1.6;
+      let lo = Math.min(0.86, FLOOR), hi = 1.6;
       for (let i = 0; i < 18; i++) { const mid = (lo + hi) / 2; if (fits(mid, pages)) lo = mid; else hi = mid; }
       set(lo);
       // 4. Spread remaining slack across section gaps so pages end near the margin.
@@ -169,13 +202,13 @@ export async function htmlToPdf(html: string): Promise<Buffer> {
     // the measured height ignores page-break gaps; print, count, and tighten until the printed pages match the plan
     const countPages = (b: Uint8Array) => (Buffer.from(b).toString("latin1").match(/\/Type\s*\/Page[^s]/g) ?? []).length;
     let pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true });
-    for (let i = 0; i < 6 && countPages(pdf) > chosen; i++) {
-      const ok = await page.evaluate(`(() => { const r = document.documentElement; const s = parseFloat(getComputedStyle(r).getPropertyValue("--s")) || 1; if (s <= 0.82) return false;
+    for (let i = 0; i < 8 && countPages(pdf) > chosen; i++) {
+      const ok = await page.evaluate(`(() => { const r = document.documentElement; const s = parseFloat(getComputedStyle(r).getPropertyValue("--s")) || 1; if (s <= ${FLOOR} - 0.02) return false;
         r.style.setProperty("--s", String(s - 0.03)); document.querySelectorAll("section").forEach((x) => { x.style.marginTop = ""; }); return true; })()`);
       if (!ok) break;
       pdf = await page.pdf({ format: "A4", printBackground: true, preferCSSPageSize: true });
     }
-    return Buffer.from(pdf);
+    return { pdf: Buffer.from(pdf), pages: countPages(pdf) };
   } finally {
     await page.close();
   }

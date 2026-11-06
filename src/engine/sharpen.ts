@@ -1,4 +1,4 @@
-import { placeTold } from "./refile.js";
+import { placeTold, holdLines, dedupe } from "./refile.js";
 import { json, FAST, MODEL } from "./claude.js";
 import { checkRules, tidy } from "./rules.js";
 import { fit, target, v2On } from "./fit.js";
@@ -40,6 +40,7 @@ export interface Match {
   vet_reason?: string;            // the auditor's one-line reason (kept for audits and the self-test; never shown to users)
   options?: string[];             // missing only: three honest ways someone could have done this, for the candidate to tap
   told?: boolean;                 // the requirement was missing from the résumé; the candidate answered it in one vetted line (evidence = their words, line = the bullet)
+  remembered?: boolean;           // told, but from an answer they gave on an earlier posting (the answers bank), pre-filled
 }
 
 export interface Rewrite {
@@ -61,12 +62,19 @@ export interface Verification {
 }
 
 // ---------- 1. parse résumé (once per upload) ----------
-export function parseResume(text: string, pages: number) {
-  return json<ResumeProfile>(
-    `You turn a résumé into a structured profile. Copy facts exactly; do not improve, infer or embellish. Dates as written. If something is absent, use an empty string or empty array. Bullets are the candidate's own lines, verbatim.`,
-    `Résumé (${pages} page(s)):\n\n${text}\n\nReturn: {name, headline, contact{email,phone,city,links[]}, years_total (number), roles[{company,title,start,end,bullets[]}], skills[{name, evidence}], education[{school,degree,year}], extra_sections[{title, items[]}], pages: ${pages}}. Keep every string compact; this must fit in one response. extra_sections = any other block on the résumé (entrepreneurial ventures, certifications, languages, awards, publications), items verbatim. Skip personal details like DOB or marital status.`,
-    8000
+/** The clerk. Given the page itself (PDF) it reads the layout the way a person does — which column is which, where each
+ *  role starts and ends — and fills the form from that; the extracted text rides along as the character-exact copy, so
+ *  every word, number and date is copied from text, never read off pixels. A .docx/.doc has no page to show: text only,
+ *  which is already in reading order. */
+export function parseResume(text: string, pages: number, pdf?: Buffer) {
+  const form = `Return: {name, headline, contact{email,phone,city,links[]}, years_total (number), roles[{company,title,start,end,bullets[]}], skills[{name, evidence}], education[{school,degree,year}], extra_sections[{title, items[]}], pages: ${pages}}. Keep every string compact; this must fit in one response. extra_sections = any other block on the résumé (entrepreneurial ventures, certifications, languages, awards, publications), items verbatim. Skip personal details like DOB or marital status.`;
+  const rules = `You turn a résumé into a structured profile. Copy facts exactly; do not improve, infer or embellish. Dates as written. If something is absent, use an empty string or empty array. Bullets are the candidate's own lines, verbatim — every line under a role, none skipped, none merged, each under the role it is written under.`;
+  if (pdf) return json<ResumeProfile>(
+    rules + ` You are given the résumé twice: the PDF page(s), and the plain text extracted from them. Use the PAGE to understand the layout — which column is which, where each role begins and ends, what sits under which heading (a two-column résumé's plain text comes out interleaved; the page does not). Use the TEXT to copy characters: every word, number, date, name and symbol exactly as the text has it.`,
+    `PLAIN TEXT of the ${pages} page(s) above:\n\n${text}\n\n${form}`,
+    8000, MODEL, pdf
   );
+  return json<ResumeProfile>(rules, `Résumé (${pages} page(s)):\n\n${text}\n\n${form}`, 8000);
 }
 
 // ---------- 2. parse posting ----------
@@ -105,12 +113,12 @@ export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, mo
 0a. A requirement marked told:true was answered by the candidate in our questionnaire; its line is theirs, not any employer's. Put that line in the relevant block, exactly as given. Put it inside a role ONLY if the line itself names that employer ("… at Ninjacart"); never file it under any other company, however plausible.
 0b. Facts that sit in the original's profile/summary (e.g. "led teams of 250", "reduced CAC") stay in the summary or relevant block; do NOT pin them to a specific employer unless the original does. No derived numbers (years in a sector, totals, averages).
 1. NEVER invent. No new employers, titles, dates, degrees, tools, numbers or outcomes. Every bullet must be traceable to the original résumé.
-2. The posting's priorities drive the structure. Whatever the role is built around (its first three "own/responsibilities" items) must be visible in the headline area, the summary, the relevant block and the first bullet of the most recent role — if the candidate has evidence for it anywhere, including older roles, ventures or projects, pull it forward. Mirror the posting's language where it is true of the candidate. NEVER cut a bullet: every bullet of the original stays in its own role with every number, name, tool and outcome it carries — you may reorder, reword into the employer's language, or split one bullet into two; you may not delete, merge away, or move a bullet to another role or section. A venture or side project that is the candidate's best evidence for the role moves UP, into or next to Experience, not buried at the end.
-2b. Do not leave generic lines ("collaborated with teams to drive growth") in the two most recent roles; either make them specific from facts elsewhere in the résumé or cut them.
-3. EXPAND, don't pad. Most résumés under-write. Where a bullet compresses real work ("managed P&L for key categories"), unpack it into 2-3 specific bullets using only facts present anywhere in the résumé (summary, competencies, other roles). Each unpacked bullet must still be traceable. Never add numbers, tools or outcomes that aren't in the source. All of the original's bullets stay; unpacked bullets are added on top, only when traceable. EVERY role keeps its OWN bullets about the work done in THAT role: never leave a role with only a title and dates, never move a role's lines into another role or into an extras block (ventures, technical background). Pulling evidence forward means mentioning it in the summary or relevant block, not stripping it from its role.
-3b. relevant: 3-4 statements, each a complete sentence of at most 28 words, mapping the candidate's proof to the posting's must-haves, in the employer's language (e.g. "Category P&L: ran FMCG & grocery P&L at Ninjacart; 60% of revenue, 5x volume in 100 days"). Only requirements with real evidence — never an absent one.
-3c. extra_sections: keep the résumé's own extra blocks (ventures, certifications, languages) tightened to what serves this role; drop personal details.
-3d. Length: ${resume.pages} page(s) in; keep to ${resume.pages} if every fact fits, otherwise one more page. Never cut a fact to fit — shorten the summary and the relevant block first.
+2. The posting's priorities drive the headline area, the summary and the relevant block — whatever the role is built around (its first three "own/responsibilities" items) must be visible there, with the candidate's evidence for it, wherever it sits in the résumé. Mirror the posting's language where it is true of the candidate. Under EXPERIENCE the candidate's own lines rule: a bullet that is NOT the quoted evidence for a checklist requirement is copied EXACTLY, character for character, in its original position — not tightened, not "improved", not re-ordered. Only a bullet that IS quoted evidence for a have_not_said requirement may be reworded into the employer's words (or split into two), and it stays in that bullet's position. New lines (the owed lines, the candidate's told lines) go AFTER the role's existing lines. NEVER cut a bullet, merge bullets, or move a bullet to another role or section. A venture or side project that is the candidate's best evidence stays in its own block; mention it in the summary or relevant block instead of moving it.
+2b. Generic lines ("collaborated with teams to drive growth") are left exactly as the candidate wrote them. Never cut them; make the specifics visible in the summary or relevant block instead.
+3. Do not pad. Unpacking a compressed bullet into 2-3 specific ones is allowed ONLY for a bullet that is quoted evidence, and only with facts present in the résumé; the original bullet's words and numbers survive in the result. Everything else stays as written. EVERY role keeps its OWN bullets: never a role with only a title and dates, never a role's lines moved elsewhere.
+3b. relevant: at most 3 short statements (each at most 24 words) mapping the candidate's proof to the posting's must-haves, in the employer's language — each one a pointer to proof, never a copy of an experience bullet (a fact lives in one place: if it is a bullet under a role, the relevant block refers to it in a few words, it does not repeat it). Only requirements with real evidence — never an absent one. Omit the block entirely if nothing earns it.
+3c. extra_sections: keep the résumé's own extra blocks (ventures, certifications, languages, awards) as written; drop personal details. Never add a block that restates experience ("Skills detail", "Key achievements"): a fact appears once.
+3d. Length: ${resume.pages} page(s) in, ${Math.min(2, Math.max(1, resume.pages))} page(s) out — never more than two pages. Never cut a fact to fit — shorten the summary and the relevant block first. The summary never repeats a bullet; it says what the bullets add up to.
 3e. TODAY is ${new Date().toISOString().slice(0, 10)}. A role or degree whose end date is before today is finished: a completed degree is stated as held ("MBA, Mannheim Business School"), never as "candidate", "pursuing" or "in progress"; an ended role is never described as current. Education entries keep their school, degree and dates exactly.
 4. Bullets: start with a verb, one line each, concrete, numbers kept exactly as the original had them.
 5. headline: the candidate's real current (or most recent) title, at most 6 words, no pipes or lists (e.g. "Director, FMCG and Grocery"). NEVER the posting's title. The summary (not the headline) is where you frame them for this role. summary: 2-3 lines for this posting, no adjectives like "passionate" or "results-driven".
@@ -272,7 +280,7 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     // one repair pass on the fast model: feed back problems + broken rules
     t0 = t("Fixing a few things");
     rewrite = await json<Rewrite>(
-      `Fix a résumé rewrite. For each flagged claim: delete the unsupported words or move the fact back to where the original has it (summary vs. role). Prefer deleting to rewording. Change nothing else. Rules: title = candidate's real title (≤6 words); summary 35–80 words; relevant 3–4 lines ≤30 words; bullets ≤30 words, start with a verb, none repeated; every original bullet stays in its role; skills 6–14; no personal details; no numbers that aren't in the original. Keep the same JSON shape.`,
+      `Fix a résumé rewrite. For each flagged claim: delete the unsupported words or move the fact back to where the original has it (summary vs. role). Prefer deleting to rewording. Change nothing else. Rules: title = candidate's real title (≤6 words); summary 35–80 words; relevant at most 3 lines ≤24 words, pointers to proof, never a copy of a bullet; new bullets ≤30 words and start with a verb; none repeated; every original bullet stays in its role EXACTLY as written and in its original order (never touch a bullet that is not flagged); skills 6–14; no personal details; no numbers that aren't in the original. Keep the same JSON shape.`,
       `ORIGINAL:\n${JSON.stringify(resume)}\n\nREWRITE:\n${JSON.stringify(rewrite)}\n\nUNSUPPORTED CLAIMS:\n${JSON.stringify(verification.problems)}\n\nRULE BREAKS:\n${JSON.stringify(broken)}`,
       16000, MODEL
     );
@@ -384,6 +392,12 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
   // a questionnaire line sits inside a role only when it names that employer; otherwise it is the candidate's own claim, at the top
   const placedTold = placeTold(rewrite, matches.filter((m) => m.told && m.line), resume);
   if (placedTold.log.length) { rewrite = placedTold.rewrite; timing.told_moved = placedTold.log.length; console.error("[sharpen] TOLD LINES PLACED", placedTold.log); }
+  // the candidate's lines rule: every bullet that is not quoted evidence goes back exactly as written, in its original order
+  const held = holdLines(rewrite, resume, matches);
+  if (held.log.length) { rewrite = held.rewrite; timing.held = held.log.length; console.error("[sharpen] LINES HELD", held.log); }
+  // a fact lives in one place: the summary, the relevant block and extras never repeat an experience line
+  const dd = dedupe(rewrite, matches.filter((m) => m.bucket === "have_not_said" && m.line).map((m) => m.line!));
+  if (dd.log.length) { rewrite = dd.rewrite; timing.deduped = dd.log.length; console.error("[sharpen] REPEATS DROPPED", dd.log); }
   let foreign = factAudit(rewrite, resume);
   if (foreign.length) {
     t0 = t("Checking every number");

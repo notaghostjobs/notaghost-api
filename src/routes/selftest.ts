@@ -60,8 +60,16 @@ async function run(runs: number, postingUrlPart: string) {
       const t0 = Date.now();
       const out = await runSharpen(resume, p.raw_text, undefined, { posting, matches }, true);
       const after = fit(out.after_matches);
+      // the candidate's-lines rule, checked on the delivered document: every original line present verbatim under its role, in order
+      const normL = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+      const quotes = matches.filter((m) => m.bucket === "have_not_said" && m.evidence).map((m) => normL(m.evidence));
+      const lines = resume.roles.map((r) => { const got = out.rewrite.roles.find((x) => normL(x.company) === normL(r.company)); const have = (got?.bullets ?? []).map(normL);
+        const verbatim = r.bullets.filter((b) => have.includes(normL(b))).length; const evid = r.bullets.filter((b) => quotes.some((q) => q.includes(normL(b)) || normL(b).includes(q))).length;
+        const idx = r.bullets.map((b) => have.indexOf(normL(b))).filter((i) => i >= 0); const ordered = idx.every((v, k) => k === 0 || v > idx[k - 1]);
+        return { company: r.company, original: r.bullets.length, verbatim, evidence: evid, ordered, delivered: got?.bullets.length ?? 0 }; });
       results.push({ run: i, delivered: after, promised: a.promised, held: after >= a.promised, needs_review: out.needs_review, seconds: Math.round((Date.now() - t0) / 1000),
-        converted: out.after_matches.filter((m) => m.bucket === "said").length - preview.said });
+        converted: out.after_matches.filter((m) => m.bucket === "said").length - preview.said, timing: out.timing, lines, relevant: out.rewrite.relevant?.length ?? 0, extras: (out.rewrite.extra_sections ?? []).map((x) => x.title),
+        roles: out.rewrite.roles.map((r) => ({ company: r.company, bullets: r.bullets })), summary: out.rewrite.summary });
       await save({ status: "running", preview, results });
     }
     const delivered = results.map((r: any) => r.delivered);

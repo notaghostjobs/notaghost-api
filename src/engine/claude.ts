@@ -9,15 +9,19 @@ export const FAST = MODEL;
 export const HOUSEKEEPING = "claude-haiku-5-5";
 
 /** One structured call: system + user -> JSON of shape T. Retries once on bad JSON. */
-export async function json<T>(system: string, user: string, maxTokens = 4000, model = MODEL): Promise<T> {
+export async function json<T>(system: string, user: string, maxTokens = 4000, model = MODEL, pdf?: Buffer): Promise<T> {
   if (model === MODEL && process.env.MODEL_OVERRIDE) model = process.env.MODEL_OVERRIDE;
   for (let attempt = 0; attempt < 2; attempt++) {
+    // a PDF goes in as the page itself (the model sees layout — columns, sidebars — the way a person does), ahead of the text
+    const content: Anthropic.MessageParam["content"] = pdf
+      ? [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf.toString("base64") } }, { type: "text", text: user }]
+      : user;
     const r = await client.messages.create({
       model,
       max_tokens: maxTokens,
       // the instructions repeat call after call: cache them (billed at a tenth after the first call, and faster to start)
       system: [{ type: "text", text: system + "\n\nRespond with a single JSON object and nothing else. No markdown fences.", cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: user }],
+      messages: [{ role: "user", content }],
     });
     const text = r.content.map((b) => (b.type === "text" ? b.text : "")).join("");
     const a = text.indexOf("{"), b = text.lastIndexOf("}");

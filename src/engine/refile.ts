@@ -131,3 +131,84 @@ export function placeTold(rw: Rewrite, told: { line?: string; fact?: string }[],
   next.extra_sections = (next.extra_sections ?? []).filter((x) => x.items.length);
   return { rewrite: next, log };
 }
+
+// 3. holdLines — under Experience the candidate's lines rule. For each role, every original bullet that is not the quoted
+//    evidence for a checklist requirement is put back exactly as written (the draft's reworded version is replaced); an
+//    evidence bullet may stay reworded or split. Bullets come out in the original order; lines the draft added (owed lines,
+//    told lines, unpacked lines) follow, in the draft's order. Decided 6 Nov.
+const cwords = (t: string) => norm(t).split(" ").filter((w) => w.length > 3);
+function overlapOf(a: string, b: string): number {
+  const wa = cwords(a), wb = new Set(cwords(b)); if (!wa.length) return 0;
+  return wa.filter((w) => wb.has(w) || wb.has(w.replace(/s$/, "")) || wb.has(w + "s")).length / wa.length;
+}
+export function holdLines(rw: Rewrite, resume: ResumeProfile, matches: { bucket: string; evidence?: string; told?: boolean; line?: string }[]): { rewrite: Rewrite; log: string[] } {
+  const log: string[] = [];
+  const next: Rewrite = JSON.parse(JSON.stringify(rw));
+  // owed and told lines are promises: never consumed in place of a candidate's verbatim line
+  const promised = new Set(matches.filter((m) => m.bucket === "have_not_said" && (m.line ?? "").trim()).map((m) => norm(m.line!)));
+  // the original bullets that are quoted evidence for a have_not_said requirement: the only ones a draft may reword
+  const quotes = matches.filter((m) => m.bucket === "have_not_said" && !m.told && (m.evidence ?? "").trim()).map((m) => norm(m.evidence!));
+  const isEvidence = (b: string) => { const nb = norm(b); return quotes.some((q) => q.length >= 12 && (nb.includes(q) || q.includes(nb) || overlapOf(q, nb) >= 0.7)); };
+  const key = (r: { company: string; title: string }) => norm(r.company) + "|" + norm(r.title);
+  for (const orig of resume.roles ?? []) {
+    const role = next.roles.find((r) => key(r) === key(orig)) ?? next.roles.find((r) => norm(r.company) === norm(orig.company) && norm(r.start) === norm(orig.start)) ?? next.roles.find((r) => norm(r.company) === norm(orig.company));
+    if (!role) continue;
+    const pool = role.bullets.map((b) => ({ b, used: false }));
+    const out: string[] = [];
+    for (const ob of orig.bullets) {
+      if (!ob.trim()) continue;
+      // the draft's lines that stand for this original (same words, or a split of it)
+      const mine = pool.filter((p) => !p.used && (norm(p.b) === norm(ob) || overlapOf(ob, p.b) >= 0.5 || overlapOf(p.b, ob) >= 0.6));
+      if (isEvidence(ob)) {
+        if (!mine.length) { out.push(ob.trim()); continue; }           // reworded away entirely? the original stands
+        for (const p of mine) { p.used = true; out.push(p.b); }
+        continue;
+      }
+      // not evidence: the candidate's line, exactly as written, once (a promised line that merely resembles it stays)
+      for (const p of mine) if (!promised.has(norm(p.b))) p.used = true;
+      if (mine.some((p) => p.used && norm(p.b) !== norm(ob))) log.push(`verbatim restored: ${orig.company}: ${ob.slice(0, 60)}`);
+      out.push(ob.trim());
+    }
+    // what the draft added (owed lines, told lines): after the candidate's own lines, in the draft's order
+    for (const p of pool) if (!p.used && !out.some((o) => norm(o) === norm(p.b))) out.push(p.b);
+    const before = role.bullets.map(norm).join("|"), after = out.map(norm).join("|");
+    if (before !== after && !log.some((l) => l.includes(orig.company))) log.push(`order held: ${orig.company}`);
+    role.bullets = out;
+  }
+  return { rewrite: next, log };
+}
+
+// 4. dedupe — a fact lives in one place. A sentence in the summary, the relevant block or an extras block that repeats an
+//    experience line (same numbers, most of the same words) is removed; the role line wins. Two role lines that repeat each
+//    other keep the first. Decided 6 Nov.
+export function dedupe(rw: Rewrite, prefer: string[] = []): { rewrite: Rewrite; log: string[] } {
+  const preferred = (b: string) => prefer.some((p) => norm(p) === norm(b));
+  const log: string[] = [];
+  const next: Rewrite = JSON.parse(JSON.stringify(rw));
+  const nums = (t: string) => [...t.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((m) => m[0].replace(/,/g, ""));
+  const dup = (a: string, b: string) => { const na = nums(a), nb = new Set(nums(b)); if (na.length && na.some((n) => !nb.has(n))) return false; return overlapOf(a, b) >= 0.6 && cwords(a).length >= 4; };
+  const roleLines: string[] = [];
+  for (const r of next.roles) {
+    const keep: string[] = [];
+    for (const b of r.bullets) {
+      const twin = keep.findIndex((x) => overlapOf(b, x) >= 0.8 && overlapOf(x, b) >= 0.8);
+      if (twin >= 0) {
+        // two lines saying the same thing in this role: the owed line (the employer's words) wins over the plain one
+        if (preferred(b) && !preferred(keep[twin])) { log.push(`repeat dropped in ${r.company}: ${keep[twin].slice(0, 50)}`); keep[twin] = b; }
+        else log.push(`repeat dropped in ${r.company}: ${b.slice(0, 50)}`);
+        continue;
+      }
+      if (roleLines.some((x) => overlapOf(b, x) >= 0.8 && overlapOf(x, b) >= 0.8)) { log.push(`repeat dropped in ${r.company}: ${b.slice(0, 50)}`); continue; }
+      keep.push(b);
+    }
+    r.bullets = keep; roleLines.push(...keep);
+  }
+  const copies = (line: string) => roleLines.some((b) => dup(line, b));
+  next.relevant = (next.relevant ?? []).filter((l) => { const d = copies(l); if (d) log.push(`relevant repeat dropped: ${l.slice(0, 50)}`); return !d; });
+  next.extra_sections = (next.extra_sections ?? []).map((sec) => ({ ...sec, items: sec.items.filter((it) => { const d = copies(it); if (d) log.push(`${sec.title} repeat dropped: ${it.slice(0, 50)}`); return !d; }) })).filter((sec) => sec.items.length);
+  // the summary is prose: drop a sentence that is a bullet restated
+  const sents = (next.summary ?? "").split(/(?<=[.!?])\s+/).filter(Boolean);
+  const kept = sents.filter((s) => { const d = cwords(s).length >= 6 && copies(s); if (d) log.push(`summary repeat dropped: ${s.slice(0, 50)}`); return !d; });
+  if (kept.length !== sents.length && kept.join(" ").split(/\s+/).length >= 12) next.summary = kept.join(" ");
+  return { rewrite: next, log };
+}
