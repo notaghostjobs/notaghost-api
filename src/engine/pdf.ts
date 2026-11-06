@@ -1,3 +1,14 @@
+import { PDFDocument } from "pdf-lib";
+/** Every document we make says so in its metadata, so an upload of one is recognised and refused as a source:
+ *  a Ghosted document is never the "original" another document is checked against. */
+export const GHOSTED_MARK = "Ghosted · notaghost.jobs · sharpened document";
+async function stamp(pdf: Buffer, name: string): Promise<Buffer> {
+  try {
+    const doc = await PDFDocument.load(pdf, { updateMetadata: false });
+    doc.setTitle(name); doc.setProducer(GHOSTED_MARK); doc.setCreator(GHOSTED_MARK); doc.setKeywords(["ghosted-sharpened"]); doc.setSubject("Résumé sharpened with Ghosted (notaghost.jobs)");
+    return Buffer.from(await doc.save({ useObjectStreams: false }));
+  } catch { return pdf; }
+}
 import { chromium, type Browser } from "playwright-core";
 import { readFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -118,7 +129,7 @@ ${r.education.length ? sec("Education", edu) : ""}
  * then scales type/spacing (CSS --s) so the pages end near the bottom margin.
  */
 export async function resumePdf(r: Rewrite, o: ResumeProfile): Promise<Buffer> {
-  return htmlToPdf(resumeHtml(r, o));
+  return stamp(await htmlToPdf(resumeHtml(r, o)), o.name);
 }
 
 export async function htmlToPdf(html: string): Promise<Buffer> {

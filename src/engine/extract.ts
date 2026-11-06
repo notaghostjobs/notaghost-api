@@ -4,7 +4,7 @@ import { db } from "../lib/db.js";
 import { jobKey, stripFurniture, CLEAN_SINCE, canonicalPostingUrl } from "./ghost/canon.js";
 
 /** Plain text out of a PDF or DOCX résumé. No AI here. */
-export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number }> {
+export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number; ours?: boolean }> {
   const lower = filename.toLowerCase();
   if (lower.endsWith(".doc")) {
     // Word 97–2003: still common on Indian campuses. word-extractor reads the binary format without Office installed.
@@ -23,7 +23,9 @@ export async function extractText(buf: Buffer, filename: string): Promise<{ text
   const parser = new PDFParse({ data: new Uint8Array(buf) });
   try {
     const r = await parser.getText();
-    return { text: clean(r.text), pages: r.total };
+    let ours = false;
+    try { const info: any = await parser.getInfo(); const meta = JSON.stringify(info?.info ?? info ?? {}).toLowerCase(); ours = /ghosted|notaghost/.test(meta); } catch {}
+    return { text: clean(r.text), pages: r.total, ours };
   } finally { await parser.destroy(); }
 }
 
