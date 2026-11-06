@@ -67,7 +67,19 @@ preview.post("/", async (c) => {
   }
   if (postingText.length < 80) return c.json({ error: "That posting is too short to work with. Paste the full description." }, 400);
 
-  const posting = parsed ?? (await parsePosting(postingText));
+  let posting = parsed ?? (await parsePosting(postingText));
+  // A cached row can hold a page that wasn't the job (a search page or a login wall read before today's fixes): it parses to
+  // almost nothing and every later visitor would inherit the 8%. Fewer than three requirements from a link = read it fresh,
+  // bypassing the cache, and overwrite the row. Still nothing = tell the person plainly instead of showing a hollow number.
+  const thin = (pp: any) => ((pp?.must_have?.length ?? 0) + (pp?.nice_to_have?.length ?? 0)) < 3;
+  if (body.data.posting_url && thin(posting)) {
+    const fresh = await fetchPosting(body.data.posting_url, { bypassCache: true }).catch(() => "");
+    if (fresh.length >= 80) {
+      const again = await parsePosting(fresh);
+      if (!thin(again)) { posting = again; postingText = fresh; parsed = null; if (postingId) await db.from("postings").update({ raw_text: fresh }).eq("id", postingId); }
+    }
+    if (thin(posting)) return c.json({ error: "We couldn’t read the requirements on that page. Open the job, copy everything on it, and paste the description instead — no shot is used." }, 400);
+  }
   if (postingId && !parsed) await db.from("postings").update({ company: posting.company, title: posting.title, parsed: posting }).eq("id", postingId);
   // The same résumé against the same posting is the same fit: the first read is kept and returned again, to the digit, for 30
   // days or until the résumé changes. A number that moved between two looks at one posting was never a promise.
@@ -79,7 +91,9 @@ preview.post("/", async (c) => {
   // every time, whatever the engine does later. An engine change applies to pairs scored after it, never to one already shown.
   let matches: Match[], fits: string | null, previewId: string | null;   // matches may gain options below
   const similar_open = await similarOpen(posting.title);
-  if (prior?.matches) { matches = prior.matches as Match[]; fits = null; previewId = prior.id; }
+  // a prior read with fewer than three requirements was a hollow page, not a fit: never replay it
+  const priorUsable = !!prior?.matches && (prior.matches as Match[]).length >= 3;
+  if (priorUsable) { matches = prior!.matches as Match[]; fits = null; previewId = prior!.id; }
   else {
     const g = await matchAndGrade(resume.parsed as ResumeProfile, posting);
     matches = g.matches; fits = g.fits ?? null;

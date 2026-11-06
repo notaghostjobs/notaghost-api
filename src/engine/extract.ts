@@ -32,14 +32,14 @@ function clean(s: string) {
 }
 
 /** Fetch a posting URL and reduce it to readable text. Pasted text goes straight through. */
-export async function fetchPosting(url0: string): Promise<string> {
+export async function fetchPosting(url0: string, opts: { bypassCache?: boolean } = {}): Promise<string> {
   const url = canonicalPostingUrl(url0);   // a LinkedIn search link with currentJobId is the job's own page
   // the user's own browser usually read this posting seconds ago (the card) and sent it to us; that copy beats any
   // server fetch — and job boards like Naukri refuse the server outright
-  try {
+  if (!opts.bypassCache) try {
     const { key } = jobKey(url);
     const { data: seen } = await db.from("postings").select("raw_text, source, scored_at").eq("job_key", key).not("raw_text", "is", null).order("last_seen_at", { ascending: false }).limit(1).maybeSingle();
-    const trusted = !!seen?.raw_text && seen.raw_text.length >= 200 && !(seen.source === "linkedin" && (!seen.scored_at || seen.scored_at < CLEAN_SINCE));
+    const trusted = !!seen?.raw_text && seen.raw_text.length >= 200 && !(seen.source === "linkedin" && (!seen.scored_at || seen.scored_at < CLEAN_SINCE)) && !authwall(seen.raw_text);
     if (trusted) return stripFurniture(seen!.raw_text);
   } catch { /* fall through to a fetch */ }
   // LinkedIn: the guest endpoint returns the posting without a login wall and rarely rate-limits
