@@ -10,6 +10,7 @@ import { requireUser } from "../lib/auth.js";
 import { json, MODEL } from "../engine/claude.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
 import { assess } from "../engine/fit.js";
+import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
 
 export const radar = new Hono<{ Variables: { user: User } }>();
 radar.use("*", requireUser);
@@ -18,8 +19,12 @@ type Targets = { titles: string[]; level: "ic" | "lead" | "manager" | "head"; fu
 type Answers = { titles: string[]; level: Targets["level"]; stretch: boolean; avoid: string[]; notes?: string };
 type Item = { sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string;
   now?: number; promised?: number; band?: string; said?: number; unsaid?: number; missing?: number; top_said?: string[]; top_unsaid?: string[]; top_missing?: string[]; error?: string };
-type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "done" | "error"; started: string; finished?: string; answers: Answers; resume_id: string;
-  pool: number; by_title: number; picked: number; scored: number; items: Item[]; error?: string; cost_calls: number };
+type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "questions" | "done" | "error"; started: string; finished?: string; answers: Answers; resume_id: string;
+  pool: number; by_title: number; picked: number; scored: number; items: Item[]; error?: string; cost_calls: number;
+  questions?: Gap[];            // the missing must-haves that repeat across the picked roles, asked once
+  shots?: number; within_reach?: number; threshold: number };
+/** A real shot: sharpened ≥ 75 (decided 7 Nov). Under 50 is never shown. */
+const SHOT = 75, REACH = 50;
 
 const LEVEL_WORDS: Record<Targets["level"], RegExp> = {
   ic: /\b(associate|analyst|executive|specialist|engineer|developer|designer|coordinator|consultant|officer|intern|trainee|junior|ii|iii)\b/i,
@@ -93,12 +98,12 @@ function titleScore(title: string, targets: string[][], level: Targets["level"],
 async function pickSixty(p: ResumeProfile, t: Targets, a: Answers, cands: Sighting[]): Promise<{ id: number; why: string }[]> {
   const lines = cands.map((s) => `${s.id} | ${s.title} | ${s.company_name ?? ""} | ${(s.location ?? "").slice(0, 40)}`).join("\n");
   const r = await json<{ picks: { id: number; why: string }[] }>(
-    `You are a Bengaluru recruiter choosing which live openings to put in front of ONE candidate. You see only titles, employers and locations. Pick the openings this candidate would realistically be shortlisted for: same function, same or one-step-adjacent level, employers where that profile is hired. Exclude roles clearly above or below their level, different functions that merely share a word, and anything on their avoid list. Up to 60 picks, best first; fewer if fewer fit. For each, one short reason (≤12 words) a recruiter would give.`,
+    `You are a Bengaluru recruiter choosing which live openings to put in front of ONE candidate. You see only titles, employers and locations. Pick the openings this candidate would realistically be shortlisted for: same function, same or one-step-adjacent level, employers where that profile is hired. Exclude roles clearly above or below their level, different functions that merely share a word, and anything on their avoid list. Up to 120 picks, best first; fewer if fewer fit. For each, one short reason (≤12 words) a recruiter would give.`,
     `Candidate: ${t.one_line}\nYears: ${t.years}. Level now: ${a.level}${a.stretch ? " (open to one step up)" : ""}.\nTitles they'd take: ${a.titles.join("; ")}\nFunctions: ${t.functions.join("; ")}\nStrengths: ${t.strengths.join("; ")}\nAvoid: ${a.avoid.join("; ") || "nothing"}\nNotes: ${a.notes ?? ""}\n\nOpenings (id | title | employer | location):\n${lines}\n\nReturn: {picks: [{id, why}]}`,
-    4000, MODEL
+    8000, MODEL
   );
   const ok = new Set(cands.map((c) => c.id));
-  return (r.picks ?? []).filter((x) => ok.has(Number(x.id))).map((x) => ({ id: Number(x.id), why: String(x.why ?? "").slice(0, 120) })).slice(0, 60);
+  return (r.picks ?? []).filter((x) => ok.has(Number(x.id))).map((x) => ({ id: Number(x.id), why: String(x.why ?? "").slice(0, 120) })).slice(0, 120);
 }
 
 /** The posting checklist for a sighting — parsed once, shared by every candidate. */
@@ -116,12 +121,58 @@ async function postingFor(sightingId: number): Promise<{ posting: PostingProfile
   return { posting, text };
 }
 
+function summarise(it: Item, matches: Match[]) {
+  const a = assess(matches);
+  const said = matches.filter((m) => m.bucket === "said"), unsaid = matches.filter((m) => m.bucket === "have_not_said"), missing = matches.filter((m) => m.bucket === "missing");
+  Object.assign(it, { now: a.current, promised: a.promised, band: a.band, said: said.length, unsaid: unsaid.length, missing: missing.length,
+    top_said: said.filter((m) => m.kind === "must").slice(0, 3).map((m) => m.requirement), top_unsaid: unsaid.filter((m) => m.sayable).slice(0, 3).map((m) => m.requirement), top_missing: missing.filter((m) => m.kind === "must").slice(0, 3).map((m) => m.requirement) });
+}
+function tally(run: Run) {
+  run.shots = run.items.filter((i) => (i.promised ?? 0) >= SHOT).length;
+  run.within_reach = run.items.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < SHOT).length;
+}
+/** The missing must-haves that come up again and again across the picked roles — the ten most common, with the three
+ *  honest ways of having done each (the same cards as the Sharpen questionnaire). One answer lifts every role that asked. */
+async function commonQuestions(userId: string, items: Item[]): Promise<Gap[]> {
+  const groups: { requirement: string; kind: "must" | "nice"; n: number; weight: number }[] = [];
+  for (const it of items) {
+    if (typeof it.now !== "number") continue;
+    const m = await kv.get<{ matches: Match[] }>(`radar:m:${userId}:${it.sighting_id}`); if (!m) continue;
+    for (const x of m.matches) {
+      if (x.bucket !== "missing" || x.told) continue;
+      const g = groups.find((g) => sameRequirement(g.requirement, x.requirement));
+      if (g) { g.n++; if (x.kind === "must") g.weight += 2; else g.weight += 1; } else groups.push({ requirement: x.requirement, kind: x.kind, n: 1, weight: x.kind === "must" ? 2 : 1 });
+    }
+  }
+  const top = groups.filter((g) => g.n >= 2).sort((a, b) => b.weight - a.weight || b.n - a.n).slice(0, 10);
+  if (!top.length) return [];
+  const asMatches: Match[] = top.map((g) => ({ requirement: g.requirement, kind: g.kind, bucket: "missing", evidence: "", suggestion: `Asked by ${g.n} of the roles on your list.` }));
+  const filled = await fillOptions(asMatches);
+  return gapsOf(filled).map((gap, i) => ({ ...gap, why: `Asked by ${top[i].n} of the roles on your list.` }));
+}
+/** Re-score every item whose matches carry this requirement, after an answer or a withdrawal. */
+async function rescore(userId: string, run: Run, requirement: string, apply: (m: Match[]) => Match[]) {
+  for (const it of run.items) {
+    if (typeof it.now !== "number") continue;
+    const key = `radar:m:${userId}:${it.sighting_id}`;
+    const m = await kv.get<{ matches: Match[] }>(key); if (!m) continue;
+    const hit = m.matches.find((x) => sameRequirement(x.requirement, requirement) && (x.bucket === "missing" || x.told));
+    if (!hit) continue;
+    const next = apply(m.matches.map((x) => (x === hit ? { ...x, requirement: hit.requirement } : x)));
+    await kv.set(key, { matches: next });
+    summarise(it, next);
+  }
+  run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
+  tally(run);
+}
+
 const runKey = (userId: string) => `radar:run:${userId}`;
 const running = new Set<string>();
 
 async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile }, targets: Targets, answers: Answers) {
   const key = runKey(user.id);
-  const run: Run = { status: "shortlist", started: new Date().toISOString(), answers, resume_id: resume.id, pool: 0, by_title: 0, picked: 0, scored: 0, items: [], cost_calls: 0 };
+  const run: Run = { status: "shortlist", started: new Date().toISOString(), answers, resume_id: resume.id, pool: 0, by_title: 0, picked: 0, scored: 0, items: [], cost_calls: 0, threshold: SHOT };
+  const bank = await recallAnswers(user.id).catch(() => []);
   const save = () => kv.set(key, run);
   try {
     await save();
@@ -135,14 +186,14 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
       .sort((a, b) => b.sc - a.sc);
     // at most 6 per employer in the long list, so one big feed does not crowd the rest out
     const perEmp: Record<string, number> = {}; const longList: Sighting[] = [];
-    for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 6) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 260) break; }
+    for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 8) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 420) break; }
     run.by_title = longList.length; run.status = "picking"; await save();
     if (!longList.length) { run.status = "done"; run.finished = new Date().toISOString(); await save(); return; }
     const picks = await pickSixty(resume.parsed, targets, answers, longList); run.cost_calls++;
     const byId = new Map(longList.map((s) => [s.id, s]));
-    // at most 3 per employer in the final fifty
+    // at most 4 per employer in the scored set (up to 120: the ≥75 list needs depth)
     const per2: Record<string, number> = {};
-    const chosen = picks.map((p) => ({ p, s: byId.get(p.id)! })).filter(({ s }) => { const k = s.employer_key ?? s.company_name ?? "?"; if ((per2[k] ?? 0) >= 3) return false; per2[k] = (per2[k] ?? 0) + 1; return true; }).slice(0, 50);
+    const chosen = picks.map((p) => ({ p, s: byId.get(p.id)! })).filter(({ s }) => { const k = s.employer_key ?? s.company_name ?? "?"; if ((per2[k] ?? 0) >= 4) return false; per2[k] = (per2[k] ?? 0) + 1; return true; }).slice(0, 120);
     run.picked = chosen.length; run.status = "scoring";
     run.items = chosen.map(({ p, s }) => ({ sighting_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "", url: s.url, posted_at: s.posted_at, first_seen: s.first_seen, why: p.why }));
     await save();
@@ -154,17 +205,21 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
         try {
           const pp = await postingFor(it.sighting_id);
           if (!pp) { it.error = "unreadable"; continue; }
-          const { matches } = await matchAndGrade(resume.parsed, pp.posting); run.cost_calls += 2;
-          const a = assess(matches);
-          const said = matches.filter((m: Match) => m.bucket === "said"), unsaid = matches.filter((m: Match) => m.bucket === "have_not_said"), missing = matches.filter((m: Match) => m.bucket === "missing");
-          Object.assign(it, { now: a.current, promised: a.promised, band: a.band, said: said.length, unsaid: unsaid.length, missing: missing.length,
-            top_said: said.filter((m) => m.kind === "must").slice(0, 3).map((m) => m.requirement), top_unsaid: unsaid.filter((m) => m.sayable).slice(0, 3).map((m) => m.requirement), top_missing: missing.filter((m) => m.kind === "must").slice(0, 3).map((m) => m.requirement) });
+          let { matches } = await matchAndGrade(resume.parsed, pp.posting); run.cost_calls += 2;
+          // what they told us on any earlier posting answers the same requirement here
+          matches = applyRemembered(matches, bank).matches;
+          await kv.set(`radar:m:${user.id}:${it.sighting_id}`, { matches });
+          summarise(it, matches);
         } catch (e) { it.error = (e as Error).message.slice(0, 120); }
-        run.scored++; if (run.scored % 3 === 0) await save();
+        run.scored++; if (run.scored % 4 === 0) await save();
       }
     };
-    await Promise.all(Array.from({ length: 6 }, worker));
+    await Promise.all(Array.from({ length: 8 }, worker));
     run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
+    // the questions: missing must-haves that repeat across the picked roles, asked once, applied everywhere
+    run.status = "questions"; await save();
+    try { run.questions = await commonQuestions(user.id, run.items); run.cost_calls++; } catch (e) { console.error("[radar] questions", (e as Error).message); run.questions = []; }
+    tally(run);
     run.status = "done"; run.finished = new Date().toISOString(); await save();
   } catch (e) {
     run.status = "error"; run.error = (e as Error).message; await save();
@@ -179,7 +234,7 @@ radar.get("/test/targets", async (c) => {
   const key = `radar:targets:${u.id}:${resume.id}`;
   let t = await kv.get<Targets>(key);
   if (!t) { t = await deriveTargets(resume.parsed); await kv.set(key, t); }
-  return c.json({ targets: t, resume_id: resume.id, name: resume.parsed.name });
+  return c.json({ targets: t, resume_id: resume.id, name: resume.parsed.name, roles: (resume.parsed.roles ?? []).map((r) => ({ company: r.company, start: r.start, end: r.end })) });
 });
 
 const answers = z.object({ titles: z.array(z.string().min(2).max(80)).min(1).max(10), level: z.enum(["ic", "lead", "manager", "head"]), stretch: z.boolean().default(false), avoid: z.array(z.string().max(60)).max(20).default([]), notes: z.string().max(300).optional() });
@@ -203,4 +258,35 @@ radar.get("/test/result", async (c) => {
   const run = await kv.get<Run>(runKey(u.id));
   if (!run) return c.json({ status: "none" });
   return c.json(run);
+});
+
+/** One answer, applied to every role on the list that asked for it; remembered on the account like any questionnaire answer. */
+radar.post("/test/answer", async (c) => {
+  const u = c.get("user");
+  const body = z.object({
+    requirement: z.string().min(2), withdraw: z.boolean().optional(),
+    what: z.string().max(200).optional(), where: z.string().max(80).optional(), when: z.string().max(40).optional(), size: z.string().max(30).optional(), unit: z.string().max(30).optional(), free: z.string().max(600).optional(),
+  }).safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
+  const run = await kv.get<Run>(runKey(u.id));
+  if (!run || run.status !== "done") return c.json({ error: "No finished Radar to answer for." }, 404);
+  const q = (run.questions ?? []).find((g) => g.requirement === body.data.requirement);
+  if (!q) return c.json({ error: "That isn’t one of the questions." }, 400);
+  let line: string | null = null;
+  if (body.data.withdraw) {
+    await rescore(u.id, run, q.requirement, (m) => withdrawFrom(m, m.find((x) => sameRequirement(x.requirement, q.requirement))?.requirement ?? q.requirement));
+    q.told = undefined;
+    await forgetAnswer(u.id, q.requirement).catch(() => {});
+  } else {
+    const f = body.data as Facts;
+    line = f.free?.trim() ? await shapeFree(q.requirement, f.free) : (f.what?.trim() ? assembleLine(f) : "");
+    if (!line) return c.json({ error: "Pick one of the three, or say it your way." }, 400);
+    const facts = f.free?.trim() ? f.free.trim() : [f.what, f.where && `at ${f.where}`, f.when, f.size && `${f.size} ${f.unit ?? ""}`.trim()].filter(Boolean).join(" · ");
+    const L = line;
+    await rescore(u.id, run, q.requirement, (m) => acceptInto(m, m.find((x) => sameRequirement(x.requirement, q.requirement))?.requirement ?? q.requirement, facts, L));
+    q.told = { text: facts, line: L };
+    await rememberAnswer(u.id, { requirement: q.requirement, fact: facts, line: L }).catch(() => {});
+  }
+  await kv.set(runKey(u.id), run);
+  return c.json({ ok: true, line, shots: run.shots, within_reach: run.within_reach, items: run.items, questions: run.questions });
 });
