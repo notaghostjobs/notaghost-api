@@ -22,7 +22,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|reader\/(stats|status|probe|employers|sightings))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|meter|reader\/(stats|status|probe|employers|sightings|experience))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
