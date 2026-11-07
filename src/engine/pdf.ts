@@ -69,7 +69,10 @@ export function resumeHtml(r: Rewrite, o: ResumeProfile) {
   const relevant = r.relevant?.length ? `<ul class="rel">${r.relevant.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
   const extras = (r.extra_sections ?? []).filter((x) => x.items?.length).map((x) =>
     sec(x.title, `<ul>${x.items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`)).join("");
-  const skills = r.skills.length ? `<div class="chips">${r.skills.map((s) => `<span>${esc(s)}</span>`).join("")}</div>` : "";
+  const groupedSkills = r.skills.length >= 2 && r.skills.filter((s) => /^[^:]{2,40}:\s.+,/.test(s)).length >= Math.ceil(r.skills.length / 2);
+  const skills = !r.skills.length ? "" : groupedSkills
+    ? `<div class="skgroups">${r.skills.map((s) => { const i = s.indexOf(":"); return i > 0 ? `<div class="skg"><b>${esc(s.slice(0, i).trim())}</b><span>${esc(s.slice(i + 1).trim())}</span></div>` : `<div class="skg"><span>${esc(s)}</span></div>`; }).join("")}</div>`
+    : `<div class="chips">${r.skills.map((s) => `<span>${esc(s)}</span>`).join("")}</div>`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(o.name)}</title>
 <style>
@@ -108,6 +111,9 @@ li{ position:relative; padding-left:calc(11pt * var(--s)); margin-top:calc(2.2pt
 li::before{ content:""; position:absolute; left:2pt; top:calc(0.58em - 1.2pt); width:3.2pt; height:3.2pt; border-radius:50%; background:var(--accent); }
 .chips{ display:flex; flex-wrap:wrap; gap:calc(5pt * var(--s)) calc(6pt * var(--s)); }
 .chips span{ background:var(--chip); padding:calc(3pt * var(--s)) calc(8pt * var(--s)); border-radius:3pt; font-size:calc(9.2pt * var(--s)); font-weight:500; color:var(--ink); }
+.skgroups{ display:grid; gap:calc(3pt * var(--s) * var(--g)); }
+.skg{ display:grid; grid-template-columns:calc(118pt * var(--s)) 1fr; gap:calc(10pt * var(--s)); font-size:calc(9.4pt * var(--s)); line-height:1.4; }
+.skg b{ font-weight:650; color:var(--ink); } .skg span{ color:var(--mid); }
 </style></head><body><div class="page">
 <header>
   <div class="name">${esc(o.name === o.name.toUpperCase() ? o.name.toLowerCase().replace(/(^|\s|-)\S/g, (c) => c.toUpperCase()) : o.name)}</div>

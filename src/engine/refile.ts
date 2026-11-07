@@ -230,7 +230,9 @@ export function dedupe(rw: Rewrite, prefer: string[] = []): { rewrite: Rewrite; 
     }
     r.bullets = keep; roleLines.push(...keep);
   }
-  const copies = (line: string) => roleLines.some((b) => dup(line, b));
+  const allRole = roleLines.join(" ");
+  // a copy of one line, or a line stitched from two ("built X …; product-managed Y …"): most of its words are role-line words
+  const copies = (line: string) => roleLines.some((b) => dup(line, b)) || (cwords(line).length >= 10 && overlapOf(line, allRole) >= 0.85 && nums(line).every((n) => nums(allRole).includes(n)));
   next.relevant = (next.relevant ?? []).filter((l) => { const d = copies(l); if (d) log.push(`relevant repeat dropped: ${l.slice(0, 50)}`); return !d; });
   next.extra_sections = (next.extra_sections ?? []).map((sec) => ({ ...sec, items: sec.items.filter((it) => { const d = copies(it); if (d) log.push(`${sec.title} repeat dropped: ${it.slice(0, 50)}`); return !d; }) })).filter((sec) => sec.items.length);
   // the summary is prose: drop a sentence that is a bullet restated

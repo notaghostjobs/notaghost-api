@@ -122,6 +122,7 @@ export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, mo
 2b. Generic lines ("collaborated with teams to drive growth") are left exactly as the candidate wrote them. Never cut them; make the specifics visible in the summary or relevant block instead.
 3. Do not pad. Unpacking a compressed bullet into 2-3 specific ones is allowed ONLY for a bullet that is quoted evidence, and only with facts present in the résumé; the original bullet's words and numbers survive in the result. Everything else stays as written. EVERY role keeps its OWN bullets: never a role with only a title and dates, never a role's lines moved elsewhere.
 3b. relevant: at most 3 short statements (each at most 24 words) mapping the candidate's proof to the posting's must-haves, in the employer's language — each one a pointer to proof, never a copy of an experience bullet (a fact lives in one place: if it is a bullet under a role, the relevant block refers to it in a few words, it does not repeat it). Only requirements with real evidence — never an absent one. Omit the block entirely if nothing earns it.
+3b2. skills: the candidate's skills section exactly as written — if it is grouped ("Tools: SQL, Tableau, …"), keep every group and every item as one string per group ("Tools: SQL, Tableau, Amplitude"); you may put the group the posting cares about first. Never drop an item, never collapse a group to its name.
 3c. extra_sections: keep the résumé's own extra blocks (ventures, certifications, languages, awards) as written; drop personal details. Never add a block that restates experience ("Skills detail", "Key achievements"): a fact appears once.
 3d. Length: ${resume.pages} page(s) in, ${Math.min(2, Math.max(1, resume.pages))} page(s) out — never more than two pages. Never cut a fact to fit — shorten the summary and the relevant block first. The summary never repeats a bullet; it says what the bullets add up to.
 3e. TODAY is ${new Date().toISOString().slice(0, 10)}. A role or degree whose end date is before today is finished: a completed degree is stated as held ("MBA, Mannheim Business School"), never as "candidate", "pursuing" or "in progress"; an ended role is never described as current. Education entries keep their school, degree and dates exactly.
@@ -531,11 +532,19 @@ export function preserveFacts(rw: Rewrite, resume: ResumeProfile): { rewrite: Re
       log.push(`bullet restored: ${orig.company}: ${b.slice(0, 60)}`);
     }
   });
-  // skills: every original skill name present
+  // skills: every original skill present — and when the résumé groups them ("Tools: SQL, Tableau, …"), every item in the
+  // group, as the candidate wrote it. A document that keeps the group names and drops the items has lost the section.
   const skillText = normT((next.skills ?? []).join(" | "));
-  for (const sk of resume.skills ?? []) {
-    const name = (typeof sk === "string" ? sk : sk?.name ?? "").trim(); if (!name) continue;
-    if (!skillText.includes(normT(name))) { next.skills = [...(next.skills ?? []), name]; log.push(`skill restored: ${name}`); }
+  const grouped = (resume.skills ?? []).map((sk: any) => { const name = (typeof sk === "string" ? sk : sk?.name ?? "").trim(); const ev = typeof sk === "string" ? "" : String(sk?.evidence ?? "").trim(); return { name, ev, items: ev.split(/,|;|·/).map((x) => x.trim()).filter((x) => x.length > 1) }; }).filter((g) => g.name);
+  const isGrouped = grouped.some((g) => g.items.length >= 3);
+  if (isGrouped) {
+    const missing = grouped.flatMap((g) => g.items.filter((it) => !skillText.includes(normT(it))));
+    if (missing.length) {
+      next.skills = grouped.map((g) => (g.items.length >= 2 ? `${g.name}: ${g.ev}` : g.name));
+      log.push(`skills restored as written (${missing.length} items were missing, e.g. ${missing.slice(0, 3).join(", ")})`);
+    }
+  } else {
+    for (const g of grouped) if (!skillText.includes(normT(g.name))) { next.skills = [...(next.skills ?? []), g.name]; log.push(`skill restored: ${g.name}`); }
   }
   // education: every original entry, with its school, degree and year
   for (const ed of resume.education ?? []) {
