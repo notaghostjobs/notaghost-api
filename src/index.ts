@@ -63,7 +63,9 @@ serve({ fetch: app.fetch, port: env.port }, () => console.log(`notaghost-api on 
 // the reader runs in its own worker process (src/reader/worker.ts); this process only serves.
 // daily snapshot of every posting we know (signal 21); runs every 6h, re-checks what is due
 // WhatsApp nudges for people who said hello and never sent a link: what is due goes out every 5 minutes; templates are created once at boot
-import { runNudges, ensureTemplates } from "./routes/whatsapp.js";
+import { runNudges, ensureTemplates, notifyRadarMorning } from "./routes/whatsapp.js";
+import { radarMorning } from "./routes/radar.js";
+setInterval(() => radarMorning(notifyRadarMorning).then((n) => n && console.log(`[radar] morning refreshed ${n}`)).catch((e) => console.error("[radar] morning", e?.message ?? e)), 5 * 60e3);
 setInterval(() => runNudges().then((n) => n && console.log(`[whatsapp] nudges sent ${n}`)).catch((e) => console.error("[whatsapp] nudges", e?.message ?? e)), 5 * 60e3);
 ensureTemplates().then((r) => r.length && console.log("[whatsapp] templates", JSON.stringify(r.map((x: any) => ({ name: x.name, status: x.status ?? x.skipped }))))).catch((e) => console.error("[whatsapp] templates", e?.message ?? e));
 setInterval(() => snapshotDue(200).then((n) => n && console.log(`[snapshot] rechecked ${n}`)).catch((e) => console.error("[snapshot]", e)), 6 * 3600e3);

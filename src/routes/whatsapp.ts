@@ -46,6 +46,18 @@ export const TEMPLATES = [
       { type: "BUTTONS", buttons: [{ type: "URL", text: "View receipt", url: "https://notaghost.jobs/app.html#/receipts/{{1}}", example: ["NAG-2026-00001"] }] },
     ] },
 
+  // Radar's morning: the day's new roles (or a quiet morning), outside the 24-hour window, so templates
+  { name: "ghosted_radar_morning", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Good morning. Radar checked Bengaluru companies’ hiring systems this morning: *{{1}}* new roles for you, {{2}} on your list in all. Tap to see them — they’re ranked by your real shot.", example: { body_text: [["3", "41"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "See today’s roles", url: "https://notaghost.jobs/app.html#/radar/test" }] },
+    ] },
+  { name: "ghosted_radar_quiet", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Good morning. Radar checked this morning: nothing new that clears your bar yet. {{1}} roles still on your list, {{2}} went quiet overnight. We check again tomorrow at 8.", example: { body_text: [["38", "2"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "See your list", url: "https://notaghost.jobs/app.html#/radar/test" }] },
+    ] },
+
   // nudges 3 and 4 go out more than 24 hours after the person's last message, so they must be templates (Meta reviews them)
   { name: "ghosted_nudge_morning", category: "MARKETING", language: "en",
     components: [{ type: "BODY", text: NUDGE_TEXT[2] }] },
@@ -299,6 +311,24 @@ export async function notifyDocumentReady(userId: string, shotId: string, d: { t
     ] } });
     await graph("messages", { messaging_product: "whatsapp", to, type: "document", document: { link: docLink(shotId), filename: d.filename, caption: `Your résumé for ${d.title} at ${d.company} — ${d.after}% fit, as promised.` } });
   } catch (e: any) { console.error("[whatsapp] document ready", e?.message ?? e); }
+}
+/** Radar's 8am: the morning's new roles, or a quiet morning. Template first (works outside the 24-hour window); if Meta
+ *  hasn't approved it yet, the same words as plain text, which lands only if they wrote to us in the last day. */
+export async function notifyRadarMorning(userId: string, r: { new_shots: number; gone: number; shots: number }) {
+  try {
+    const { data: u } = await db.from("users").select("phone").eq("id", userId).maybeSingle();
+    const to = String(u?.phone ?? "").replace(/\D/g, ""); if (!to) return;
+    const url = "https://notaghost.jobs/app.html#/radar/test";
+    if (r.new_shots > 0) {
+      const ok = await graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name: "ghosted_radar_morning", language: { code: "en" }, components: [
+        { type: "body", parameters: [{ type: "text", text: String(r.new_shots) }, { type: "text", text: String(r.shots) }] } ] } });
+      if (!ok) await sendCard(to, { body: `Good morning. Radar checked Bengaluru companies’ hiring systems this morning: *${r.new_shots}* new role${r.new_shots === 1 ? "" : "s"} for you, ${r.shots} on your list in all. Ranked by your real shot.`, button: "See today’s roles", url });
+    } else {
+      const ok = await graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name: "ghosted_radar_quiet", language: { code: "en" }, components: [
+        { type: "body", parameters: [{ type: "text", text: String(r.shots) }, { type: "text", text: String(r.gone) }] } ] } });
+      if (!ok) await sendCard(to, { body: `Good morning. Radar checked this morning: nothing new that clears your bar yet. ${r.shots} roles still on your list, ${r.gone} went quiet overnight. We check again tomorrow at 8.`, button: "See your list", url });
+    }
+  } catch (e: any) { console.error("[whatsapp] radar morning", e?.message ?? e); }
 }
 /** Receipt on WhatsApp right after payment (approved template ghosted_receipt). The list price is shown struck while the launch offer runs. */
 export async function notifyReceipt(userId: string, p: { id: string; receipt_no: string; amount_paise: number; product: string; shots: number; days: number; list_paise?: number }) {

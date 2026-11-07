@@ -5,7 +5,7 @@
 // posting checklist cached per sighting) → stored per user, filled progressively. No payment, no shot: /radar/test only.
 import { Hono } from "hono";
 import { z } from "zod";
-import { db, activePlan, type User } from "../lib/db.js";
+import { db, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
 import { isTester } from "../lib/testers.js";
 import { json, MODEL } from "../engine/claude.js";
@@ -20,12 +20,16 @@ radar.use("*", requireUser);
 
 type Targets = { titles: string[]; level: "ic" | "lead" | "manager" | "head"; functions: string[]; strengths: string[]; years: number; one_line: string };
 type Answers = { titles: string[]; level: Targets["level"]; stretch: boolean; avoid: string[]; notes?: string };
-type Item = { sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string;
+type Item = { sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string; new_at?: string;
   now?: number; promised?: number; band?: string; said?: number; unsaid?: number; missing?: number; top_said?: string[]; top_unsaid?: string[]; top_missing?: string[]; error?: string };
 type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "questions" | "done" | "error"; started: string; finished?: string; answers: Answers; resume_id: string;
   pool: number; by_title: number; picked: number; scored: number; items: Item[]; error?: string; cost_calls: number;
   questions?: Gap[];            // the missing must-haves that repeat across the picked roles, asked once
-  shots?: number; within_reach?: number; threshold: number };
+  shots?: number; within_reach?: number; threshold: number;
+  refreshed?: string;           // the last morning re-run
+  seen?: number[];              // sightings already put to the model (picked or passed over), so a morning never re-asks
+  gone?: { sighting_id: number; title: string; company: string; gone_at: string; promised?: number }[];   // roles that went quiet after they were on the list
+  today?: { new: number; gone: number; at: string } };
 /** A real shot: sharpened ≥ 75 (decided 7 Nov). Under 50 is never shown. */
 const SHOT = 75, REACH = 50;
 
@@ -46,6 +50,11 @@ const currentResume = async (userId: string) => {
   const { data: any } = await db.from("resumes").select("id, parsed").eq("user_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle();
   return any?.parsed ? { id: any.id as string, parsed: any.parsed as ResumeProfile } : null;
 };
+/** An active Radar plan, shots used or not: the list stays open for the 30 days even after the ten Sharpens are spent. */
+async function hasRadar(userId: string): Promise<boolean> {
+  const { data } = await db.from("plans").select("id").eq("user_id", userId).eq("product", "radar").gt("expires_at", new Date().toISOString()).limit(1);
+  return !!(data && data.length);
+}
 const kv = {
   async get<T>(key: string): Promise<T | null> { const { data } = await db.from("reader_control").select("value").eq("key", key).maybeSingle(); return (data?.value as T) ?? null; },
   async set(key: string, value: unknown) { await db.from("reader_control").upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: "key" }); },
@@ -249,6 +258,7 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     run.by_title = longList.length; run.status = "picking"; await save();
     if (!longList.length) { run.status = "done"; run.finished = new Date().toISOString(); await save(); return; }
     const picks = await pickSixty(resume.parsed, targets, answers, longList); run.cost_calls++;
+    run.seen = longList.map((s) => s.id);
     const byId = new Map(longList.map((s) => [s.id, s]));
     // at most 4 per employer in the scored set (up to 120: the ≥75 list needs depth)
     const per2: Record<string, number> = {};
@@ -284,6 +294,118 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     run.status = "error"; run.error = (e as Error).message; await save();
   } finally { running.delete(user.id); }
 }
+
+/** The morning re-run for one account: roles that went quiet leave the list (kept under `gone`), the openings that came in
+ *  since the last run go through the same picker and fit engine, and the list is re-ranked. Only new sightings cost model
+ *  calls (one pick + two per scored role). A changed source résumé means a full run instead. */
+export async function refreshRadar(userId: string): Promise<{ new_shots: number; new_scored: number; gone: number; shots: number } | null> {
+  const key = runKey(userId);
+  const run = await kv.get<Run>(key);
+  if (!run || run.status !== "done") return null;
+  if (running.has(userId)) return null;
+  const { data: urow } = await db.from("users").select("*").eq("id", userId).maybeSingle();
+  if (!urow) return null;
+  const resume = await currentResume(userId);
+  if (!resume) return null;
+  if (resume.id !== run.resume_id) {
+    const tkey = `radar:targets:${userId}:${resume.id}`;
+    let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(resume.parsed); await kv.set(tkey, t); }
+    running.add(userId);
+    await runRadar(urow as User, resume, t, run.answers);
+    const fresh = await kv.get<Run>(key);
+    return { new_shots: fresh?.shots ?? 0, new_scored: fresh?.scored ?? 0, gone: 0, shots: fresh?.shots ?? 0 };
+  }
+  running.add(userId);
+  try {
+    const now = new Date().toISOString();
+    const pool = await livePool();
+    const liveIds = new Set(pool.map((s) => s.id));
+    // 1. roles that went quiet leave the list
+    const gone = run.items.filter((i) => !liveIds.has(i.sighting_id));
+    run.gone = [...gone.map((i) => ({ sighting_id: i.sighting_id, title: i.title, company: i.company, gone_at: now, promised: i.promised })), ...(run.gone ?? [])].slice(0, 60);
+    run.items = run.items.filter((i) => liveIds.has(i.sighting_id));
+    // 2. what came in since the last run (two hours of slack for the reader's own timing), never seen by the picker before
+    const since = Date.parse(run.refreshed ?? run.finished ?? run.started) - 2 * 3600e3;
+    const seen = new Set([...(run.seen ?? []), ...run.items.map((i) => i.sighting_id)]);
+    const targetWords = run.answers.titles.map(words).filter((w) => w.length);
+    const avoid = run.answers.avoid.map(norm).filter(Boolean);
+    const scored = pool
+      .filter((s) => s.readable && !seen.has(s.id) && Date.parse(s.first_seen) >= since)
+      .filter((s) => !avoid.some((a) => norm(s.company_name ?? "").includes(a) || norm(s.title).includes(a)))
+      .map((s) => ({ s, sc: titleScore(s.title ?? "", targetWords, run.answers.level, run.answers.stretch) }))
+      .filter((x) => x.sc > 0.3)
+      .sort((a, b) => b.sc - a.sc);
+    const perEmp: Record<string, number> = {}; const longList: Sighting[] = [];
+    for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 6) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 240) break; }
+    let added: Item[] = [];
+    if (longList.length) {
+      const tkey = `radar:targets:${userId}:${resume.id}`;
+      let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(resume.parsed); await kv.set(tkey, t); }
+      const picks = await pickSixty(resume.parsed, t, run.answers, longList); run.cost_calls++;
+      run.seen = [...longList.map((s) => s.id), ...(run.seen ?? [])].slice(0, 4000);
+      const byId = new Map(longList.map((s) => [s.id, s]));
+      const onList: Record<string, number> = {}; for (const i of run.items) { const k = i.company; onList[k] = (onList[k] ?? 0) + 1; }
+      const chosen = picks.map((p) => ({ p, s: byId.get(p.id)! })).filter(({ s }) => { const k = s.company_name ?? "?"; if ((onList[k] ?? 0) >= 4) return false; onList[k] = (onList[k] ?? 0) + 1; return true; }).slice(0, 40);
+      added = chosen.map(({ p, s }) => ({ sighting_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "", url: s.url, posted_at: s.posted_at, first_seen: s.first_seen, why: p.why, new_at: now }));
+      const bank = await recallAnswers(userId).catch(() => []);
+      let i = 0;
+      const worker = async () => {
+        while (i < added.length) {
+          const it = added[i++];
+          try {
+            const pp = await postingFor(it.sighting_id);
+            if (!pp) { it.error = "unreadable"; continue; }
+            let { matches } = await matchAndGrade(resume.parsed, pp.posting); run.cost_calls += 2;
+            matches = applyRemembered(matches, bank).matches;
+            await kv.set(`radar:m:${userId}:${it.sighting_id}`, { matches });
+            summarise(it, matches);
+          } catch (e) { it.error = (e as Error).message.slice(0, 120); }
+          run.scored++;
+        }
+      };
+      await Promise.all(Array.from({ length: 6 }, worker));
+      run.items.push(...added);
+    }
+    // 3. re-rank, retally; yesterday's "new" badges fall away
+    for (const it of run.items) if (it.new_at && it.new_at !== now && Date.now() - Date.parse(it.new_at) > 36 * 3600e3) delete it.new_at;
+    run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
+    tally(run);
+    const new_shots = added.filter((i) => (i.promised ?? 0) >= SHOT).length;
+    run.refreshed = now; run.today = { new: new_shots, gone: gone.length, at: now };
+    await kv.set(key, run);
+    return { new_shots, new_scored: added.filter((i) => typeof i.now === "number").length, gone: gone.length, shots: run.shots ?? 0 };
+  } finally { running.delete(userId); }
+}
+
+/** Every account with a live Radar plan, re-run once a morning (8am IST) and told on WhatsApp. Called every five minutes
+ *  from index.ts; the day's lock in reader_control keeps it to once. */
+export async function radarMorning(notify: (userId: string, r: { new_shots: number; gone: number; shots: number }) => Promise<void>): Promise<number> {
+  const ist = new Date(Date.now() + 5.5 * 3600e3);
+  if (ist.getUTCHours() !== 8) return 0;
+  const day = ist.toISOString().slice(0, 10);
+  const lockKey = `radar:morning:${day}`;
+  if (await kv.get(lockKey)) return 0;
+  await kv.set(lockKey, { started: new Date().toISOString() });
+  const { data: plans } = await db.from("plans").select("user_id").eq("product", "radar").gt("expires_at", new Date().toISOString());
+  const users = [...new Set((plans ?? []).map((p: any) => p.user_id as string))];
+  let n = 0;
+  for (const userId of users) {
+    try {
+      const r = await refreshRadar(userId);
+      if (r) { await notify(userId, r); n++; }
+    } catch (e) { console.error("[radar] morning", userId, (e as Error).message); }
+  }
+  await kv.set(lockKey, { started: new Date().toISOString(), done: new Date().toISOString(), users: users.length, refreshed: n });
+  return n;
+}
+
+/** Testers: run this morning's refresh on your own account now. */
+radar.post("/test/refresh", async (c) => {
+  const u = c.get("user");
+  if (!isTester(u)) return c.json({ error: "Not available on this account." }, 403);
+  const r = await refreshRadar(u.id);
+  return c.json(r ?? { error: "No finished Radar on this account." }, r ? 200 : 404);
+});
 
 radarPublic.get("/pulse", async (c) => {
   const p = await pulse();
@@ -349,7 +471,7 @@ radar.get("/test/result", async (c) => {
   const u = c.get("user");
   const run = await kv.get<Run>(runKey(u.id));
   if (!run) return c.json({ status: "none" });
-  const unlocked = !!(await activePlan(u.id, "radar")) || !!(await kv.get(`radar:unlock:${u.id}`));
+  const unlocked = (await hasRadar(u.id)) || !!(await kv.get(`radar:unlock:${u.id}`));
   const scored = run.items.filter((i) => typeof i.now === "number");
   const shots = scored.filter((i) => (i.promised ?? 0) >= SHOT);
   const since = Date.now() - 86400e3;
