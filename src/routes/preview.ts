@@ -9,6 +9,8 @@ import { requireUser } from "../lib/auth.js";
 import { fetchPosting } from "../engine/extract.js";
 import { assess, fit, ENGINE_VERSION } from "../engine/fit.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../engine/sharpen.js";
+import { radarMatchesFor } from "./radar.js";
+import { withMeter } from "../engine/meter.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, type Facts } from "../engine/told.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(canonicalPostingUrl(u).trim().toLowerCase()).digest("hex");
@@ -96,7 +98,9 @@ preview.post("/", async (c) => {
   const priorUsable = !refreshed && !!prior?.matches && (prior.matches as Match[]).length >= 3 && !thin((prior as any).posting);
   if (priorUsable) { matches = prior!.matches as Match[]; fits = null; previewId = prior!.id; }
   else {
-    const g = await matchAndGrade(resume.parsed as ResumeProfile, posting);
+    // Radar already paid for this pair: its match (same engine, same résumé) is the match — nothing is scored twice
+    const fromRadar = await radarMatchesFor(u.id, resume.id, body.data.posting_url ?? "").catch(() => null);
+    const g = fromRadar ? { matches: fromRadar, fits: null as string | null } : await withMeter({ tag: "preview", user: u.id }, () => matchAndGrade(resume.parsed as ResumeProfile, posting));
     matches = g.matches; fits = g.fits ?? null;
     // what they told us on earlier postings answers the same question here, before they are asked again
     try { const bank = await recallAnswers(u.id); const re = applyRemembered(matches, bank); if (re.n) { matches = re.matches; console.error("[preview] remembered answers applied", re.n); } } catch {}

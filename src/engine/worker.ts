@@ -9,6 +9,7 @@ import { fit, target } from "../engine/fit.js";
 import { addedFacts } from "./told.js";
 import { takeDraft, draftKey } from "./prewarm.js";
 import { refileBullets } from "./refile.js";
+import { withMeter, charge } from "./meter.js";
 
 /** Called right after upload. Extracts + parses once; stores text and profile. */
 export async function processResume(resumeId: string) {
@@ -53,6 +54,12 @@ export async function processResume(resumeId: string) {
 export async function runShot(shotId: string) {
   const { data: shot } = await db.from("shots").select("*").eq("id", shotId).single();
   if (!shot || shot.status !== "queued") return;
+  // metered under the account; a shot drawn on a Radar plan counts against that plan's ₹600
+  const { data: plan } = shot.plan_id ? await db.from("plans").select("product, created_at").eq("id", shot.plan_id).maybeSingle() : { data: null };
+  if (plan?.product === "radar") { await charge(shot.user_id, plan.created_at ?? new Date().toISOString(), "sharpen:radar", () => runShotInner(shotId, shot)); return; }
+  await withMeter({ tag: `sharpen:${shot.product ?? "sharpen"}`, user: shot.user_id }, () => runShotInner(shotId, shot));
+}
+async function runShotInner(shotId: string, shot: any) {
   await db.from("shots").update({ status: "running" }).eq("id", shotId);
   try {
     const { data: res } = await db.from("resumes").select("parsed, text").eq("id", shot.resume_id).single();

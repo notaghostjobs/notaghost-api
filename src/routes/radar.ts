@@ -1,8 +1,9 @@
-// Radar (test build, 7 Nov): from the résumé on file, the live Bengaluru openings this person has a real shot at — ranked,
-// each with the fit engine's number now and if sharpened. Flow: profile → what they're a fit for (one model call) →
-// five confirm-not-type questions → shortlist from the live sightings (title and level, ₹0) → the model picks the
-// plausible sixty from titles alone (one call) → the fit engine on each (the same match + audited lines as the preview,
-// posting checklist cached per sighting) → stored per user, filled progressively. No payment, no shot: /radar/test only.
+// Radar: from the résumé on file, the live Bengaluru openings this person has a real shot at — ranked, each with the fit
+// engine's number now and if sharpened. Flow: profile → what they're a fit for (one call) → title match over the live
+// sightings (₹0) → stage 1b: the posting's own text against the résumé's words (₹0) → stage 2: ten postings per call,
+// résumé pinned, a rough band each (~₹0.25 a role) → stage 3: the expert match + audit only for roles in reach (the same
+// engine as the preview; posting checklist cached per sighting, shared by every user) → stored per user, filled as it
+// lands. Every call is metered and charged to the account; ₹600 per 30 days is the cap (the economics rule, 7 Nov).
 import { Hono } from "hono";
 import { z } from "zod";
 import { db, type User } from "../lib/db.js";
@@ -11,6 +12,7 @@ import { isTester } from "../lib/testers.js";
 import { json, MODEL } from "../engine/claude.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
 import { assess } from "../engine/fit.js";
+import { charge, withMeter } from "../engine/meter.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
 
 export const radar = new Hono<{ Variables: { user: User } }>();
@@ -20,7 +22,7 @@ radar.use("*", requireUser);
 
 type Targets = { titles: string[]; level: "ic" | "lead" | "manager" | "head"; functions: string[]; strengths: string[]; years: number; one_line: string };
 type Answers = { titles: string[]; level: Targets["level"]; stretch: boolean; avoid: string[]; notes?: string };
-type Item = { sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string; new_at?: string;
+type Item = { sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string; new_at?: string; tri?: number;
   now?: number; promised?: number; band?: string; said?: number; unsaid?: number; missing?: number; top_said?: string[]; top_unsaid?: string[]; top_missing?: string[]; error?: string };
 type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "questions" | "done" | "error"; started: string; finished?: string; answers: Answers; resume_id: string;
   pool: number; by_title: number; picked: number; scored: number; items: Item[]; error?: string; cost_calls: number;
@@ -29,7 +31,8 @@ type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "question
   refreshed?: string;           // the last morning re-run
   seen?: number[];              // sightings already put to the model (picked or passed over), so a morning never re-asks
   gone?: { sighting_id: number; title: string; company: string; gone_at: string; promised?: number }[];   // roles that went quiet after they were on the list
-  today?: { new: number; gone: number; at: string } };
+  today?: { new: number; gone: number; at: string };
+  spend?: { run_paise: number; total_paise: number; capped?: boolean } };   // what this account has cost us, from the meter
 /** A real shot: sharpened ≥ 75 (decided 7 Nov). Under 50 is never shown. */
 const SHOT = 75, REACH = 50;
 
@@ -161,18 +164,6 @@ function titleScore(title: string, targets: string[][], level: Targets["level"],
   return best;
 }
 
-/** One model call reads titles only and picks the plausible sixty. */
-async function pickSixty(p: ResumeProfile, t: Targets, a: Answers, cands: Sighting[]): Promise<{ id: number; why: string }[]> {
-  const lines = cands.map((s) => `${s.id} | ${s.title} | ${s.company_name ?? ""} | ${(s.location ?? "").slice(0, 40)}`).join("\n");
-  const r = await json<{ picks: { id: number; why: string }[] }>(
-    `You are a Bengaluru recruiter choosing which live openings to put in front of ONE candidate. You see only titles, employers and locations. Pick the openings this candidate would realistically be shortlisted for: same function, same or one-step-adjacent level, employers where that profile is hired. Exclude roles clearly above or below their level, different functions that merely share a word, and anything on their avoid list. Up to 120 picks, best first; fewer if fewer fit. For each, one short reason (≤12 words) a recruiter would give.`,
-    `Candidate: ${t.one_line}\nYears: ${t.years}. Level now: ${a.level}${a.stretch ? " (open to one step up)" : ""}.\nTitles they'd take: ${a.titles.join("; ")}\nFunctions: ${t.functions.join("; ")}\nStrengths: ${t.strengths.join("; ")}\nAvoid: ${a.avoid.join("; ") || "nothing"}\nNotes: ${a.notes ?? ""}\n\nOpenings (id | title | employer | location):\n${lines}\n\nReturn: {picks: [{id, why}]}`,
-    8000, MODEL
-  );
-  const ok = new Set(cands.map((c) => c.id));
-  return (r.picks ?? []).filter((x) => ok.has(Number(x.id))).map((x) => ({ id: Number(x.id), why: String(x.why ?? "").slice(0, 120) })).slice(0, 120);
-}
-
 /** The posting checklist for a sighting — parsed once, shared by every candidate. */
 async function postingFor(sightingId: number): Promise<{ posting: PostingProfile; text: string } | null> {
   const key = `radar:pp:${sightingId}`;
@@ -186,6 +177,103 @@ async function postingFor(sightingId: number): Promise<{ posting: PostingProfile
   if (thin) return null;
   await kv.set(key, { posting, at: new Date().toISOString() });
   return { posting, text };
+}
+
+
+/** ---------- the three stages (7 Nov, the economics rule: never pay full price to reject) ----------
+ *  1. free: title words, then the posting's own text against the résumé's words — ranks hundreds, costs nothing.
+ *  2. cheap: ten postings per call, résumé pinned once, a rough band each — decides who gets stage 3, never shown.
+ *  3. expert: the match + audit (same as the preview) — only for roles stage 2 put in reach; everything shown went through it. */
+const RWORDS_STOP = new Set([...STOP, "experience", "work", "team", "role", "years", "year", "skills", "strong", "ability", "including", "across", "within", "using", "based", "related", "will", "must", "should", "have", "good", "well", "high", "new", "end", "key", "etc"]);
+const cwordsOf = (t: string) => norm(t).split(" ").filter((w) => w.length > 3 && !RWORDS_STOP.has(w)).map(stem);
+function resumeWords(p: ResumeProfile): Set<string> {
+  const parts: string[] = [p.headline ?? "", ...(p.skills ?? []).map((s: any) => (typeof s === "string" ? s : s?.name ?? "")), ...(p.roles ?? []).flatMap((r) => [r.title ?? "", ...(r.bullets ?? [])])];
+  return new Set(cwordsOf(parts.join(" ")));
+}
+/** Stage 1b: how much of the posting's own vocabulary the résumé already carries. 0..1. */
+function textFit(rw: Set<string>, description: string): number {
+  const dw = cwordsOf(description.slice(0, 6000)); if (dw.length < 30) return 0;
+  const uniq = [...new Set(dw)]; let hit = 0; for (const w of uniq) if (rw.has(w)) hit++;
+  return hit / Math.sqrt(uniq.length);
+}
+async function descriptionsFor(ids: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await db.from("sightings").select("id, description").in("id", ids.slice(i, i + 100));
+    for (const r of (data ?? []) as any[]) if (r.description) out.set(r.id, r.description);
+  }
+  return out;
+}
+/** Stage 2: a calibrated guess per posting from the posting's text, résumé pinned. ~₹0.25 a role. */
+async function triage(resume: ResumeProfile, t: Targets, a: Answers, batch: { s: Sighting; text: string }[]): Promise<Map<number, { band: number; why: string }>> {
+  const r = await json<{ bands: { id: number; band: number; why: string }[] }>(
+    `You are a fair Bengaluru recruiter doing a first screen. For EACH numbered posting, estimate the score (0-100) this candidate's CURRENT résumé would get from a fair screener reading it against the posting's requirements. Calibration: 75+ = would be shortlisted today; 55-74 = close, a few requirements the résumé names but does not show; under 40 = different function, wrong level, or core must-haves absent. Judge function and level honestly (a category manager is not a software engineer; a 'head of' role is not for a 5-year IC). One short reason each (≤10 words).`,
+    `Candidate in one line: ${t.one_line}\nYears: ${t.years}. Level: ${a.level}${a.stretch ? " (open to one step up)" : ""}. Functions: ${t.functions.join("; ")}.\n\nPOSTINGS:\n${batch.map((b, i) => `#${i + 1} (id ${b.s.id}) ${b.s.title} — ${b.s.company_name ?? ""}\n${b.text.replace(/\s+/g, " ").slice(0, 2200)}`).join("\n\n")}\n\nReturn: {bands:[{id, band, why}]} — one entry per posting, by id.`,
+    1500, MODEL, undefined, `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}`
+  );
+  const out = new Map<number, { band: number; why: string }>();
+  for (const b of r.bands ?? []) { const id = Number(b.id); if (batch.some((x) => x.s.id === id)) out.set(id, { band: Math.max(0, Math.min(100, Number(b.band) || 0)), why: String(b.why ?? "").slice(0, 120) }); }
+  return out;
+}
+const TRIAGE_IN = 50;      // stage 3 only for bands at or above this (Sharpen lifts ~15-20; 75 is the bar)
+/** Stages 1b → 2 → 3 over a candidate set. Returns the scored items (stage 3) and the triaged-out ones (band only). */
+async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfile }, t: Targets, a: Answers, cands: Sighting[], opt: { stage1Keep: number; stage3Cap: number; bank: Awaited<ReturnType<typeof recallAnswers>>; onProgress?: (scored: number) => Promise<void> | void; onChosen?: (items: Item[]) => Promise<void> | void; mark?: string; run: Run }) {
+  const { run } = opt;
+  // 1b. free ranking on the posting's own words
+  const rw = resumeWords(resume.parsed);
+  const descs = await descriptionsFor(cands.map((c) => c.id));
+  const ranked = cands.map((s) => ({ s, text: descs.get(s.id) ?? "", fit: textFit(rw, descs.get(s.id) ?? "") })).filter((x) => x.text.length >= 200).sort((x, y) => y.fit - x.fit);
+  const perEmp: Record<string, number> = {}; const kept: typeof ranked = [];
+  for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 6) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
+  run.seen = [...kept.map((x) => x.s.id), ...(run.seen ?? [])].slice(0, 4000);
+  // 2. cheap bands, ten at a time, four calls in flight
+  const bands = new Map<number, { band: number; why: string }>();
+  const batches: typeof kept[] = []; for (let i = 0; i < kept.length; i += 10) batches.push(kept.slice(i, i + 10));
+  let bi = 0;
+  await Promise.all(Array.from({ length: 4 }, async () => { while (bi < batches.length) { const b = batches[bi++]; try { for (const [id, v] of await triage(resume.parsed, t, a, b)) bands.set(id, v); run.cost_calls++; } catch (e) { console.error("[radar] triage", (e as Error).message); } } }));
+  // 3. the expert check on the ones in reach, best first, capped; at most 4 per employer
+  const inReach = kept.filter((x) => (bands.get(x.s.id)?.band ?? 0) >= TRIAGE_IN).sort((x, y) => (bands.get(y.s.id)!.band - bands.get(x.s.id)!.band));
+  const per3: Record<string, number> = {}; const chosen: typeof kept = [];
+  for (const x of inReach) { const k = x.s.company_name ?? "?"; if ((per3[k] ?? 0) >= 4) continue; per3[k] = (per3[k] ?? 0) + 1; chosen.push(x); if (chosen.length >= opt.stage3Cap) break; }
+  const items: Item[] = chosen.map(({ s }) => ({ sighting_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "", url: s.url, posted_at: s.posted_at, first_seen: s.first_seen, why: bands.get(s.id)?.why ?? "", tri: bands.get(s.id)?.band, ...(opt.mark ? { new_at: opt.mark } : {}) }));
+  if (opt.onChosen) await opt.onChosen(items);
+  let i = 0, done = 0;
+  const worker = async () => {
+    while (i < items.length) {
+      const it = items[i++];
+      try {
+        const pp = await postingFor(it.sighting_id);
+        if (!pp) { it.error = "unreadable"; continue; }
+        let { matches } = await matchAndGrade(resume.parsed, pp.posting); run.cost_calls += 2;
+        matches = applyRemembered(matches, opt.bank).matches;
+        await kv.set(`radar:m:${user.id}:${it.sighting_id}`, { matches });
+        summarise(it, matches);
+      } catch (e) { it.error = (e as Error).message.slice(0, 120); }
+      done++; if (opt.onProgress && done % 3 === 0) await opt.onProgress(done);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  const passedOver = kept.filter((x) => !chosen.includes(x)).map(({ s }) => ({ id: s.id, band: bands.get(s.id)?.band ?? 0 }));
+  return { items, passedOver, kept: kept.length, inReach: inReach.length };
+}
+/** Sharpen asks: did Radar already score this résumé against this posting? Then that match is the match (same engine), and
+ *  the Sharpen that follows pays only for the rewrite. Matched on the posting URL Radar handed out. */
+export async function radarMatchesFor(userId: string, resumeId: string, url: string): Promise<Match[] | null> {
+  if (!url) return null;
+  const run = await kv.get<Run>(runKey(userId));
+  if (!run || run.resume_id !== resumeId) return null;
+  const want = norm(url.replace(/[?#].*$/, ""));
+  const it = run.items.find((i) => typeof i.now === "number" && norm((i.url ?? "").replace(/[?#].*$/, "")) === want);
+  if (!it) return null;
+  const m = await kv.get<{ matches: Match[] }>(`radar:m:${userId}:${it.sighting_id}`);
+  return m?.matches?.length ? m.matches : null;
+}
+const CAP_PAISE = 60000;   // ₹600 per account per 30 days — the rule
+async function spent30(userId: string): Promise<number> {
+  const since = new Date(Date.now() - 30 * 86400e3).toISOString();
+  const { data } = await db.from("reader_control").select("key, value").like("key", `meter:plan:${userId}:%`);
+  let p = 0; for (const r of data ?? []) { const day = r.key.split(":")[3]; if (day >= since.slice(0, 10)) p += Number((r.value as any)?.paise ?? 0); }
+  return p;
 }
 
 function summarise(it: Item, matches: Match[]) {
@@ -257,37 +345,19 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 8) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 420) break; }
     run.by_title = longList.length; run.status = "picking"; await save();
     if (!longList.length) { run.status = "done"; run.finished = new Date().toISOString(); await save(); return; }
-    const picks = await pickSixty(resume.parsed, targets, answers, longList); run.cost_calls++;
-    run.seen = longList.map((s) => s.id);
-    const byId = new Map(longList.map((s) => [s.id, s]));
-    // at most 4 per employer in the scored set (up to 120: the ≥75 list needs depth)
-    const per2: Record<string, number> = {};
-    const chosen = picks.map((p) => ({ p, s: byId.get(p.id)! })).filter(({ s }) => { const k = s.employer_key ?? s.company_name ?? "?"; if ((per2[k] ?? 0) >= 4) return false; per2[k] = (per2[k] ?? 0) + 1; return true; }).slice(0, 120);
-    run.picked = chosen.length; run.status = "scoring";
-    run.items = chosen.map(({ p, s }) => ({ sighting_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "", url: s.url, posted_at: s.posted_at, first_seen: s.first_seen, why: p.why }));
-    await save();
-    // the fit engine on each, six at a time; the page fills as they land
-    let i = 0;
-    const worker = async () => {
-      while (i < run.items.length) {
-        const it = run.items[i++];
-        try {
-          const pp = await postingFor(it.sighting_id);
-          if (!pp) { it.error = "unreadable"; continue; }
-          let { matches } = await matchAndGrade(resume.parsed, pp.posting); run.cost_calls += 2;
-          // what they told us on any earlier posting answers the same requirement here
-          matches = applyRemembered(matches, bank).matches;
-          await kv.set(`radar:m:${user.id}:${it.sighting_id}`, { matches });
-          summarise(it, matches);
-        } catch (e) { it.error = (e as Error).message.slice(0, 120); }
-        run.scored++; if (run.scored % 4 === 0) await save();
-      }
-    };
-    await Promise.all(Array.from({ length: 8 }, worker));
-    run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
-    // the questions: missing must-haves that repeat across the picked roles, asked once, applied everywhere
-    run.status = "questions"; await save();
-    try { run.questions = await commonQuestions(user.id, run.items); run.cost_calls++; } catch (e) { console.error("[radar] questions", (e as Error).message); run.questions = []; }
+    run.status = "scoring"; run.picked = 0; await save();
+    const planSince = run.started;
+    const { paise } = await charge(user.id, planSince, "radar:run", async () => {
+      const r = await stagedScore(user, resume, targets, answers, longList, { stage1Keep: 60, stage3Cap: 25, bank, run,
+        onChosen: async (items) => { run.items = items; run.picked = items.length; await save(); },
+        onProgress: async (n) => { run.scored = n; await save(); } });
+      run.picked = r.items.length; run.items = r.items; run.scored = r.items.length;
+      // the questions: missing must-haves that repeat across the picked roles, asked once, applied everywhere
+      run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
+      run.status = "questions"; await save();
+      try { run.questions = await commonQuestions(user.id, run.items); run.cost_calls++; } catch (e) { console.error("[radar] questions", (e as Error).message); run.questions = []; }
+    });
+    run.spend = { run_paise: paise, total_paise: await spent30(user.id) };
     tally(run);
     run.status = "done"; run.finished = new Date().toISOString(); await save();
   } catch (e) {
@@ -337,35 +407,20 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
       .sort((a, b) => b.sc - a.sc);
     const perEmp: Record<string, number> = {}; const longList: Sighting[] = [];
     for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 6) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 240) break; }
-    let added: Item[] = [];
+    let added: Item[] = []; let morningPaise = 0;
+    const total = await spent30(userId); const capped = total >= CAP_PAISE;
     if (longList.length) {
       const tkey = `radar:targets:${userId}:${resume.id}`;
       let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(resume.parsed); await kv.set(tkey, t); }
-      const picks = await pickSixty(resume.parsed, t, run.answers, longList); run.cost_calls++;
-      run.seen = [...longList.map((s) => s.id), ...(run.seen ?? [])].slice(0, 4000);
-      const byId = new Map(longList.map((s) => [s.id, s]));
-      const onList: Record<string, number> = {}; for (const i of run.items) { const k = i.company; onList[k] = (onList[k] ?? 0) + 1; }
-      const chosen = picks.map((p) => ({ p, s: byId.get(p.id)! })).filter(({ s }) => { const k = s.company_name ?? "?"; if ((onList[k] ?? 0) >= 4) return false; onList[k] = (onList[k] ?? 0) + 1; return true; }).slice(0, 40);
-      added = chosen.map(({ p, s }) => ({ sighting_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "", url: s.url, posted_at: s.posted_at, first_seen: s.first_seen, why: p.why, new_at: now }));
       const bank = await recallAnswers(userId).catch(() => []);
-      let i = 0;
-      const worker = async () => {
-        while (i < added.length) {
-          const it = added[i++];
-          try {
-            const pp = await postingFor(it.sighting_id);
-            if (!pp) { it.error = "unreadable"; continue; }
-            let { matches } = await matchAndGrade(resume.parsed, pp.posting); run.cost_calls += 2;
-            matches = applyRemembered(matches, bank).matches;
-            await kv.set(`radar:m:${userId}:${it.sighting_id}`, { matches });
-            summarise(it, matches);
-          } catch (e) { it.error = (e as Error).message.slice(0, 120); }
-          run.scored++;
-        }
-      };
-      await Promise.all(Array.from({ length: 6 }, worker));
+      // the morning budget: twenty through the cheap pass, at most two through the expert check (≈ ₹5 a day, ₹11 worst);
+      // an account past ₹600 in its 30 days gets the free and cheap stages only
+      const { result, paise } = await charge(userId, run.started, "radar:morning", () => stagedScore(urow as User, resume, t!, run.answers, longList, { stage1Keep: 20, stage3Cap: capped ? 0 : 2, bank, run, mark: now }));
+      morningPaise = paise;
+      added = result.items;
       run.items.push(...added);
     }
+    run.spend = { run_paise: morningPaise, total_paise: total + morningPaise, capped };
     // 3. re-rank, retally; yesterday's "new" badges fall away
     for (const it of run.items) if (it.new_at && it.new_at !== now && Date.now() - Date.parse(it.new_at) > 36 * 3600e3) delete it.new_at;
     run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
@@ -432,7 +487,7 @@ radar.get("/test/targets", async (c) => {
   if (!resume) return c.json({ error: "no_resume" }, 404);
   const key = `radar:targets:${u.id}:${resume.id}`;
   let t = await kv.get<Targets>(key);
-  if (!t) { t = await deriveTargets(resume.parsed); await kv.set(key, t); }
+  if (!t) { t = await withMeter({ tag: "radar:targets", user: u.id }, () => deriveTargets(resume.parsed)); await kv.set(key, t); }
   // live count and came-in-today per title, from the pool (₹0)
   const pool = await livePool(); const since = Date.now() - 86400e3;
   const counts = t.titles.map((title) => { const tw = [words(title)]; let live = 0, today = 0; for (const s of pool) { if (titleScore(s.title ?? "", tw, t.level, true) >= 0.5) { live++; if (Date.parse(s.first_seen) >= since) today++; } } return { title, live, today }; });
@@ -481,6 +536,7 @@ radar.get("/test/result", async (c) => {
     taste: shots.slice(0, 3).map((i) => ({ company: i.company, location: i.location, now: i.now, promised: i.promised, first_seen: i.first_seen, posted_at: i.posted_at })) };
   const my = (title: string) => titleScore(title, run.answers.titles.map(words), run.answers.level, true) >= 0.5;
   const mine = run.status === "done" ? await pulse(my).catch(() => null) : null;
+  if (!isTester(u)) delete (run as any).spend;   // what a run cost us is ours to see, not the customer's
   if (unlocked) return c.json({ ...run, unlocked: true, reveal, pulse: mine });
   // locked: counts and the taste, no titles, no links, no facts
   return c.json({ ...run, unlocked: false, reveal, pulse: mine, items: run.items.map((i) => ({ sighting_id: i.sighting_id, company: i.company, now: i.now, promised: i.promised, first_seen: i.first_seen, error: i.error })), questions: [] });

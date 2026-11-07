@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { experienceSplit } from "../reader/experience.js";
+import { meterDays } from "../engine/meter.js";
 import { audit } from "./audit.js";
 import { funnel } from "./funnel.js";
 import { env } from "../lib/env.js";
@@ -193,6 +194,18 @@ admin.get("/unreadable", async (c) => {
 });
 
 /** The last payments and plans, for checking a test or live payment end to end (no card data is ever stored). */
+/** The meter: model spend by day and by what it was for (radar:run, radar:morning, sharpen…), every process; and the
+ *  accounts that cost the most in the last 30 days against the ₹600 Radar cap. Estimates at list prices; the invoice is the truth. */
+admin.get("/meter", async (c) => {
+  const days = Number(c.req.query("days") ?? 7);
+  const m = await meterDays(days);
+  const since = new Date(Date.now() - 30 * 86400e3).toISOString().slice(0, 10);
+  const { data } = await db.from("reader_control").select("key, value, updated_at").like("key", "meter:plan:%").order("updated_at", { ascending: false }).limit(500);
+  const perUser: Record<string, { paise: number; by_tag: Record<string, number> }> = {};
+  for (const r of data ?? []) { const [, , user, day] = r.key.split(":"); if (day < since) continue; const v = r.value as any; const u = perUser[user] ?? { paise: 0, by_tag: {} }; u.paise += Number(v.paise ?? 0); for (const [t, p] of Object.entries(v.by_tag ?? {})) u.by_tag[t] = (u.by_tag[t] ?? 0) + Number(p); perUser[user] = u; }
+  const accounts = Object.entries(perUser).sort((a, b) => b[1].paise - a[1].paise).slice(0, 50).map(([user, v]) => ({ user, rupees: Math.round(v.paise / 100), by_tag: Object.fromEntries(Object.entries(v.by_tag).map(([t, p]) => [t, Math.round(p / 100)])), over_cap: v.paise >= 60000 }));
+  return c.json({ ...m, cap_rupees: 600, accounts_30d: accounts });
+});
 admin.get("/payments", async (c) => {
   const { data: pays } = await db.from("payments").select("id, user_id, product, amount_paise, status, razorpay_order_id, razorpay_payment_id, created_at, paid_at").order("created_at", { ascending: false }).limit(10);
   const { data: plans } = await db.from("plans").select("id, user_id, product, shots_total, shots_used, expires_at, created_at").order("created_at", { ascending: false }).limit(10);

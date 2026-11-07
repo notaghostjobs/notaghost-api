@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../lib/env.js";
+import { record } from "./meter.js";
 
 const client = new Anthropic({ apiKey: env.anthropicKey });
 export const MODEL = "claude-sonnet-5-5";
@@ -9,7 +10,7 @@ export const FAST = MODEL;
 export const HOUSEKEEPING = "claude-haiku-5-5";
 
 /** One structured call: system + user -> JSON of shape T. Retries once on bad JSON. */
-export async function json<T>(system: string, user: string, maxTokens = 4000, model = MODEL, pdf?: Buffer): Promise<T> {
+export async function json<T>(system: string, user: string, maxTokens = 4000, model = MODEL, pdf?: Buffer, pin?: string): Promise<T> {
   if (model === MODEL && process.env.MODEL_OVERRIDE) model = process.env.MODEL_OVERRIDE;
   for (let attempt = 0; attempt < 2; attempt++) {
     // a PDF goes in as the page itself (the model sees layout — columns, sidebars — the way a person does), ahead of the text
@@ -20,9 +21,15 @@ export async function json<T>(system: string, user: string, maxTokens = 4000, mo
       model,
       max_tokens: maxTokens,
       // the instructions repeat call after call: cache them (billed at a tenth after the first call, and faster to start)
-      system: [{ type: "text", text: system + "\n\nRespond with a single JSON object and nothing else. No markdown fences.", cache_control: { type: "ephemeral" } }],
+      // a pinned block (the résumé profile, say) sits after the instructions as its own cached prefix: the same résumé
+      // across a Radar run's hundred calls is then read from cache at a tenth of the price
+      system: [
+        { type: "text", text: system + "\n\nRespond with a single JSON object and nothing else. No markdown fences.", cache_control: { type: "ephemeral" } },
+        ...(pin ? [{ type: "text" as const, text: pin, cache_control: { type: "ephemeral" as const } }] : []),
+      ],
       messages: [{ role: "user", content }],
     });
+    if (r.usage) record(model, r.usage as any);
     const text = r.content.map((b) => (b.type === "text" ? b.text : "")).join("");
     const a = text.indexOf("{"), b = text.lastIndexOf("}");
     try {

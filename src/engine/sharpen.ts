@@ -105,8 +105,8 @@ Do not stretch across kinds of work: SAP enhancement delivery is not product man
 Grade "said" the way a fair screener would: a plain equivalent anywhere in the résumé counts ("lead a team through 1:1s" satisfies "mentor engineers"; "directly accountable for category P&L" satisfies "owned a category P&L"). Only call it have_not_said when a screener searching for the requirement would genuinely not connect the line.
 Evidence must be a verbatim quote from the résumé. suggestion: for said/have_not_said, how to phrase it in the employer's words; for missing, one honest line (adjacent experience to mention, or "don't claim this").
 line: for have_not_said ONLY — the finished résumé bullet we would actually write, at most 28 words, starting with a verb, in the requirement's words, built ONLY from facts already in the résumé (the quoted evidence and anything else the résumé states). Résumé text, never advice: not "Reword X as…" but the bullet itself. Numbers exactly as the résumé has them; add no scope, stage, seniority, tool or outcome the résumé does not state. If no honest bullet can satisfy the requirement, write "".`,
-    `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}\n\nPOSTING:\n${JSON.stringify(posting)}\n\nReturn: {matches:[{requirement, kind:"must"|"nice", bucket, evidence, evidence_kind, suggestion, line}], fits}. fits = one plain sentence, under 18 words, naming the kind of role this résumé is actually built for (e.g. "Salesforce technical lead roles on enterprise CRM programmes"). Based on the résumé alone, not this posting.`,
-    6000
+    `POSTING:\n${JSON.stringify(posting)}\n\nReturn: {matches:[{requirement, kind:"must"|"nice", bucket, evidence, evidence_kind, suggestion, line}], fits}. fits = one plain sentence, under 18 words, naming the kind of role this résumé is actually built for (e.g. "Salesforce technical lead roles on enterprise CRM programmes"). Based on the résumé alone, not this posting.`,
+    6000, MODEL, undefined, `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}`
   );
 }
 
@@ -165,8 +165,8 @@ export async function fillLines(resume: ResumeProfile, matches: Match[]): Promis
   if (!gaps.length) return matches;
   const r = await json<{ lines: { id: number; line: string }[] }>(
     `For EACH numbered item, write the finished résumé bullet we would insert: at most 28 words, starts with a verb, in the requirement's own words where the facts allow, built ONLY from the quoted evidence and other facts stated in the ORIGINAL résumé. Numbers exactly as the résumé has them. Add no scope, stage, seniority, tool or outcome the résumé does not state. If no honest bullet can be written, return "". Résumé text, never advice.`,
-    `ORIGINAL:\n${JSON.stringify(resume)}\n\nITEMS:\n${JSON.stringify(gaps.map((m, i) => ({ id: i + 1, requirement: m.requirement, evidence: m.evidence })))}\n\nReturn: {lines:[{id, line}]}`,
-    2500, FAST);
+    `ITEMS:\n${JSON.stringify(gaps.map((m, i) => ({ id: i + 1, requirement: m.requirement, evidence: m.evidence })))}\n\nReturn: {lines:[{id, line}]}`,
+    2500, FAST, undefined, `ORIGINAL:\n${JSON.stringify(resume)}`);
   const by = new Map<string, string>();
   for (const l of r.lines ?? []) { const m = gaps[Number(l.id) - 1]; if (m && (l.line ?? "").trim()) by.set(m.requirement, l.line.trim()); }
   return matches.map((m) => (by.has(m.requirement) ? { ...m, line: by.get(m.requirement) } : m));
@@ -181,8 +181,8 @@ export async function vetLines(resume: ResumeProfile, matches0: Match[]): Promis
 supported: is every FACT in the line already in the ORIGINAL résumé? Facts are numbers, tools, employers, titles, dates, degrees, scope, stage, outcomes. Rewording, synonyms, the employer's vocabulary, and combining two facts from the same role into one sentence are all fine ("Led a team of 6, hiring and training 4, to deliver the FMCG P&L" is supported when the team, the hires and the P&L are all in that role). Fail it ONLY for a fact that is not there: a new number, a new tool, a wider scope or stage ("negotiated terms" → "managed deals through closing"), a higher seniority ("led 6 associates" → "led a team of managers").
 satisfies: would a FAIR screener, scanning for this requirement, tick this line? The bar is the requirement's CORE activity on the same kind of object — not every clause of a long requirement sentence. Employers write requirements as paragraphs ("identify gaps and track the brand's offline catalogue to ensure relevant selection is on Amazon"); a screener ticks "building selection" when they see assortment/selection ownership, and does not demand the words "offline catalogue" or "Amazon". So: "led development of product assortments aligned with customer demand" DOES satisfy a "building selection" requirement; "reviewed vendor scorecards monthly with leadership and negotiated with 40 suppliers" DOES satisfy "work with senior stakeholders"; "led a team of 6 to deliver the category P&L" DOES satisfy "lead a team to deliver org goals"; "cut stock-outs from 11% to 4% through inventory planning" DOES satisfy "make data-driven decisions". Fail it ONLY when the core activity itself is absent, or the requirement's defining qualifier is a hard fact the line cannot show: a named tool or degree ("3+ years of Excel" is not shown by "Microsoft Office Suite"; "Tier 1 MBA"), a stage ("closing deals" vs "negotiated"), a scale ("teams of 50+"), a distinct domain ("marketplace seller side" vs buying).
 Answer every id; keep reason to one sentence.`,
-    `ORIGINAL:\n${JSON.stringify(resume)}\n\nPROPOSED LINES:\n${JSON.stringify(items.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
-    3000, FAST);
+    `PROPOSED LINES:\n${JSON.stringify(items.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
+    3000, FAST, undefined, `ORIGINAL:\n${JSON.stringify(resume)}`);
   const ok = new Set<string>(); const why = new Map<string, string>(); const fixedLine = new Map<string, string>();
   const verdicts = new Map<string, { supported: boolean; satisfies: boolean; reason: string }>();
   for (const c of r.checks ?? []) { const m = items[Number(c.id) - 1]; if (!m) continue; verdicts.set(m.requirement, { supported: !!c.supported, satisfies: !!c.satisfies, reason: c.reason ?? "" }); }
@@ -192,15 +192,15 @@ Answer every id; keep reason to one sentence.`,
   if (overreach.length) {
     const r2 = await json<{ lines: { id: number; line: string }[] }>(
       `Each numbered line overreaches the ORIGINAL résumé in the way described. Rewrite it so it claims ONLY what the quoted evidence and the original state — remove the added tool, scope, number or outcome — while still stating the requirement's core activity in its own words. At most 28 words, starts with a verb. Return "" only if nothing honest remains.`,
-      `ORIGINAL:\n${JSON.stringify(resume)}\n\nLINES:\n${JSON.stringify(overreach.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, evidence: m.evidence, problem: verdicts.get(m.requirement)!.reason })))}\n\nReturn: {lines:[{id, line}]}`,
-      2500, FAST);
+      `LINES:\n${JSON.stringify(overreach.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, evidence: m.evidence, problem: verdicts.get(m.requirement)!.reason })))}\n\nReturn: {lines:[{id, line}]}`,
+      2500, FAST, undefined, `ORIGINAL:\n${JSON.stringify(resume)}`);
     const retry: Match[] = [];
     for (const l of r2.lines ?? []) { const m = overreach[Number(l.id) - 1]; if (m && (l.line ?? "").trim()) { fixedLine.set(m.requirement, l.line.trim()); retry.push({ ...m, line: l.line.trim() }); } }
     if (retry.length) {
       const r3 = await json<{ checks: { id: number; supported: boolean; satisfies: boolean; reason: string }[] }>(
         `You are a fair auditor. For EACH numbered proposed résumé line: supported = every fact in the line is already in the ORIGINAL résumé (rewording and the employer's vocabulary are fine; a new tool, number, scope, stage or outcome is not). satisfies = a fair screener scanning for the requirement would tick this line on its core activity. Answer every id, one-sentence reason.`,
-        `ORIGINAL:\n${JSON.stringify(resume)}\n\nPROPOSED LINES:\n${JSON.stringify(retry.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
-        3000, FAST);
+        `PROPOSED LINES:\n${JSON.stringify(retry.map((m, i) => ({ id: i + 1, requirement: m.requirement, line: m.line, rests_on: m.evidence })))}\n\nReturn: {checks:[{id, supported, satisfies, reason}]}`,
+        3000, FAST, undefined, `ORIGINAL:\n${JSON.stringify(resume)}`);
       for (const c of r3.checks ?? []) { const m = retry[Number(c.id) - 1]; if (m) verdicts.set(m.requirement, { supported: !!c.supported, satisfies: !!c.satisfies, reason: `repaired · ${c.reason ?? ""}` }); }
     }
   }
