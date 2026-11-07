@@ -169,16 +169,26 @@ export function holdLines(rw: Rewrite, resume: ResumeProfile, matches: { bucket:
         const others = new Set((orig.bullets.filter((x) => x !== ob)).flatMap(numsOf));
         // ...and only this role's own wording: a phrase lifted from ANOTHER employer's lines ("pricing, promotions and
         // assortment" from the BigBasket role, written into a Ninjacart line) is a migration, undone the same way
-        const ownGrams = new Set(orig.bullets.flatMap(trigrams));
-        const foreignGrams = new Set((resume.roles ?? []).filter((r) => r !== orig).flatMap((r) => r.bullets.flatMap(trigrams)).filter((g) => !ownGrams.has(g)));
+        // ...nor a phrase from any OTHER bullet, this role's or another employer's ("with supply chain on inventory planning"
+        // folded into the marketing line is a merge of two of the candidate's lines, not a rewording of one)
+        const ownGrams = new Set(trigrams(ob));
+        const foreignGrams = new Set((resume.roles ?? []).flatMap((r) => r.bullets.filter((x) => !(r === orig && x === ob)).flatMap(trigrams)).filter((g) => !ownGrams.has(g)));
         let merged = false;
+        const kept: string[] = [];
         for (const p of mine) {
           p.used = true;
           const foreign = numsOf(p.b).filter((n) => !own.has(n) && others.has(n) && !/^(19|20)\d\d$/.test(n));
           const lifted = trigrams(p.b).filter((g) => foreignGrams.has(g));
-          if ((foreign.length || lifted.length) && norm(p.b) !== norm(ob)) { if (!merged) { out.push(ob.trim()); merged = true; log.push(`merge undone: ${orig.company}: ${p.b.slice(0, 60)}${lifted.length ? ` (lifted: ${lifted[0]})` : ""}`); } continue; }
-          out.push(p.b);
+          if ((foreign.length || lifted.length) && norm(p.b) !== norm(ob)) { if (!merged) { kept.push(ob.trim()); merged = true; log.push(`merge undone: ${orig.company}: ${p.b.slice(0, 60)}${lifted.length ? ` (lifted: ${lifted[0]})` : ""}`); } continue; }
+          kept.push(p.b);
         }
+        // a rewording REPLACES the line it rewords: when the draft kept the verbatim line beside a rewording that carries
+        // all of its numbers and most of its words, the verbatim copy goes (a fact lives in one place)
+        const copies = kept.filter((k) => norm(k) === norm(ob));
+        const reworded = kept.filter((k) => norm(k) !== norm(ob) && numsOf(ob).every((n) => numsOf(k).includes(n)) && overlapOf(ob, k) >= 0.6);
+        const final = copies.length && reworded.length ? kept.filter((k) => norm(k) !== norm(ob)) : kept;
+        if (final.length !== kept.length) log.push(`verbatim twin dropped beside its rewording: ${orig.company}: ${ob.slice(0, 50)}`);
+        for (const k of final) if (!out.some((o) => norm(o) === norm(k))) out.push(k);
         continue;
       }
       // not evidence: the candidate's line, exactly as written, once (a promised line that merely resembles it stays)
