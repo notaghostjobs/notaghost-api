@@ -28,7 +28,7 @@ check.post("/", async (c) => {
     const g = await gate(caller, key);
     if (!g.allowed) {
       return c.json({
-        error: g.gate === "otp" ? "That’s your three free checks. Sign in — it’s free — for five more." : `You’ve used your ${g.limit} checks for the day. A Sharpen plan makes them unlimited.`,
+        error: g.gate === "otp" ? "That was your free check. Sign in with your number — it’s free — to keep checking." : `You’ve used your ${g.limit} checks for the day. A Sharpen plan makes them unlimited.`,
         gate: g.gate, used: g.used, limit: g.limit,
       }, 429);
     }
@@ -40,6 +40,13 @@ check.post("/", async (c) => {
     if (!admin) {
       const caller = granted?.caller;
       void logEvent("check", { src: srcOf(c), anon: caller?.kind === "anon" ? caller.id : (c.req.header("x-ghosted-anon") ?? null), userId: caller && caller.kind !== "anon" ? caller.user.id : null, meta: { verdict: r.verdict, source: body.data.page?.source ?? "site", posting_id: r.posting_id } });
+    }
+    // the free check shows the verdict and the read; the card's detail — what it means, what to do, the history, the next
+    // step — opens on a phone number (decided 7 Nov: one free check, then sign in)
+    if (granted?.caller.kind === "anon") {
+      const { headline, body, advice, adviceLabel, coverage, history, ...open } = r as any;
+      void headline; void body; void advice; void adviceLabel; void coverage; void history;
+      return c.json({ ...open, gated: true, quota });
     }
     return c.json(quota ? { ...r, quota } : r);
   } catch (e) {

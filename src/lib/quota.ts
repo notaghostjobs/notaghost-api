@@ -1,5 +1,5 @@
 // The free check is free at the door and gated by use (playbook: "Free check gating").
-//   anonymous → 3 distinct postings in any 24 hours, then sign in
+//   anonymous → 1 free check (one distinct posting in any 24 hours), then sign in — decided 7 Nov: proof first, number second
 //   signed in → 5 more distinct postings in any 24 hours (its own count, separate from the anonymous one)
 //   a plan (Sharpen with shots left, Build, Radar) → unlimited
 // Re-opening a posting already counted in the window never costs anything. Counters live in reader_control (a KV table we
@@ -8,7 +8,7 @@ import type { Context } from "hono";
 import { db, activePlan, type User } from "./db.js";
 import { createHash } from "node:crypto";
 
-export const LIMITS = { anon: 3, user: 5 } as const;
+export const LIMITS = { anon: 1, user: 5 } as const;
 const sha = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 32);
 
 export type Caller = { kind: "plan"; user: User } | { kind: "user"; user: User } | { kind: "anon"; id: string };
