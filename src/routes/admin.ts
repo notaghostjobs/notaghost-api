@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { experienceSplit } from "../reader/experience.js";
 import { audit } from "./audit.js";
 import { funnel } from "./funnel.js";
 import { env } from "../lib/env.js";
@@ -58,6 +59,12 @@ on.get("/reader/run", runHandler);   // so a read-only fetch tool can queue a pr
 on.get("/reader/probe", async (c) => { const { data } = await db.from("reader_control").select("value").eq("key", "probe").maybeSingle(); return c.json(data?.value ?? null); });
 /** Current status + last run on their own (small). */
 on.get("/reader/status", async (c) => { const { data } = await db.from("reader_control").select("key, value").in("key", ["status", "last_run", "command"]); const o: Record<string, unknown> = {}; for (const r of data ?? []) o[r.key] = r.value; return c.json(o); });
+
+/** The experience split of the live Bengaluru market, from the postings' own words (computed nightly; see reader/experience.ts). */
+on.get("/reader/experience", async (c) => {
+  const v = await experienceSplit();
+  return v ? c.json(v) : c.json({ error: "not computed yet" }, 404);
+});
 
 /** The truth, in numbers. */
 on.get("/reader/stats", async (c) => {
