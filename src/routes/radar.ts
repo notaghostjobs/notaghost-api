@@ -61,21 +61,33 @@ async function deriveTargets(p: ResumeProfile): Promise<Targets> {
   );
 }
 
-type Sighting = { id: number; title: string; company_name: string | null; location: string | null; url: string; posted_at: string | null; first_seen: string; employer_key: string | null };
+type Sighting = { id: number; title: string; company_name: string | null; location: string | null; url: string; posted_at: string | null; first_seen: string; employer_key: string | null; readable?: boolean };
 let poolCache: { at: number; rows: Sighting[] } | null = null;
-/** Every live Bengaluru sighting (title, employer, location, url) — without descriptions. Cached in memory for 30 minutes. */
+/** Every live Bengaluru sighting (title, employer, location, url), marked readable when its description is on file.
+ *  The pulse counts all of them; scoring uses the readable ones. Cached in memory for 30 minutes. */
 async function livePool(): Promise<Sighting[]> {
   if (poolCache && Date.now() - poolCache.at < 30 * 60e3) return poolCache.rows;
   const rows: Sighting[] = [];
-  for (let from = 0; from < 60000; from += 1000) {
-    const { data, error } = await db.from("sightings").select("id, title, company_name, location, url, posted_at, first_seen, employer_key").eq("blr", true).is("gone_at", null).not("description", "is", null).order("id", { ascending: true }).range(from, from + 999);
+  for (let from = 0; from < 80000; from += 1000) {
+    const { data, error } = await db.from("sightings").select("id, title, company_name, location, url, posted_at, first_seen, employer_key").eq("blr", true).is("gone_at", null).order("id", { ascending: true }).range(from, from + 999);
     if (error) throw new Error(error.message);
     rows.push(...((data ?? []) as Sighting[]));
     if (!data || data.length < 1000) break;
   }
+  const readable = new Set<number>();
+  for (let from = 0; from < 80000; from += 1000) {
+    const { data, error } = await db.from("sightings").select("id").eq("blr", true).is("gone_at", null).not("description", "is", null).order("id", { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(error.message);
+    for (const r of data ?? []) readable.add((r as any).id);
+    if (!data || data.length < 1000) break;
+  }
+  for (const r of rows) r.readable = readable.has(r.id);
   poolCache = { at: Date.now(), rows };
   return rows;
 }
+/** The reader's first days (25–27 Oct) were seeding: thousands "came in" because we started reading, not because they opened.
+ *  The pulse shows nothing for days before this. */
+const PULSE_SINCE = "2026-10-28";
 
 type Gone = { id: number; title: string; company_name: string | null; employer_key: string | null; gone_at: string };
 let goneCache: { at: number; rows: Gone[] } | null = null;
@@ -104,7 +116,7 @@ export async function pulse(keep?: (title: string) => boolean) {
   for (const s of live) { if (keep && !keep(s.title ?? "")) continue; liveN++; employers.add(s.employer_key ?? s.company_name ?? ""); const i = idx.get(dayKey(s.first_seen)); if (i !== undefined) days[i].in++; }
   for (const g of gone) { if (keep && !keep(g.title ?? "")) continue; const i = idx.get(dayKey(g.gone_at)); if (i !== undefined) days[i].out++; }
   const today = days[days.length - 1];
-  return { days, today_in: today.in, today_out: today.out, live: liveN, employers: employers.size };
+  return { days: days.filter((d) => d.day >= PULSE_SINCE), today_in: today.in, today_out: today.out, live: liveN, employers: employers.size };
 }
 let readTotal: { at: number; n: number } | null = null;
 async function postingsRead(): Promise<number> {
@@ -219,6 +231,7 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     const targetWords = answers.titles.map(words).filter((w) => w.length);
     const avoid = answers.avoid.map(norm).filter(Boolean);
     const scored = pool
+      .filter((s) => s.readable)
       .filter((s) => !avoid.some((a) => norm(s.company_name ?? "").includes(a) || norm(s.title).includes(a)))
       .map((s) => ({ s, sc: titleScore(s.title ?? "", targetWords, answers.level, answers.stretch) }))
       .filter((x) => x.sc > 0.3)
