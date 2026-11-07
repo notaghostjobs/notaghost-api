@@ -365,6 +365,15 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
         onChosen: async (items) => { run.items = items; run.picked = items.length; await save(); },
         onProgress: async (n) => { run.scored = n; await save(); } });
       run.picked = r.items.length; run.items = r.items; run.scored = r.items.length; run.examined = r.examined;
+      // answers given on the questions screen while this ran: applied now to every role that asks
+      try {
+        const bank2 = await recallAnswers(user.id);
+        if (bank2.length) for (const it of run.items) {
+          if (typeof it.now !== "number") continue;
+          const mk = `radar:m:${user.id}:${it.sighting_id}`; const m = await kv.get<{ matches: Match[] }>(mk); if (!m) continue;
+          const re = applyRemembered(m.matches, bank2); if (re.n) { await kv.set(mk, { matches: re.matches }); summarise(it, re.matches); }
+        }
+      } catch (e) { console.error("[radar] bank", (e as Error).message); }
       // the questions: missing must-haves that repeat across the picked roles, asked once, applied everywhere
       run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
       run.status = "questions"; await save();
@@ -534,6 +543,75 @@ radar.post("/test/unlock", async (c) => {
   if (!isTester(u)) return c.json({ error: "Not available on this account." }, 403);
   await kv.set(`radar:unlock:${u.id}`, { at: new Date().toISOString() });
   return c.json({ ok: true });
+});
+
+/** The questions before the list exists: the must-haves employers hiring for these titles keep asking, from the posting
+ *  checklists already on file for sightings with those titles (parsed once for everyone). Cached a day per title set.
+ *  Costs one options call (~₹3) the first time a title set is seen; ₹0 after. Empty until ten checklists exist. */
+async function preQuestions(userId: string, t: Targets): Promise<{ questions: Gap[]; from: number }> {
+  const key = `radar:pq:${[...t.titles].map(norm).sort().join("|").slice(0, 200)}:${t.level}`;
+  const cached = await kv.get<{ questions: Gap[]; from: number; at: string }>(key);
+  if (cached && Date.now() - Date.parse(cached.at) < 24 * 3600e3 && cached.from >= 10) return cached;
+  const pool = await livePool(); const tw = t.titles.map(words).filter((w) => w.length);
+  const ids = pool.filter((s) => s.readable && titleScore(s.title ?? "", tw, t.level, true) > 0.3).map((s) => s.id).slice(0, 600);
+  const groups: { requirement: string; kind: "must" | "nice"; n: number; weight: number }[] = [];
+  let from = 0;
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await db.from("reader_control").select("value").in("key", ids.slice(i, i + 100).map((id) => `radar:pp:${id}`));
+    for (const r of data ?? []) {
+      const pp = (r.value as any)?.posting as PostingProfile | undefined; if (!pp) continue; from++;
+      for (const [list, kind] of [[pp.must_have ?? [], "must"], [pp.nice_to_have ?? [], "nice"]] as [string[], "must" | "nice"][]) {
+        for (const req of list) { const g = groups.find((g) => sameRequirement(g.requirement, req)); if (g) { g.n++; g.weight += kind === "must" ? 2 : 1; } else groups.push({ requirement: req, kind, n: 1, weight: kind === "must" ? 2 : 1 }); }
+      }
+    }
+  }
+  if (from < 10) return { questions: [], from };
+  // the ones the résumé already answers are not asked: drop requirements whose words the résumé profile carries
+  const top = groups.filter((g) => g.n >= 3).sort((a, b) => b.weight - a.weight || b.n - a.n).slice(0, 8);
+  if (!top.length) return { questions: [], from };
+  const asMatches: Match[] = top.map((g) => ({ requirement: g.requirement, kind: g.kind, bucket: "missing", evidence: "", suggestion: `Asked by ${g.n} of the roles for your profile.` }));
+  const filled = await withMeter({ tag: "radar:prequestions", user: userId }, () => fillOptions(asMatches));
+  const questions = gapsOf(filled).map((gap, i) => ({ ...gap, why: `Asked by ${top[i].n} of the roles for your profile.` }));
+  const out = { questions, from, at: new Date().toISOString() };
+  await kv.set(key, out);
+  return out;
+}
+/** The questions screen's data: the pre-run questions, with what this account already answered marked. */
+radar.get("/test/prequestions", async (c) => {
+  const u = c.get("user");
+  const resume = await currentResume(u.id);
+  if (!resume) return c.json({ error: "no_resume" }, 404);
+  const tkey = `radar:targets:${u.id}:${resume.id}`;
+  let t = await kv.get<Targets>(tkey); if (!t) { t = await withMeter({ tag: "radar:targets", user: u.id }, () => deriveTargets(resume.parsed)); await kv.set(tkey, t); }
+  const { questions, from } = await preQuestions(u.id, t);
+  const bank = await recallAnswers(u.id).catch(() => []);
+  const marked = questions.map((q) => { const r = bank.find((x) => sameRequirement(x.requirement, q.requirement)); return r ? { ...q, told: { text: r.fact, line: r.line, remembered: true } } : q; });
+  const run = await kv.get<Run>(runKey(u.id));
+  return c.json({ questions: marked, from, run_status: run?.status ?? "none" });
+});
+/** One answer, given before (or after) the list exists: remembered on the account, applied to every scored role that asks,
+ *  now and every morning after. */
+radar.post("/test/prime", async (c) => {
+  const u = c.get("user");
+  const body = z.object({
+    requirement: z.string().min(2), withdraw: z.boolean().optional(),
+    what: z.string().max(200).optional(), where: z.string().max(80).optional(), when: z.string().max(40).optional(), size: z.string().max(30).optional(), unit: z.string().max(30).optional(), free: z.string().max(600).optional(),
+  }).safeParse(await c.req.json().catch(() => ({})));
+  if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
+  const req = body.data.requirement;
+  const run = await kv.get<Run>(runKey(u.id));
+  if (body.data.withdraw) {
+    await forgetAnswer(u.id, req).catch(() => {});
+    if (run && run.items.length) { await rescore(u.id, run, req, (m) => withdrawFrom(m, m.find((x) => sameRequirement(x.requirement, req))?.requirement ?? req)); await kv.set(runKey(u.id), run); }
+    return c.json({ ok: true });
+  }
+  const f = body.data as Facts;
+  const line = f.free?.trim() ? await withMeter({ tag: "radar:prime", user: u.id }, () => shapeFree(req, f.free!)) : (f.what?.trim() ? assembleLine(f) : "");
+  if (!line) return c.json({ error: "Pick one of the three, or say it your way." }, 400);
+  const facts = f.free?.trim() ? f.free.trim() : [f.what, f.where && `at ${f.where}`, f.when, f.size && `${f.size} ${f.unit ?? ""}`.trim()].filter(Boolean).join(" · ");
+  await rememberAnswer(u.id, { requirement: req, fact: facts, line }).catch(() => {});
+  if (run && run.items.length) { await rescore(u.id, run, req, (m) => acceptInto(m, m.find((x) => sameRequirement(x.requirement, req))?.requirement ?? req, facts, line)); await kv.set(runKey(u.id), run); }
+  return c.json({ ok: true, line });
 });
 
 radar.get("/test/result", async (c) => {
