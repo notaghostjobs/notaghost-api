@@ -17,7 +17,7 @@ const rzp = () => new Razorpay({ key_id: env.razorpayKeyId, key_secret: env.razo
 // 1. Client asks for an order -> we create it at Razorpay and record it.
 payments.post("/order", requireUser, async (c) => {
   const u = c.get("user");
-  const body = z.object({ product: z.enum(["sharpen", "build"]) }).safeParse(await c.req.json());
+  const body = z.object({ product: z.enum(["sharpen", "build", "radar"]) }).safeParse(await c.req.json());
   if (!body.success) return c.json({ error: "Pick Sharpen or Build." }, 400);
   const price = PRICES[body.data.product];
   // the person's channel rides on the order: first (who brought them) and last (this visit) — on our row and in Razorpay's notes
@@ -82,7 +82,7 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
     const { data } = await db.from("plans").select("*").eq("payment_id", pay.id).maybeSingle();
     return data;
   }
-  const price = PRICES[pay.product as "sharpen" | "build"];
+  const price = PRICES[pay.product as "sharpen" | "build" | "radar"];
   const { data: receipt } = await db.rpc("next_receipt_no");
   await db.from("payments").update({
     status: "paid", razorpay_payment_id: paymentId, razorpay_signature: signature,

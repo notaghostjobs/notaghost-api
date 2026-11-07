@@ -20,8 +20,9 @@ import { isTester as isTestUser } from "../lib/testers.js";
 
 shots.get("/plan", async (c) => {
   const u = c.get("user");
-  const [sharpen, build] = await Promise.all([activePlan(u.id, "sharpen"), activePlan(u.id, "build")]);
-  return c.json({ sharpen, build, test_user: isTestUser(u) });
+  const [sharpenOwn, build, radar] = await Promise.all([activePlan(u.id, "sharpen"), activePlan(u.id, "build"), activePlan(u.id, "radar")]);
+  const sharpen = sharpenOwn ?? radar;   // Radar's shots show as the Sharpen balance
+  return c.json({ sharpen, build, radar, test_user: isTestUser(u) });
 });
 
 // Test phones only: end every active plan so the whole flow — fit page, checkout, Razorpay, delivery — can be walked from zero.
@@ -68,7 +69,8 @@ shots.post("/", async (c) => {
   if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
 
   const product = body.data.product as Product;
-  const plan = await activePlan(u.id, product);
+  // a Radar plan carries its 10 Sharpens: a sharpen shot with no sharpen plan draws on the radar plan
+  const plan = (await activePlan(u.id, product)) ?? (product === "sharpen" ? await activePlan(u.id, "radar") : null);
   if (!plan) return c.json({ error: "No active plan.", pay: product }, 402);
 
   const resume = await currentParsedResume<{ id: string; parsed: any }>(u.id, "id, parsed");

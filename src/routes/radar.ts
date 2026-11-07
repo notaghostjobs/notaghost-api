@@ -5,7 +5,7 @@
 // posting checklist cached per sighting) → stored per user, filled progressively. No payment, no shot: /radar/test only.
 import { Hono } from "hono";
 import { z } from "zod";
-import { db, type User } from "../lib/db.js";
+import { db, activePlan, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
 import { isTester } from "../lib/testers.js";
 import { json, MODEL } from "../engine/claude.js";
@@ -123,6 +123,13 @@ async function postingsRead(): Promise<number> {
   if (readTotal && Date.now() - readTotal.at < 3600e3) return readTotal.n;
   const { count } = await db.from("sightings").select("*", { count: "exact", head: true });
   readTotal = { at: Date.now(), n: count ?? 0 }; return readTotal.n;
+}
+let checkedTotal: { at: number; n: number } | null = null;
+/** The companies whose own hiring systems we check every day (745 on 7 Nov): employers with a feed. Cached an hour. */
+async function companiesChecked(): Promise<number> {
+  if (checkedTotal && Date.now() - checkedTotal.at < 3600e3) return checkedTotal.n;
+  const { count } = await db.from("employers").select("*", { count: "exact", head: true }).neq("ats", "none");
+  checkedTotal = { at: Date.now(), n: count ?? 0 }; return checkedTotal.n;
 }
 
 /** Title match, ₹0: overlap between the sighting's title and any target title, with a level check. */
@@ -280,7 +287,8 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
 
 radarPublic.get("/pulse", async (c) => {
   const p = await pulse();
-  return c.json({ ...p, read: await postingsRead(), as_of: new Date().toISOString() });
+  const [read, checked] = await Promise.all([postingsRead(), companiesChecked()]);
+  return c.json({ ...p, read, checked, as_of: new Date().toISOString() });
 });
 /** Public: the roles that opened most recently on companies' own systems — title, company, when. The only company we ever
  *  name is one that is hiring. Up to 24, newest first; one per company so a big feed does not fill it. */
@@ -341,7 +349,7 @@ radar.get("/test/result", async (c) => {
   const u = c.get("user");
   const run = await kv.get<Run>(runKey(u.id));
   if (!run) return c.json({ status: "none" });
-  const unlocked = !!(await kv.get(`radar:unlock:${u.id}`));
+  const unlocked = !!(await activePlan(u.id, "radar")) || !!(await kv.get(`radar:unlock:${u.id}`));
   const scored = run.items.filter((i) => typeof i.now === "number");
   const shots = scored.filter((i) => (i.promised ?? 0) >= SHOT);
   const since = Date.now() - 86400e3;
