@@ -7,12 +7,15 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
+import { isTester } from "../lib/testers.js";
 import { json, MODEL } from "../engine/claude.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
 import { assess } from "../engine/fit.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
 
 export const radar = new Hono<{ Variables: { user: User } }>();
+/** Public: the market's pulse — roles that came in and went quiet per day, across every employer we read. No sign-in. */
+export const radarPublic = new Hono();
 radar.use("*", requireUser);
 
 type Targets = { titles: string[]; level: "ic" | "lead" | "manager" | "head"; functions: string[]; strengths: string[]; years: number; one_line: string };
@@ -72,6 +75,42 @@ async function livePool(): Promise<Sighting[]> {
   }
   poolCache = { at: Date.now(), rows };
   return rows;
+}
+
+type Gone = { id: number; title: string; company_name: string | null; employer_key: string | null; gone_at: string };
+let goneCache: { at: number; rows: Gone[] } | null = null;
+/** Bengaluru sightings that went quiet in the last 15 days (title, employer, when). Cached 30 minutes. */
+async function gonePool(): Promise<Gone[]> {
+  if (goneCache && Date.now() - goneCache.at < 30 * 60e3) return goneCache.rows;
+  const since = new Date(Date.now() - 15 * 86400e3).toISOString();
+  const rows: Gone[] = [];
+  for (let from = 0; from < 40000; from += 1000) {
+    const { data, error } = await db.from("sightings").select("id, title, company_name, employer_key, gone_at").eq("blr", true).gte("gone_at", since).order("id", { ascending: true }).range(from, from + 999);
+    if (error) throw new Error(error.message);
+    rows.push(...((data ?? []) as Gone[]));
+    if (!data || data.length < 1000) break;
+  }
+  goneCache = { at: Date.now(), rows };
+  return rows;
+}
+const dayKey = (iso: string) => new Date(new Date(iso).getTime() + 5.5 * 3600e3).toISOString().slice(0, 10);   // IST calendar day
+/** Fourteen days of came-in / went-quiet, oldest first, today last. `keep` filters both pools (personal strips). */
+export async function pulse(keep?: (title: string) => boolean) {
+  const [live, gone] = await Promise.all([livePool(), gonePool()]);
+  const days: { day: string; in: number; out: number }[] = [];
+  for (let i = 13; i >= 0; i--) days.push({ day: dayKey(new Date(Date.now() - i * 86400e3).toISOString()), in: 0, out: 0 });
+  const idx = new Map(days.map((d, i) => [d.day, i]));
+  let liveN = 0; const employers = new Set<string>();
+  for (const s of live) { if (keep && !keep(s.title ?? "")) continue; liveN++; employers.add(s.employer_key ?? s.company_name ?? ""); const i = idx.get(dayKey(s.first_seen)); if (i !== undefined) days[i].in++; }
+  for (const g of gone) { if (keep && !keep(g.title ?? "")) continue; const i = idx.get(dayKey(g.gone_at)); if (i !== undefined) days[i].out++; }
+  const today = days[days.length - 1];
+  return { days, today_in: today.in, today_out: today.out, live: liveN, employers: employers.size };
+}
+let readTotal: { at: number; n: number } | null = null;
+async function postingsRead(): Promise<number> {
+  if (readTotal && Date.now() - readTotal.at < 3600e3) return readTotal.n;
+  const { count } = await db.from("sightings").select("*", { count: "exact", head: true });
+  readTotal = { at: Date.now(), n: count ?? 0 }; return readTotal.n;
 }
 
 /** Title match, ₹0: overlap between the sighting's title and any target title, with a level check. */
@@ -226,6 +265,11 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
   } finally { running.delete(user.id); }
 }
 
+radarPublic.get("/pulse", async (c) => {
+  const p = await pulse();
+  return c.json({ ...p, read: await postingsRead(), as_of: new Date().toISOString() });
+});
+
 /** The questionnaire's pre-fill: what the résumé says they're a fit for. */
 radar.get("/test/targets", async (c) => {
   const u = c.get("user");
@@ -234,22 +278,37 @@ radar.get("/test/targets", async (c) => {
   const key = `radar:targets:${u.id}:${resume.id}`;
   let t = await kv.get<Targets>(key);
   if (!t) { t = await deriveTargets(resume.parsed); await kv.set(key, t); }
-  return c.json({ targets: t, resume_id: resume.id, name: resume.parsed.name, roles: (resume.parsed.roles ?? []).map((r) => ({ company: r.company, start: r.start, end: r.end })) });
+  // live count and came-in-today per title, from the pool (₹0)
+  const pool = await livePool(); const since = Date.now() - 86400e3;
+  const counts = t.titles.map((title) => { const tw = [words(title)]; let live = 0, today = 0; for (const s of pool) { if (titleScore(s.title ?? "", tw, t.level, true) >= 0.5) { live++; if (Date.parse(s.first_seen) >= since) today++; } } return { title, live, today }; });
+  const my = (title: string) => titleScore(title, t.titles.map(words), t.level, true) >= 0.5;
+  const mine = await pulse(my);
+  return c.json({ targets: t, counts, pulse: mine, resume_id: resume.id, name: resume.parsed.name, roles: (resume.parsed.roles ?? []).map((r) => ({ company: r.company, start: r.start, end: r.end })) });
 });
 
 const answers = z.object({ titles: z.array(z.string().min(2).max(80)).min(1).max(10), level: z.enum(["ic", "lead", "manager", "head"]), stretch: z.boolean().default(false), avoid: z.array(z.string().max(60)).max(20).default([]), notes: z.string().max(300).optional() });
 
 radar.post("/test/start", async (c) => {
   const u = c.get("user");
-  const body = answers.safeParse(await c.req.json().catch(() => ({})));
-  if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
   const resume = await currentResume(u.id);
   if (!resume) return c.json({ error: "Upload a résumé first." }, 400);
   if (running.has(u.id)) return c.json({ ok: true, already: true });
   const tkey = `radar:targets:${u.id}:${resume.id}`;
   let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(resume.parsed); await kv.set(tkey, t); }
+  // no questionnaire (held, 7 Nov): the résumé alone decides. Answers are accepted when given; otherwise they come from the profile.
+  const raw = await c.req.json().catch(() => ({}));
+  const body = answers.safeParse(raw);
+  const a: Answers = body.success ? body.data : { titles: t.titles, level: t.level, stretch: false, avoid: (resume.parsed.roles ?? []).filter((r) => /present|current|now/i.test(r.end ?? "")).map((r) => r.company.split(/[·,(]/)[0].trim()).filter(Boolean) };
   running.add(u.id);
-  void runRadar(u, resume, t, body.data);
+  void runRadar(u, resume, t, a);
+  return c.json({ ok: true, answers: a });
+});
+
+/** Test build only: stands in for the ₹2,499 payment. Testers and the founder's account. */
+radar.post("/test/unlock", async (c) => {
+  const u = c.get("user");
+  if (!isTester(u)) return c.json({ error: "Not available on this account." }, 403);
+  await kv.set(`radar:unlock:${u.id}`, { at: new Date().toISOString() });
   return c.json({ ok: true });
 });
 
@@ -257,7 +316,19 @@ radar.get("/test/result", async (c) => {
   const u = c.get("user");
   const run = await kv.get<Run>(runKey(u.id));
   if (!run) return c.json({ status: "none" });
-  return c.json(run);
+  const unlocked = !!(await kv.get(`radar:unlock:${u.id}`));
+  const scored = run.items.filter((i) => typeof i.now === "number");
+  const shots = scored.filter((i) => (i.promised ?? 0) >= SHOT);
+  const since = Date.now() - 86400e3;
+  const oldest = shots.reduce((m, i) => Math.max(m, (Date.now() - Date.parse(i.first_seen)) / 86400e3), 0);
+  const reveal = { shots: shots.length, opened_today: shots.filter((i) => Date.parse(i.first_seen) >= since).length, within_reach: scored.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < SHOT).length, oldest_days: Math.round(oldest),
+    // the taste: the employer and the shot, the role hidden
+    taste: shots.slice(0, 3).map((i) => ({ company: i.company, location: i.location, now: i.now, promised: i.promised, first_seen: i.first_seen, posted_at: i.posted_at })) };
+  const my = (title: string) => titleScore(title, run.answers.titles.map(words), run.answers.level, true) >= 0.5;
+  const mine = run.status === "done" ? await pulse(my).catch(() => null) : null;
+  if (unlocked) return c.json({ ...run, unlocked: true, reveal, pulse: mine });
+  // locked: counts and the taste, no titles, no links, no facts
+  return c.json({ ...run, unlocked: false, reveal, pulse: mine, items: run.items.map((i) => ({ sighting_id: i.sighting_id, company: i.company, now: i.now, promised: i.promised, first_seen: i.first_seen, error: i.error })), questions: [] });
 });
 
 /** One answer, applied to every role on the list that asked for it; remembered on the account like any questionnaire answer. */
