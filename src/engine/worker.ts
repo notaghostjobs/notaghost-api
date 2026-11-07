@@ -17,18 +17,34 @@ export async function processResume(resumeId: string) {
   const file = await db.storage.from("resumes").download(row.storage_path);
   if (file.error) throw file.error;
   const buf = Buffer.from(await file.data.arrayBuffer());
-  const { text, pages, ours } = await extractText(buf, row.filename ?? "resume.pdf");
-  if (text.length < 300) throw Object.assign(new Error("Couldn't read text from that file. Upload it as a PDF, .docx or .doc with real text — not a scan or an image."), { status: 400 });
-  // the clerk reads the page itself (PDF) so columns and sidebars come out in reading order; the extracted text rides along for exact characters
+  let { text, pages, ours } = await extractText(buf, row.filename ?? "resume.pdf");
   const isPdf = !/\.docx?$/i.test(row.filename ?? "");
-  let parsed = await parseResume(text, pages, isPdf ? buf : undefined);
-  (parsed as any).source_is_ghosted = !!ours;   // a document we made, re-uploaded as the source: allowed; noted for diagnosis
-  const layout = layoutWarning(text, pages);
-  (parsed as any).layout_warning = layout;
-  // the parse is checked against the text it came from: a bullet filed under the neighbouring employer goes back to its own
-  const refiled = refileBullets(parsed, text);
-  if (refiled.log.length) { parsed = refiled.profile; console.error("[resume] REFILED", resumeId, refiled.log); }
-  (parsed as any).refiled = true;
+  // a PDF with no text layer (printed to PDF as shapes, a scan, an image export): the clerk reads it from the page itself.
+  // Decided 7 Nov (option B): a bounce becomes a customer, and they are told their file is invisible to employer software.
+  const fromPage = isPdf && text.length < 300;
+  if (!isPdf && text.length < 300) throw Object.assign(new Error("Couldn't read text from that file. Upload it as a PDF, .docx or .doc with real text — not a scan or an image."), { status: 400 });
+  let parsed: ResumeProfile;
+  if (fromPage) {
+    parsed = await parseResume("", pages, buf).catch(() => null as any);
+    const got = (parsed?.roles ?? []).reduce((n, r) => n + (r.bullets?.length ?? 0), 0);
+    if (!parsed?.name || !(parsed.roles ?? []).length || got < 2)
+      throw Object.assign(new Error("This PDF has no text in it — only a picture of the words — and the page is not clear enough to read. Open your résumé in Word or Google Docs, use Save as PDF, and upload that."), { status: 400 });
+    // the text on file is what the clerk read, so later checks have something to stand on
+    text = textOf(parsed);
+    (parsed as any).read_from_page = true;
+    (parsed as any).layout_warning = "Your PDF has no text layer — the words are drawn as a picture, so employer screening software can't read it at all. We read it from the page. For your applications, export a text PDF from Word or Google Docs (Save as PDF).";
+    (parsed as any).source_is_ghosted = false; (parsed as any).refiled = true;
+  } else {
+    // the clerk reads the page itself (PDF) so columns and sidebars come out in reading order; the extracted text rides along for exact characters
+    parsed = await parseResume(text, pages, isPdf ? buf : undefined);
+    (parsed as any).source_is_ghosted = !!ours;   // a document we made, re-uploaded as the source: allowed; noted for diagnosis
+    const layout = layoutWarning(text, pages);
+    (parsed as any).layout_warning = layout;
+    // the parse is checked against the text it came from: a bullet filed under the neighbouring employer goes back to its own
+    const refiled = refileBullets(parsed, text);
+    if (refiled.log.length) { parsed = refiled.profile; console.error("[resume] REFILED", resumeId, refiled.log); }
+    (parsed as any).refiled = true;
+  }
   await db.from("resumes").update({ text, parsed }).eq("id", resumeId);
   return parsed;
 }
@@ -132,6 +148,16 @@ function sourceOf(url: string) {
 
 
 /** What a screener's software would also struggle with: columns, graphics, very little text. Heuristics on the extracted text only. */
+/** The profile written back out as plain text, in reading order — the text on file for a résumé the clerk read from the page. */
+function textOf(p: ResumeProfile): string {
+  const out: string[] = [p.name, p.headline, [p.contact?.email, p.contact?.phone, p.contact?.city].filter(Boolean).join(" · "), "", "EXPERIENCE"];
+  for (const r of p.roles ?? []) { out.push("", `${r.title} — ${r.company}`, `${r.start} – ${r.end}`); for (const b of r.bullets ?? []) out.push(b); }
+  if ((p.skills ?? []).length) out.push("", "SKILLS", (p.skills ?? []).map((s: any) => s?.name ?? s).join(", "));
+  if ((p.education ?? []).length) { out.push("", "EDUCATION"); for (const e of p.education) out.push(`${e.degree} — ${e.school} ${e.year ?? ""}`.trim()); }
+  for (const x of p.extra_sections ?? []) { out.push("", x.title.toUpperCase()); out.push(...x.items); }
+  return out.join("\n");
+}
+
 export function layoutWarning(text: string, pages: number): string | null {
   const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return null;

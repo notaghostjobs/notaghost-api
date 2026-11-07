@@ -69,6 +69,11 @@ export interface Verification {
 export function parseResume(text: string, pages: number, pdf?: Buffer) {
   const form = `Return: {name, headline, contact{email,phone,city,links[]}, years_total (number), roles[{company,title,start,end,bullets[]}], skills[{name, evidence}], education[{school,degree,year}], extra_sections[{title, items[]}], pages: ${pages}}. Keep every string compact; this must fit in one response. extra_sections = any other block on the résumé (entrepreneurial ventures, certifications, languages, awards, publications), items verbatim. Skip personal details like DOB or marital status.`;
   const rules = `You turn a résumé into a structured profile. Copy facts exactly; do not improve, infer or embellish. Dates as written. If something is absent, use an empty string or empty array. Bullets are the candidate's own lines, verbatim — every line under a role, none skipped, none merged, each under the role it is written under.`;
+  if (pdf && !text.trim()) return json<ResumeProfile>(
+    rules + ` This PDF has no text layer: you are given the page(s) only. Read every word from the page carefully — names, numbers, dates and symbols exactly as printed; if a character is not legible, leave that field empty rather than guess.`,
+    `The résumé is the ${pages} page(s) above.\n\n${form}`,
+    8000, MODEL, pdf
+  );
   if (pdf) return json<ResumeProfile>(
     rules + ` You are given the résumé twice: the PDF page(s), and the plain text extracted from them. Use the PAGE to understand the layout — which column is which, where each role begins and ends, what sits under which heading (a two-column résumé's plain text comes out interleaved; the page does not). Use the TEXT to copy characters: every word, number, date, name and symbol exactly as the text has it.`,
     `PLAIN TEXT of the ${pages} page(s) above:\n\n${text}\n\n${form}`,
