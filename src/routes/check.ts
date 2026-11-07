@@ -28,7 +28,7 @@ check.post("/", async (c) => {
     const g = await gate(caller, key);
     if (!g.allowed) {
       return c.json({
-        error: g.gate === "otp" ? "That was your free check. Sign in with your number — it’s free — to keep checking." : `You’ve used your ${g.limit} checks for the day. A Sharpen plan makes them unlimited.`,
+        error: g.gate === "otp" ? "Your number is your account — one OTP, no password, and every check and document stays with it. Sign in to keep checking." : `You’ve used your ${g.limit} checks for the day. A Sharpen plan makes them unlimited.`,
         gate: g.gate, used: g.used, limit: g.limit,
       }, 429);
     }
