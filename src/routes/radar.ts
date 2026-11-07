@@ -228,7 +228,7 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   const perEmp: Record<string, number> = {}; const kept: typeof ranked = [];
   for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 6) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
   // 2. cheap bands, in batches of twenty down the free ranking: keep going while batches still find roles in reach,
-  //    stop after two empty batches in a row, or once thirty are in reach, or at the ceiling. The spend follows the value.
+  //    stop after two empty batches in a row, or once thirty are in reach, or at the ceiling (140 on day one — seven batches; past that the profile, not the search, is the question). The spend follows the value.
   const bands = new Map<number, { band: number; why: string }>();
   const BATCH = 20, EMPTY_STOP = 2, ENOUGH = opt.enough ?? 30, CEIL = Math.min(kept.length, opt.ceiling ?? 200);
   let at = 0, emptyRun = 0, inReachN = 0; const examined: typeof kept = [];
@@ -361,7 +361,7 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     run.status = "scoring"; run.picked = 0; await save();
     const planSince = run.started;
     const { paise } = await charge(user.id, planSince, "radar:run", async () => {
-      const r = await stagedScore(user, resume, targets, answers, longList, { stage1Keep: 420, stage3Cap: 25, enough: 30, ceiling: 200, bank, run,
+      const r = await stagedScore(user, resume, targets, answers, longList, { stage1Keep: 420, stage3Cap: 25, enough: 30, ceiling: 140, bank, run,
         onChosen: async (items) => { run.items = items; run.picked = items.length; await save(); },
         onProgress: async (n) => { run.scored = n; await save(); } });
       run.picked = r.items.length; run.items = r.items; run.scored = r.items.length; run.examined = r.examined;
