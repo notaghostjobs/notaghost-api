@@ -32,7 +32,9 @@ type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "question
   seen?: number[];              // sightings already put to the model (picked or passed over), so a morning never re-asks
   gone?: { sighting_id: number; title: string; company: string; gone_at: string; promised?: number }[];   // roles that went quiet after they were on the list
   today?: { new: number; gone: number; at: string };
-  spend?: { run_paise: number; total_paise: number; capped?: boolean } };   // what this account has cost us, from the meter
+  spend?: { run_paise: number; total_paise: number; capped?: boolean };
+  triaged?: number;             // how far down the free ranking the cheap pass went before it stopped finding anything
+  examined?: number };   // what this account has cost us, from the meter
 /** A real shot: sharpened ≥ 75 (decided 7 Nov). Under 50 is never shown. */
 const SHOT = 75, REACH = 50;
 
@@ -217,7 +219,7 @@ async function triage(resume: ResumeProfile, t: Targets, a: Answers, batch: { s:
 }
 const TRIAGE_IN = 50;      // stage 3 only for bands at or above this (Sharpen lifts ~15-20; 75 is the bar)
 /** Stages 1b → 2 → 3 over a candidate set. Returns the scored items (stage 3) and the triaged-out ones (band only). */
-async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfile }, t: Targets, a: Answers, cands: Sighting[], opt: { stage1Keep: number; stage3Cap: number; bank: Awaited<ReturnType<typeof recallAnswers>>; onProgress?: (scored: number) => Promise<void> | void; onChosen?: (items: Item[]) => Promise<void> | void; mark?: string; run: Run }) {
+async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfile }, t: Targets, a: Answers, cands: Sighting[], opt: { stage1Keep: number; stage3Cap: number; enough?: number; ceiling?: number; bank: Awaited<ReturnType<typeof recallAnswers>>; onProgress?: (scored: number) => Promise<void> | void; onChosen?: (items: Item[]) => Promise<void> | void; mark?: string; run: Run }) {
   const { run } = opt;
   // 1b. free ranking on the posting's own words
   const rw = resumeWords(resume.parsed);
@@ -225,14 +227,23 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   const ranked = cands.map((s) => ({ s, text: descs.get(s.id) ?? "", fit: textFit(rw, descs.get(s.id) ?? "") })).filter((x) => x.text.length >= 200).sort((x, y) => y.fit - x.fit);
   const perEmp: Record<string, number> = {}; const kept: typeof ranked = [];
   for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 6) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
-  run.seen = [...kept.map((x) => x.s.id), ...(run.seen ?? [])].slice(0, 4000);
-  // 2. cheap bands, ten at a time, four calls in flight
+  // 2. cheap bands, in batches of twenty down the free ranking: keep going while batches still find roles in reach,
+  //    stop after two empty batches in a row, or once thirty are in reach, or at the ceiling. The spend follows the value.
   const bands = new Map<number, { band: number; why: string }>();
-  const batches: typeof kept[] = []; for (let i = 0; i < kept.length; i += 10) batches.push(kept.slice(i, i + 10));
-  let bi = 0;
-  await Promise.all(Array.from({ length: 4 }, async () => { while (bi < batches.length) { const b = batches[bi++]; try { for (const [id, v] of await triage(resume.parsed, t, a, b)) bands.set(id, v); run.cost_calls++; } catch (e) { console.error("[radar] triage", (e as Error).message); } } }));
+  const BATCH = 20, EMPTY_STOP = 2, ENOUGH = opt.enough ?? 30, CEIL = Math.min(kept.length, opt.ceiling ?? 200);
+  let at = 0, emptyRun = 0, inReachN = 0; const examined: typeof kept = [];
+  while (at < CEIL && emptyRun < EMPTY_STOP && inReachN < ENOUGH) {
+    const batch = kept.slice(at, Math.min(CEIL, at + BATCH)); at += batch.length; examined.push(...batch);
+    const halves = [batch.slice(0, 10), batch.slice(10)].filter((h) => h.length);
+    const got = await Promise.all(halves.map((h) => triage(resume.parsed, t, a, h).catch((e) => { console.error("[radar] triage", (e as Error).message); return new Map<number, { band: number; why: string }>(); })));
+    run.cost_calls += halves.length;
+    let found = 0; for (const m of got) for (const [id, v] of m) { bands.set(id, v); if (v.band >= TRIAGE_IN) { found++; inReachN++; } }
+    emptyRun = found ? 0 : emptyRun + 1;
+    run.triaged = at; await opt.onProgress?.(0);
+  }
+  const kept2 = examined;
   // 3. the expert check on the ones in reach, best first, capped; at most 4 per employer
-  const inReach = kept.filter((x) => (bands.get(x.s.id)?.band ?? 0) >= TRIAGE_IN).sort((x, y) => (bands.get(y.s.id)!.band - bands.get(x.s.id)!.band));
+  const inReach = kept2.filter((x) => (bands.get(x.s.id)?.band ?? 0) >= TRIAGE_IN).sort((x, y) => (bands.get(y.s.id)!.band - bands.get(x.s.id)!.band));
   const per3: Record<string, number> = {}; const chosen: typeof kept = [];
   for (const x of inReach) { const k = x.s.company_name ?? "?"; if ((per3[k] ?? 0) >= 4) continue; per3[k] = (per3[k] ?? 0) + 1; chosen.push(x); if (chosen.length >= opt.stage3Cap) break; }
   const items: Item[] = chosen.map(({ s }) => ({ sighting_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "", url: s.url, posted_at: s.posted_at, first_seen: s.first_seen, why: bands.get(s.id)?.why ?? "", tri: bands.get(s.id)?.band, ...(opt.mark ? { new_at: opt.mark } : {}) }));
@@ -253,8 +264,10 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
     }
   };
   await Promise.all(Array.from({ length: 6 }, worker));
-  const passedOver = kept.filter((x) => !chosen.includes(x)).map(({ s }) => ({ id: s.id, band: bands.get(s.id)?.band ?? 0 }));
-  return { items, passedOver, kept: kept.length, inReach: inReach.length };
+  const passedOver = kept2.filter((x) => !chosen.includes(x)).map(({ s }) => ({ id: s.id, band: bands.get(s.id)?.band ?? 0 }));
+  // the ones the batches never reached stay unseen, so a later morning may still meet them
+  run.seen = [...kept2.map((x) => x.s.id), ...(run.seen ?? []).filter((id) => !kept.some((x) => x.s.id === id))].slice(0, 4000);
+  return { items, passedOver, kept: kept.length, examined: kept2.length, inReach: inReach.length };
 }
 /** Sharpen asks: did Radar already score this résumé against this posting? Then that match is the match (same engine), and
  *  the Sharpen that follows pays only for the rewrite. Matched on the posting URL Radar handed out. */
@@ -348,10 +361,10 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     run.status = "scoring"; run.picked = 0; await save();
     const planSince = run.started;
     const { paise } = await charge(user.id, planSince, "radar:run", async () => {
-      const r = await stagedScore(user, resume, targets, answers, longList, { stage1Keep: 60, stage3Cap: 25, bank, run,
+      const r = await stagedScore(user, resume, targets, answers, longList, { stage1Keep: 420, stage3Cap: 25, enough: 30, ceiling: 200, bank, run,
         onChosen: async (items) => { run.items = items; run.picked = items.length; await save(); },
         onProgress: async (n) => { run.scored = n; await save(); } });
-      run.picked = r.items.length; run.items = r.items; run.scored = r.items.length;
+      run.picked = r.items.length; run.items = r.items; run.scored = r.items.length; run.examined = r.examined;
       // the questions: missing must-haves that repeat across the picked roles, asked once, applied everywhere
       run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
       run.status = "questions"; await save();
@@ -413,9 +426,10 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
       const tkey = `radar:targets:${userId}:${resume.id}`;
       let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(resume.parsed); await kv.set(tkey, t); }
       const bank = await recallAnswers(userId).catch(() => []);
-      // the morning budget: twenty through the cheap pass, at most two through the expert check (≈ ₹5 a day, ₹11 worst);
+      // the morning budget: batches of twenty through the cheap pass (stops at the first two empty, ceiling forty), at most two
+      // through the expert check (≈ ₹5 a day, ₹16 worst);
       // an account past ₹600 in its 30 days gets the free and cheap stages only
-      const { result, paise } = await charge(userId, run.started, "radar:morning", () => stagedScore(urow as User, resume, t!, run.answers, longList, { stage1Keep: 20, stage3Cap: capped ? 0 : 2, bank, run, mark: now }));
+      const { result, paise } = await charge(userId, run.started, "radar:morning", () => stagedScore(urow as User, resume, t!, run.answers, longList, { stage1Keep: 60, stage3Cap: capped ? 0 : 2, enough: 4, ceiling: 40, bank, run, mark: now }));
       morningPaise = paise;
       added = result.items;
       run.items.push(...added);
