@@ -271,6 +271,13 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   const perEmp: Record<string, number> = {}; const kept: typeof ranked = [];
   for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 30) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
   kept.forEach((x, i) => trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: i + 1, fit: Math.round(x.fit * 100) / 100 }));
+  // 0. roles already fully checked for this résumé (a prior run, a prior morning) go straight through: no cheap pass, no dice.
+  //    Lists only grow, or lose roles that went quiet; they never forget a role (9 Nov).
+  const priorIds = new Set<number>();
+  for (let i = 0; i < kept.length; i += 100) {
+    const { data } = await db.from("reader_control").select("key, value").in("key", kept.slice(i, i + 100).map((x) => `radar:m:${user.id}:${x.s.id}`));
+    for (const r of data ?? []) if ((r.value as any)?.resume_id === resume.id && (r.value as any)?.matches?.length) priorIds.add(Number(String(r.key).split(":")[3]));
+  }
   // 2. cheap bands, in batches of twenty down the free ranking: keep going while batches still find roles in reach,
   //    stop after two empty batches in a row, or once thirty are in reach, or at the ceiling (140 on day one — seven batches; past that the profile, not the search, is the question). The spend follows the value.
   const bands = new Map<number, { band: number; why: string }>();
@@ -278,20 +285,31 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   let at = 0, emptyRun = 0, inReachN = 0; const examined: typeof kept = [];
   while (at < CEIL && emptyRun < EMPTY_STOP && inReachN < ENOUGH) {
     const batch = kept.slice(at, Math.min(CEIL, at + BATCH)); at += batch.length; examined.push(...batch);
-    const halves = [batch.slice(0, 10), batch.slice(10)].filter((h) => h.length);
+    // bands already known for this résumé–posting pair are reused; prior fully-checked roles count as in reach without a call
+    let found = 0; const need: typeof batch = [];
+    for (const x of batch) {
+      if (priorIds.has(x.s.id)) { bands.set(x.s.id, { band: 100, why: "checked before" }); found++; inReachN++; continue; }
+      const cached = await kv.get<{ band: number; why: string; resume_id: string }>(`radar:tri:${x.s.id}:${resume.id}`);
+      if (cached) { bands.set(x.s.id, cached); if (cached.band >= TRIAGE_IN) { found++; inReachN++; } continue; }
+      need.push(x);
+    }
+    const halves = [need.slice(0, 10), need.slice(10)].filter((h) => h.length);
     const got = await Promise.all(halves.map((h) => triage(resume.parsed, t, a, h).catch((e) => { console.error("[radar] triage", (e as Error).message); return new Map<number, { band: number; why: string }>(); })));
     run.cost_calls += halves.length;
-    let found = 0; for (const m of got) for (const [id, v] of m) { bands.set(id, v); if (v.band >= TRIAGE_IN) { found++; inReachN++; } }
+    for (const m of got) for (const [id, v] of m) { bands.set(id, v); void kv.set(`radar:tri:${id}:${resume.id}`, { ...v, resume_id: resume.id }); if (v.band >= TRIAGE_IN) { found++; inReachN++; } }
     emptyRun = found ? 0 : emptyRun + 1;
     run.triaged = at; await opt.onProgress?.(0);
   }
   const kept2 = examined;
   for (const tr of trail) { const b = bands.get(tr.id); if (b) { tr.band = b.band; tr.why = b.why; } }
   // 3. the expert check on the ones in reach, best first, capped; at most 4 per employer
-  const inReach = kept2.filter((x) => (bands.get(x.s.id)?.band ?? 0) >= TRIAGE_IN).sort((x, y) => (bands.get(y.s.id)!.band - bands.get(x.s.id)!.band));
+  // prior roles anywhere in the free ranking (even past where the batches stopped) are in reach by right
+  for (const x of kept) if (priorIds.has(x.s.id) && !bands.has(x.s.id)) bands.set(x.s.id, { band: 100, why: "checked before" });
+  const inReachAll = kept.filter((x) => (bands.get(x.s.id)?.band ?? 0) >= TRIAGE_IN).sort((x, y) => (bands.get(y.s.id)!.band - bands.get(x.s.id)!.band));
+  const inReach = inReachAll;
   const per3: Record<string, number> = {}; const chosen: typeof kept = [];
   // at most six per employer through the full check: Amazon alone is a quarter of the city, and for some profiles Amazon is the market
-  for (const x of inReach) { const k = x.s.company_name ?? "?"; if ((per3[k] ?? 0) >= 6) continue; per3[k] = (per3[k] ?? 0) + 1; chosen.push(x); if (chosen.length >= opt.stage3Cap) break; }
+  for (const x of inReach) { const prior = priorIds.has(x.s.id); const k = x.s.company_name ?? "?"; if (!prior && (per3[k] ?? 0) >= 6) continue; if (!prior) per3[k] = (per3[k] ?? 0) + 1; chosen.push(x); if (!prior && chosen.filter((c) => !priorIds.has(c.s.id)).length >= opt.stage3Cap) break; }
   for (const x of chosen) { const tr = trail.find((t) => t.id === x.s.id); if (tr) tr.chosen = true; }
   run.trail = trail.sort((a, b) => (a.rank < 0 ? 1e6 : a.rank) - (b.rank < 0 ? 1e6 : b.rank));
   const items: Item[] = chosen.map(({ s }) => ({ sighting_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "", url: s.url, posted_at: s.posted_at, first_seen: s.first_seen, why: bands.get(s.id)?.why ?? "", tri: bands.get(s.id)?.band, ...(opt.mark ? { new_at: opt.mark } : {}) }));
