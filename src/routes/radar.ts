@@ -27,7 +27,8 @@ type Item = { sighting_id: number; title: string; company: string; location: str
   now?: number; promised?: number; band?: string; said?: number; unsaid?: number; missing?: number; top_said?: string[]; top_unsaid?: string[]; top_missing?: string[]; error?: string };
 type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "questions" | "done" | "error"; started: string; finished?: string; answers: Answers; resume_id: string;
   pool: number; by_title: number; picked: number; scored: number; items: Item[]; error?: string; cost_calls: number;
-  questions?: Gap[];            // the missing must-haves that repeat across the picked roles, asked once
+  questions?: Gap[];            // (legacy) the missing must-haves that repeat across the picked roles
+  pq?: ProfileQ[];              // the Radar questions: career-level facts, asked once
   shots?: number; within_reach?: number; threshold: number;
   refreshed?: string;           // the last morning re-run
   seen?: number[];              // sightings already put to the model (picked or passed over), so a morning never re-asks
@@ -333,7 +334,7 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
         summarise(it, matches);
       } catch (e) { it.error = (e as Error).message.slice(0, 120); }
       done++;
-      if (opt.earlyQuestions && !run.questions?.length && done >= 4 && !(run as any)._qTried) { (run as any)._qTried = true; try { run.questions = await commonQuestions(user.id, items.filter((x) => typeof x.now === "number")); run.cost_calls++; } catch {} }
+      if (opt.earlyQuestions && !run.pq?.length && done >= 4 && !(run as any)._qTried) { (run as any)._qTried = true; try { run.pq = await profileQuestions(resume.parsed, await askable(user.id, items.filter((x) => typeof x.now === "number"))); run.cost_calls++; await opt.onProgress?.(done); } catch (e) { console.error("[radar] pq", (e as Error).message); } }
       if (opt.onProgress && done % 3 === 0) await opt.onProgress(done);
     }
   };
@@ -373,6 +374,43 @@ function tally(run: Run) {
   run.shots = run.items.filter((i) => (i.promised ?? 0) >= SHOT).length;
   run.within_reach = run.items.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < SHOT).length;
 }
+/** A Radar question (9 Nov): a career-level fact about the person — a tool, years in a function, the scale they ran, a
+ *  domain, a credential — never one job at one company, never a soft skill, never something the résumé already states.
+ *  Answered once, kept on the account, applied to every role that asks for it in any wording. */
+export type ProfileQ = { id: string; kind: "tool" | "years" | "scale" | "domain" | "credential"; ask: string; covers: string[]; answers: [string, string, string]; hint: string; told?: { text: string; line: string; remembered?: boolean } };
+async function profileQuestions(resume: ResumeProfile, reqs: { requirement: string; n: number }[]): Promise<ProfileQ[]> {
+  if (!reqs.length) return [];
+  const brief = { headline: resume.headline, years: resume.years_total, roles: (resume.roles ?? []).slice(0, 6).map((r) => ({ company: r.company, title: r.title, start: r.start, end: r.end })), skills: (resume.skills ?? []).slice(0, 20).map((x: any) => x?.name ?? x), education: resume.education ?? [], extras: (resume.extra_sections ?? []).map((e) => e.title) };
+  const r = await json<{ questions: Omit<ProfileQ, "told">[] }>(
+    `You turn job requirements into a short questionnaire about a CANDIDATE'S WHOLE CAREER, to be answered once and applied to many roles. Rules:
+- Ask only about hard, checkable facts a person can state in one line: a tool or method (Excel, SQL, Tableau, SAP), years in a function, the scale they ran (team size, P&L, budget, SKUs, revenue), a domain they have worked in, a credential (degree, MBA, certification).
+- NEVER ask about soft skills or qualities (communication, analytical, problem-solving, ownership, leadership style, 'voice'). Drop those requirements.
+- NEVER ask what the résumé already states: if education lists a bachelor's, do not ask for a degree; if skills list SQL, do not ask about SQL.
+- Group requirements that are the same fact in different words into ONE question (e.g. '3+ years of Excel', 'advanced Excel', 'Excel modelling' → one Excel question). 'covers' lists every requirement string the question answers, verbatim.
+- Each question: 'ask' is one plain question about the person's career (not a job); 'answers' are three mutually exclusive choices from strongest to none, each a complete clause a résumé could carry (e.g. 'Advanced — pivots, lookups, models, most days for 8+ years' / 'Working use — reports and tracking' / 'Not really'); 'hint' is an example of the one optional line in their own words.
+- At most 6 questions, most-asked requirements first. If nothing qualifies, return an empty list.`,
+    `CANDIDATE:\n${JSON.stringify(brief)}\n\nREQUIREMENTS (with how many roles ask):\n${JSON.stringify(reqs.slice(0, 30))}\n\nReturn: {questions:[{id, kind, ask, covers[], answers[3], hint}]}`,
+    2500
+  );
+  return (r.questions ?? []).filter((q) => q.ask && Array.isArray(q.covers) && q.covers.length && Array.isArray(q.answers) && q.answers.length === 3).slice(0, 6).map((q, i) => ({ ...q, id: q.id || `q${i + 1}`, answers: q.answers.slice(0, 3) as [string, string, string] }));
+}
+/** The requirements worth asking about across a set of scored roles: missing, or done but unproven, must-haves first. */
+async function askable(userId: string, items: Item[]): Promise<{ requirement: string; n: number }[]> {
+  const groups: { requirement: string; n: number; weight: number }[] = [];
+  for (const it of items) {
+    if (typeof it.now !== "number") continue;
+    const m = await kv.get<{ matches: Match[] }>(`radar:m:${userId}:${it.sighting_id}`); if (!m) continue;
+    for (const x of m.matches) {
+      const ask = !x.told && (x.bucket === "missing" || (x.bucket === "have_not_said" && !x.sayable));
+      if (!ask) continue;
+      const g = groups.find((g) => sameRequirement(g.requirement, x.requirement));
+      const w = (x.kind === "must" ? 2 : 1) + (x.bucket === "missing" ? 1 : 0);
+      if (g) { g.n++; g.weight += w; } else groups.push({ requirement: x.requirement, n: 1, weight: w });
+    }
+  }
+  return groups.sort((a, b) => b.weight - a.weight || b.n - a.n).map((g) => ({ requirement: g.requirement, n: g.n }));
+}
+
 /** The missing must-haves that come up again and again across the picked roles — the ten most common, with the three
  *  honest ways of having done each (the same cards as the Sharpen questionnaire). One answer lifts every role that asked. */
 async function commonQuestions(userId: string, items: Item[]): Promise<Gap[]> {
@@ -459,7 +497,7 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
       // the questions: missing must-haves that repeat across the picked roles, asked once, applied everywhere
       run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
       run.status = "questions"; await save();
-      try { run.questions = await commonQuestions(user.id, run.items); run.cost_calls++; } catch (e) { console.error("[radar] questions", (e as Error).message); run.questions = []; }
+      try { if (!run.pq?.length) { run.pq = await profileQuestions(resume.parsed, await askable(user.id, run.items)); run.cost_calls++; } } catch (e) { console.error("[radar] questions", (e as Error).message); run.pq = run.pq ?? []; }
     });
     run.spend = { run_paise: paise, total_paise: await spent30(user.id) };
     tally(run);
@@ -644,48 +682,44 @@ radar.post("/test/unlock", async (c) => {
 });
 
 /** The questions before the list exists: the must-haves employers hiring for these titles keep asking, from the posting
- *  checklists already on file for sightings with those titles (parsed once for everyone). Cached a day per title set.
- *  Costs one options call (~₹3) the first time a title set is seen; ₹0 after. Empty until ten checklists exist. */
-async function preQuestions(userId: string, t: Targets): Promise<{ questions: Gap[]; from: number }> {
-  const key = `radar:pq:${[...t.titles].map(norm).sort().join("|").slice(0, 200)}:${t.level}`;
-  const cached = await kv.get<{ questions: Gap[]; from: number; at: string }>(key);
+ *  checklists already on file (parsed once for everyone), turned into career-level questions. Cached a day per title set. */
+async function preQuestions(userId: string, resume: ResumeProfile, resumeId: string, t: Targets): Promise<{ questions: ProfileQ[]; from: number }> {
+  const key = `radar:pq2:${resumeId}:${[...t.titles].map(norm).sort().join("|").slice(0, 160)}`;
+  const cached = await kv.get<{ questions: ProfileQ[]; from: number; at: string }>(key);
   if (cached && Date.now() - Date.parse(cached.at) < 24 * 3600e3 && cached.from >= 10) return cached;
   const pool = await livePool(); titleIdf(pool); const tw = t.titles.map(words).filter((w) => w.length);
   const ids = pool.filter((s) => s.readable && titleScore(s.title ?? "", tw, t.level, true) >= TITLE_IN).map((s) => s.id).slice(0, 600);
-  const groups: { requirement: string; kind: "must" | "nice"; n: number; weight: number }[] = [];
+  const groups: { requirement: string; n: number; weight: number }[] = [];
   let from = 0;
   for (let i = 0; i < ids.length; i += 100) {
     const { data } = await db.from("reader_control").select("value").in("key", ids.slice(i, i + 100).map((id) => `radar:pp:${id}`));
     for (const r of data ?? []) {
       const pp = (r.value as any)?.posting as PostingProfile | undefined; if (!pp) continue; from++;
-      for (const [list, kind] of [[pp.must_have ?? [], "must"], [pp.nice_to_have ?? [], "nice"]] as [string[], "must" | "nice"][]) {
-        for (const req of list) { const g = groups.find((g) => sameRequirement(g.requirement, req)); if (g) { g.n++; g.weight += kind === "must" ? 2 : 1; } else groups.push({ requirement: req, kind, n: 1, weight: kind === "must" ? 2 : 1 }); }
+      for (const [list, w] of [[pp.must_have ?? [], 2], [pp.nice_to_have ?? [], 1]] as [string[], number][]) {
+        for (const req of list) { const g = groups.find((g) => sameRequirement(g.requirement, req)); if (g) { g.n++; g.weight += w; } else groups.push({ requirement: req, n: 1, weight: w }); }
       }
     }
   }
   if (from < 10) return { questions: [], from };
-  // the ones the résumé already answers are not asked: drop requirements whose words the résumé profile carries
-  const top = groups.filter((g) => g.n >= 3).sort((a, b) => b.weight - a.weight || b.n - a.n).slice(0, 8);
+  const top = groups.filter((g) => g.n >= 3).sort((a, b) => b.weight - a.weight || b.n - a.n).slice(0, 30).map((g) => ({ requirement: g.requirement, n: g.n }));
   if (!top.length) return { questions: [], from };
-  const asMatches: Match[] = top.map((g) => ({ requirement: g.requirement, kind: g.kind, bucket: "missing", evidence: "", suggestion: `Asked by ${g.n} of the roles for your profile.` }));
-  const filled = await withMeter({ tag: "radar:prequestions", user: userId }, () => fillOptions(asMatches));
-  const questions = gapsOf(filled).map((gap, i) => ({ ...gap, why: `Asked by ${top[i].n} of the roles for your profile.` }));
+  const questions = await withMeter({ tag: "radar:prequestions", user: userId }, () => profileQuestions(resume, top));
   const out = { questions, from, at: new Date().toISOString() };
   await kv.set(key, out);
   return out;
 }
-/** The questions screen's data: the pre-run questions, with what this account already answered marked. */
+/** The questions screen's data: career-level questions, with what this account already answered marked. */
 radar.get("/test/prequestions", async (c) => {
   const u = c.get("user");
   const resume = await currentResume(u.id);
   if (!resume) return c.json({ error: "no_resume" }, 404);
   const tkey = `radar:targets:${u.id}:${resume.id}`;
   let t = await kv.get<Targets>(tkey); if (!t) { t = await withMeter({ tag: "radar:targets", user: u.id }, () => deriveTargets(resume.parsed)); await kv.set(tkey, t); }
-  let { questions, from } = await preQuestions(u.id, t);
   const runNow = await kv.get<Run>(runKey(u.id));
-  if (!questions.length && runNow?.questions?.length) { questions = runNow.questions; from = -1; }
+  let questions: ProfileQ[] = runNow?.pq ?? []; let from = -1;
+  if (!questions.length) { const pre = await preQuestions(u.id, resume.parsed, resume.id, t); questions = pre.questions; from = pre.from; }
   const bank = await recallAnswers(u.id).catch(() => []);
-  const marked = questions.map((q) => { const r = bank.find((x) => sameRequirement(x.requirement, q.requirement)); return r ? { ...q, told: { text: r.fact, line: r.line, remembered: true } } : q; });
+  const marked = questions.map((q) => { const r = bank.find((x) => q.covers.some((cv) => sameRequirement(x.requirement, cv))); return r ? { ...q, told: { text: r.fact, line: r.line, remembered: true } } : q; });
   return c.json({ questions: marked, from, run_status: runNow?.status ?? "none" });
 });
 /** One answer, given before (or after) the list exists: remembered on the account, applied to every scored role that asks,
@@ -693,23 +727,28 @@ radar.get("/test/prequestions", async (c) => {
 radar.post("/test/prime", async (c) => {
   const u = c.get("user");
   const body = z.object({
-    requirement: z.string().min(2), withdraw: z.boolean().optional(),
-    what: z.string().max(200).optional(), where: z.string().max(80).optional(), when: z.string().max(40).optional(), size: z.string().max(30).optional(), unit: z.string().max(30).optional(), free: z.string().max(600).optional(),
+    covers: z.array(z.string().min(2).max(200)).min(1).max(12),
+    choice: z.string().max(200).optional(),       // one of the three answers, in full
+    free: z.string().max(400).optional(),         // their own line, optional
+    withdraw: z.boolean().optional(),
   }).safeParse(await c.req.json().catch(() => ({})));
   if (!body.success) return c.json({ error: body.error.issues[0]?.message }, 400);
-  const req = body.data.requirement;
   const run = await kv.get<Run>(runKey(u.id));
   if (body.data.withdraw) {
-    await forgetAnswer(u.id, req).catch(() => {});
-    if (run && run.items.length) { await rescore(u.id, run, req, (m) => withdrawFrom(m, m.find((x) => sameRequirement(x.requirement, req))?.requirement ?? req)); await kv.set(runKey(u.id), run); }
+    for (const req of body.data.covers) { await forgetAnswer(u.id, req).catch(() => {}); if (run && run.items.length) await rescore(u.id, run, req, (m) => withdrawFrom(m, m.find((x) => sameRequirement(x.requirement, req))?.requirement ?? req)); }
+    if (run) await kv.set(runKey(u.id), run);
     return c.json({ ok: true });
   }
-  const f = body.data as Facts;
-  const line = f.free?.trim() ? await withMeter({ tag: "radar:prime", user: u.id }, () => shapeFree(req, f.free!)) : (f.what?.trim() ? assembleLine(f) : "");
-  if (!line) return c.json({ error: "Pick one of the three, or say it your way." }, 400);
-  const facts = f.free?.trim() ? f.free.trim() : [f.what, f.where && `at ${f.where}`, f.when, f.size && `${f.size} ${f.unit ?? ""}`.trim()].filter(Boolean).join(" · ");
-  await rememberAnswer(u.id, { requirement: req, fact: facts, line }).catch(() => {});
-  if (run && run.items.length) { await rescore(u.id, run, req, (m) => acceptInto(m, m.find((x) => sameRequirement(x.requirement, req))?.requirement ?? req, facts, line)); await kv.set(runKey(u.id), run); }
+  const choice = (body.data.choice ?? "").trim(), free = (body.data.free ?? "").trim();
+  if (!choice && !free) return c.json({ error: "Pick one of the three, or say it your way." }, 400);
+  if (/^(no|not really|none|never)\b/i.test(choice) && !free) return c.json({ ok: true, line: "" });   // a 'no' is remembered as nothing to add
+  const line = free ? await withMeter({ tag: "radar:prime", user: u.id }, () => shapeFree(body.data.covers[0], free)) : choice.replace(/[.。]+$/, "") + ".";
+  const facts = free || choice;
+  for (const req of body.data.covers) {
+    await rememberAnswer(u.id, { requirement: req, fact: facts, line }).catch(() => {});
+    if (run && run.items.length) await rescore(u.id, run, req, (m) => acceptInto(m, m.find((x) => sameRequirement(x.requirement, req))?.requirement ?? req, facts, line));
+  }
+  if (run) await kv.set(runKey(u.id), run);
   return c.json({ ok: true, line });
 });
 
