@@ -22,7 +22,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|meter|reader\/(stats|status|probe|employers|sightings|experience))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|meter|diag\/radar|reader\/(stats|status|probe|employers|sightings|experience))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -163,6 +163,33 @@ admin.get("/diag/posting", async (c) => {
 /** One shot, for a fact-guard post-mortem: the parsed profile the engine was given (roles with their bullets), what the
  *  candidate told the questionnaire, and the roles of the document that went out — enough to see where a line moved or
  *  appeared, without the PDF. Read-only. ?id= a shot id prefix, or the latest shot when omitted. */
+/** Read-only: the Radar runs on file (newest first) — or one account's run in full with every match the engine made and
+ *  what it cost, for auditing a list against its postings line by line. ?phone=last-10-digits or ?user=<id>. */
+admin.get("/diag/radar", async (c) => {
+  const phone = (c.req.query("phone") ?? "").replace(/\D/g, "").slice(-10);
+  let userId = c.req.query("user") ?? "";
+  if (!userId && phone) { const { data } = await db.from("users").select("id, phone").like("phone", `%${phone}`).limit(1); userId = data?.[0]?.id ?? ""; }
+  if (!userId) {
+    const { data } = await db.from("reader_control").select("key, value, updated_at").like("key", "radar:run:%").order("updated_at", { ascending: false }).limit(40);
+    const ids = (data ?? []).map((r) => r.key.slice("radar:run:".length));
+    const { data: users } = ids.length ? await db.from("users").select("id, phone, name").in("id", ids) : { data: [] as any[] };
+    const who = new Map((users ?? []).map((u: any) => [u.id, u]));
+    return c.json({ runs: (data ?? []).map((r) => { const v = r.value as any; const u = who.get(r.key.slice(10)); return { user: r.key.slice(10), phone: u?.phone ? "…" + String(u.phone).slice(-4) : null, name: u?.name ?? null, status: v.status, started: v.started, finished: v.finished, refreshed: v.refreshed, by_title: v.by_title, examined: v.examined, picked: v.picked, scored: v.scored, shots: v.shots, within_reach: v.within_reach, spend: v.spend, cost_calls: v.cost_calls, updated: r.updated_at }; }) });
+  }
+  const { data: run } = await db.from("reader_control").select("value").eq("key", `radar:run:${userId}`).maybeSingle();
+  if (!run) return c.json({ error: "no run" }, 404);
+  const v = run.value as any;
+  const ids = (v.items ?? []).map((i: any) => i.sighting_id);
+  const matches: Record<string, any> = {};
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await db.from("reader_control").select("key, value").in("key", ids.slice(i, i + 100).map((id: number) => `radar:m:${userId}:${id}`));
+    for (const r of data ?? []) matches[r.key.split(":")[3]] = (r.value as any)?.matches ?? null;
+  }
+  const { data: plan } = await db.from("reader_control").select("key, value").like("key", `meter:plan:${userId}:%`);
+  const { data: told } = await db.from("reader_control").select("value").eq("key", `told:${userId}`).maybeSingle();
+  return c.json({ user: userId, run: v, matches, spend: (plan ?? []).map((r) => ({ day: r.key.split(":")[3], ...(r.value as any) })), told: (told?.value as any)?.items ?? [] });
+});
+
 admin.get("/diag/shot", async (c) => {
   const id = c.req.query("id") ?? "";
   let q = db.from("shots").select("id, created_at, status, resume_id, user_id, input, output").order("created_at", { ascending: false }).limit(1);
