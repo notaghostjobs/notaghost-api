@@ -76,9 +76,18 @@ async function phenomDetail(url: string, firstHtml: string | null): Promise<{ te
   return null;
 }
 
+/** The page's own title: JSON-LD JobPosting first, else the first h1. */
+function pageTitle(html: string): string | null {
+  for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
+    try { const j = JSON.parse(m[1].trim()); for (const x of [j, ...(j?.["@graph"] ?? []), ...(Array.isArray(j) ? j : [])].flat(2)) if (x?.["@type"] === "JobPosting" && typeof x.title === "string" && x.title.trim()) return x.title.trim().slice(0, 300); } catch { /* next */ }
+  }
+  const h1 = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return h1 && h1.length >= 3 && h1.length <= 200 ? h1 : null;
+}
+
 export async function enrichOne(s: { id: number; url: string; posted_at: string | null; salary_text: string | null; raw: any }) {
   const fail = (why: string) => db.from("sightings").update({ enriched_at: new Date().toISOString(), enrich_error: why }).eq("id", s.id);
-  let ld: ReturnType<typeof jsonLd> = null, text = "", betterUrl: string | null = null;
+  let ld: ReturnType<typeof jsonLd> = null, text = "", betterUrl: string | null = null, realTitle: string | null = null;
   const wd = (await workdayDetail(s.url.replace(/\/apply\/?$/, ""))) ?? (await oracleDetail(s.url));
   if (wd) {
     if (!wd.ok) { await fail(wd.status === ROBOTS_STATUS ? "disallowed by robots.txt" : `HTTP ${wd.status}`); return false; }
@@ -88,6 +97,7 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
     if (!r.ok) { await fail(r.status === ROBOTS_STATUS ? "disallowed by robots.txt" : `HTTP ${r.status}`); return false; }
     ld = jsonLd(r.text);
     text = (ld?.description && ld.description.length > 300 ? ld.description : htmlToText(r.text)).slice(0, 20000);
+    if (s.raw?.title_from === "slug") { const t = pageTitle(r.text); if (t) realTitle = t; }
     if (text.length < 200 || /phApp\.ddo/.test(r.text)) { const ph = await phenomDetail(s.url, r.text); if (ph) { text = ph.text.slice(0, 20000); if (ph.posted && !ld?.datePosted) ld = { ...(ld ?? {}), datePosted: ph.posted }; if (ph.url) betterUrl = ph.url; } }
     if (text.length < 200 && RENDER_HOSTS.test(new URL(s.url).host)) {
       if (rendersThisBatch >= RENDERS_PER_BATCH) { await db.from("sightings").update({ enrich_error: "render budget for this batch used; next batch" }).eq("id", s.id); return false; }   // enriched_at stays null: tried again next batch
@@ -99,9 +109,10 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
   const p = pick(text);
   const upd: Record<string, unknown> = { description: text, fingerprint: fingerprint(text), enriched_at: new Date().toISOString(), enrich_error: null };
   if (betterUrl) upd.url = betterUrl;   // the page that actually holds the job, so the card's link lands on it
+  if (realTitle) upd.title = realTitle;   // a sitemap row's slug title replaced by the page's own
   if (!s.posted_at && ld?.datePosted) upd.posted_at = iso(ld.datePosted);
   if (!s.salary_text && (ld?.salary || p.salary)) upd.salary_text = ld?.salary ?? p.salary;
-  upd.raw = { ...(s.raw ?? {}), ...(p.exp ? { exp: s.raw?.exp ?? p.exp } : {}), ...(ld?.validThrough ? { valid_through: ld.validThrough } : {}) };
+  upd.raw = { ...(s.raw ?? {}), ...(p.exp ? { exp: s.raw?.exp ?? p.exp } : {}), ...(ld?.validThrough ? { valid_through: ld.validThrough } : {}), ...(realTitle ? { title_from: "page" } : {}) };
   const { error } = await db.from("sightings").update(upd).eq("id", s.id);
   if (error) throw new Error(error.message);
   return true;

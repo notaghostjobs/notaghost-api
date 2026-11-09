@@ -3,8 +3,11 @@
 // (step 0, "known ref re-read"); this file only tells it where to look. `names` are the spellings in our employer table.
 export interface KnownRef { names: string[]; ats: string; ref: string; blr: number; force?: boolean }   // force: replace a feed we already read (this one is the bigger board)
 /** Bump when entries are added; the worker applies the file once per version. */
-export const KNOWN_VERSION = 3;
+export const KNOWN_VERSION = 4;
 export const KNOWN: KnownRef[] = [
+  // v4: SuccessFactors "Unify" sites read from their sitemaps
+  { names: ["TE Connectivity", "TE Connectivity India"], ats: "successfactors", ref: "https://careers.te.com", blr: 161 },
+  { names: ["Standard Chartered", "Standard Chartered Bank", "Standard Chartered GBS", "Standard Chartered Global Business Services"], ats: "successfactors", ref: "https://jobs.standardchartered.com", blr: 80 },
   // v3 (9 Nov, afternoon recon of the biggest unread Bengaluru employers; each verified with the real reader)
   { names: ["Tata Capital"], ats: "oracle", ref: "eofh.fa.em2.oraclecloud.com/CX_1", blr: 244 },
   { names: ["Marriott", "Marriott International"], ats: "oracle", ref: "ejwl.fa.us2.oraclecloud.com/CX", blr: 202 },

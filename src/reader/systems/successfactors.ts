@@ -92,6 +92,28 @@ function parseRows(html: string, origin: string): FeedJob[] {
 /** Is this HTML a SuccessFactors career site? */
 export const isSuccessFactors = (html: string) => /jobTitle-link|class="[^"]*jobLocation|\/search\/\?q=|successfactors|rmk-|jobs\.sap|csb-/i.test(html) && /jobTitle-link|searchResults|data-row/i.test(html);
 
+/** 3. the sitemap: SuccessFactors sites whose robots.txt closes /services/ and whose theme ("Unify") renders no rows
+ *  (Wipro, TE, Standard Chartered) still publish every job in /sitemap.xml, city first in the slug. Titles come from the
+ *  slug until the job page is opened at enrichment. */
+const SM_BLR = /^(bengaluru|bangalore)\b/i;
+async function readSitemap(origin: string, diag: string[]): Promise<FeedJob[] | null> {
+  const first = await getText(`${origin}/sitemap.xml`, { timeoutMs: 40000, gapMs: 700, headers: { accept: "application/xml, text/xml, */*" } });
+  if (!first.ok || !/<urlset|<sitemapindex/i.test(first.text)) { diag.push(`sitemap HTTP ${first.status}`); return null; }
+  const files = /<sitemapindex/i.test(first.text) ? [...first.text.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]).slice(0, 20) : [];
+  const docs = files.length ? await Promise.all(files.map(async (f) => (await getText(f, { timeoutMs: 40000, gapMs: 700 })).text)) : [first.text];
+  const jobs: FeedJob[] = []; const seen = new Set<string>(); let all = 0;
+  for (const doc of docs) for (const m of doc.matchAll(/<url>\s*<loc>([^<]+)<\/loc>(?:\s*<lastmod>([^<]+)<\/lastmod>)?/g)) {
+    const loc = m[1].replace(/&amp;/g, "&"); const mm = loc.match(/\/job\/([^/]+)\/(\d+)\/?$/); if (!mm) continue; all++;
+    let slug = ""; try { slug = decodeURIComponent(mm[1]); } catch { slug = mm[1]; }
+    if (!SM_BLR.test(slug)) continue;
+    const id = mm[2]; if (seen.has(id)) continue; seen.add(id);
+    const title = slug.replace(SM_BLR, "").replace(/^[-,\s]*(karnataka|ka|india|ind)?[-,\s]*/i, "").replace(/-(IND|KA|Karnataka|India)(-\d{5,6})?\/?$/i, "").replace(/-\d{5,6}$/, "").replace(/-+/g, " ").trim();
+    jobs.push({ id, title: title || "Role", location: "Bengaluru, India", url: loc, posted_at: null, updated_at: m[2] ? new Date(m[2]).toISOString() : null, posted_text: null, raw: { title_from: "slug" } });
+  }
+  diag.push(`sitemap: ${all} jobs, ${jobs.length} Bengaluru by slug`);
+  return jobs;
+}
+
 export const successfactors: System = {
   id: "successfactors",
   // ref is the site origin, e.g. "https://jobs.sap.com"
@@ -116,6 +138,7 @@ export const successfactors: System = {
       }
       diag.push(`${loc}: read ${got}`);
     }
+    if (!jobs.length) { const sm = await readSitemap(origin, diag); if (sm && sm.length) return { system: "successfactors", ref: origin, board_url: `${origin}/search/?q=&locationsearch=Bengaluru`, company_name: null, jobs: sm, debug: diag.join("; ") }; }
     return { system: "successfactors", ref: origin, board_url: `${origin}/search/?q=&locationsearch=Bengaluru`, company_name: null, jobs, debug: diag.join("; ") };
   },
 };
