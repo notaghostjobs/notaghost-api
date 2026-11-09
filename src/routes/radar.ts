@@ -560,7 +560,10 @@ radar.get("/test/targets", async (c) => {
   const counts = t.titles.map((title) => { const tw = [words(title)]; let live = 0, today = 0; for (const s of pool) { if (titleScore(s.title ?? "", tw, t.level, true) >= 0.5) { live++; if (Date.parse(s.first_seen) >= since) today++; } } return { title, live, today }; });
   const my = (title: string) => titleScore(title, t.titles.map(words), t.level, true) >= 0.5;
   const mine = await pulse(my);
-  return c.json({ targets: t, counts, pulse: mine, resume_id: resume.id, name: resume.parsed.name, roles: (resume.parsed.roles ?? []).map((r) => ({ company: r.company, start: r.start, end: r.end })) });
+  // one role counted once, whatever number of titles it matches — the headline number on the conversion page
+  let total_live = 0, total_today = 0;
+  for (const s of pool) if (my(s.title ?? "")) { total_live++; if (Date.parse(s.first_seen) >= since) total_today++; }
+  return c.json({ targets: t, counts, total_live, total_today, pulse: mine, resume_id: resume.id, name: resume.parsed.name, roles: (resume.parsed.roles ?? []).map((r) => ({ company: r.company, start: r.start, end: r.end })) });
 });
 
 const answers = z.object({ titles: z.array(z.string().min(2).max(80)).min(1).max(10), level: z.enum(["ic", "lead", "manager", "head"]), stretch: z.boolean().default(false), avoid: z.array(z.string().max(60)).max(20).default([]), notes: z.string().max(300).optional() });
