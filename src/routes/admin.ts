@@ -70,8 +70,9 @@ on.get("/reader/experience", async (c) => {
 /** The truth, in numbers. */
 on.get("/reader/stats", async (c) => {
   const count = async (table: string, f: (q: any) => any) => { const { count } = await f(db.from(table).select("*", { count: "exact", head: true })); return count ?? 0; };
-  const [employers, unresolved, none, sightings, live, blr, enriched, ctl] = await Promise.all([
+  const [employers, unresolved, none, withFeed, sightings, live, blr, enriched, ctl] = await Promise.all([
     count("employers", (q) => q), count("employers", (q) => q.is("resolved_at", null)), count("employers", (q) => q.eq("ats", "none")),
+    count("employers", (q) => q.not("ats", "is", null).neq("ats", "none")),   // the same definition the public pulse uses: an employer whose system we have a feed for, queued or not
     count("sightings", (q) => q), count("sightings", (q) => q.is("gone_at", null)), count("sightings", (q) => q.is("gone_at", null).eq("blr", true)),
     count("sightings", (q) => q.is("gone_at", null).eq("blr", true).not("description", "is", null)),
     db.from("reader_control").select("key, value, updated_at"),
@@ -108,7 +109,7 @@ on.get("/reader/stats", async (c) => {
   void key;
   const links: Record<string, string> = { status: `${self}/status`, probe_result: `${self}/probe`, employers: `${self}/employers?limit=100`, sightings: `${self}/sightings?limit=50`, tier1: `${self}/run?step=tier1`, selftest: `${self}/run?step=selftest`, resolve20: `${self}/run?step=resolve&n=20`, enrich60: `${self}/run?step=enrich&n=60` };
   for (const [k, u] of Object.entries(probeTargets)) links[`probe_${k}`] = `${self}/run?step=probe&url=${encodeURIComponent(u)}`;
-  return c.json({ employers: { total: employers, unresolved, resolved: employers - unresolved, with_feed: employers - unresolved - none, none, systems, confidence }, sightings: { total: sightings, live, blr, enriched, by_source: sources, enrich: { done: enriched, failed, pending, failed_by_reason, failed_by_source } }, worker: control, links });
+  return c.json({ employers: { total: employers, unresolved, resolved: employers - unresolved, with_feed: withFeed, none, systems, confidence }, sightings: { total: sightings, live, blr, enriched, by_source: sources, enrich: { done: enriched, failed, pending, failed_by_reason, failed_by_source } }, worker: control, links });
 });
 
 /** Employers with what we decided and why; filter by system. */
