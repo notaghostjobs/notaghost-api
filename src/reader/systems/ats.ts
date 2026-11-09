@@ -1,5 +1,5 @@
 // The hiring systems with public JSON feeds. Each reader is exact: it returns what the system says, or null if the ref does not exist.
-import { getJson, getText } from "../http.js";
+import { getJson, getText, ROBOTS_STATUS } from "../http.js";
 import { progress, type Feed, type FeedJob, type System } from "./types.js";
 
 const iso = (v: unknown): string | null => {
@@ -46,6 +46,39 @@ export const ashby: System = {
   },
 };
 
+/** SmartRecruiters' public careers pages, used since api.smartrecruiters.com/robots.txt closed the posting API to everyone
+ *  but LinkedIn (seen 9 Nov 2026); the careers host carries no robots.txt. The page's "show more" fragment
+ *  (/{company}/api/more?search=…&page=N, 50 a page) ignores its location parameter but honours the search box, which
+ *  matches the location field: the Bengaluru set is the union of the two spellings' searches. Per-job location is not in
+ *  the fragment, so rows carry the search term; the job page's JSON-LD corrects it at enrichment. */
+const SR_BLR = /bengaluru|bangalore|karnataka/i;
+async function smartrecruitersPages(ident: string): Promise<Feed | null> {
+  const home = await getText(`https://careers.smartrecruiters.com/${ident}`, { timeoutMs: 20000, gapMs: 800 });
+  if (home.status === 404) return null;
+  // a company that fronts the board with its own site (Bosch → jobs.bosch.com) redirects the home page but still serves the fragments
+  const own = !/careers\.smartrecruiters\.com/i.test(home.url);
+  const name = own ? null : home.text.match(/<title>([^<]{2,80})<\/title>/i)?.[1]?.replace(/\s*[-|–].*$/, "").trim() ?? null;
+  // the grouped view names the Bengaluru group and its size: kept as the honest total in the diagnostics
+  const grouped = await getText(`https://careers.smartrecruiters.com/${ident}?search=Bengaluru`, { timeoutMs: 20000, gapMs: 800 });
+  const groupCounts = [...grouped.text.matchAll(/opening-title[^>]*>([^<]*)<[\s\S]{0,200}?<span class="title">(\d+) jobs?<\/span>/g)].filter((m) => SR_BLR.test(m[1])).map((m) => `${m[1].trim()} ${m[2]}`);
+  const jobs: FeedJob[] = []; const seen = new Set<string>(); const diag: string[] = [`groups: ${groupCounts.join(", ") || (own ? "own front site" : "none named")}`];
+  for (const term of ["Bengaluru", "Bangalore"]) {
+    let got = 0;
+    for (let page = 0; page < 40; page++) {
+      const r = await getText(`https://careers.smartrecruiters.com/${ident}/api/more?search=${term}&page=${page}`, { timeoutMs: 20000, gapMs: 800 });
+      if (r.status === 404 && page === 0 && term === "Bengaluru") return null;
+      if (!r.ok || !r.text.trim()) break;
+      let fresh = 0, any = 0;
+      for (const m of r.text.matchAll(/href="(https:\/\/jobs\.smartrecruiters\.com\/[A-Za-z0-9-]+\/(\d+)[^"]*)"[^>]*>[\s\S]*?<h4[^>]*>([^<]*)<\/h4>/g)) {
+        any++; const id = m[2]; if (seen.has(id)) continue; seen.add(id); fresh++;
+        jobs.push({ id, title: m[3].replace(/&amp;/g, "&").trim(), location: `${term}, India`, url: m[1], posted_at: null, updated_at: null, posted_text: null });
+      }
+      got += fresh; if (!any) break;
+    }
+    diag.push(`search ${term}: ${got}`);
+  }
+  return { system: "smartrecruiters", ref: ident, board_url: `https://careers.smartrecruiters.com/${ident}`, company_name: name, jobs, debug: `careers pages; ${diag.join("; ")}` };
+}
 export const smartrecruiters: System = {
   id: "smartrecruiters",
   detect: (u) => u.match(/smartrecruiters\.com\/(?:v1\/companies\/)?([A-Za-z0-9-]+)/i)?.[1] ?? null,
@@ -54,6 +87,7 @@ export const smartrecruiters: System = {
     for (let offset = 0; offset < 5000; offset += 100) {
       const r = await getJson<any>(`https://api.smartrecruiters.com/v1/companies/${ident}/postings?limit=100&offset=${offset}`);
       if (r.status === 404) return null;
+      if (!r.ok && r.status === ROBOTS_STATUS && offset === 0) return smartrecruitersPages(ident);
       if (!r.ok || !r.data) throw new Error(`smartrecruiters ${ident}: HTTP ${r.status}`);
       const page: any[] = r.data.content ?? [];
       for (const x of page) {

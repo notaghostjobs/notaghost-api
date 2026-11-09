@@ -142,4 +142,27 @@ export const capgemini: System = {
   },
 };
 
-SMALL.push(ripplehire, capgemini);
+
+/** iCIMS Attract career sites (careers.amd.com and others): GET /api/jobs?location=…&page=N, 10 a page, JSON. ref: the host. */
+export const icimsAttract: System = {
+  id: "icims-attract",
+  detect: (u) => { const m = u.match(/^https?:\/\/([a-z0-9.-]+)\/api\/jobs\b/i); return m ? m[1].toLowerCase() : null; },
+  async read(host) {
+    const jobs: FeedJob[] = []; const seen = new Set<string>(); const diag: string[] = [];
+    for (const loc of ["Bengaluru", "Bangalore"]) {
+      let total = 0, got = 0;
+      for (let page = 1; page <= 60; page++) {
+        const r = await getJson<any>(`https://${host}/api/jobs?location=${encodeURIComponent(loc)}&page=${page}&sortBy=relevance&descending=false&internal=false`, { headers: { ...H, "accept-language": "en-US,en;q=0.9", referer: `https://${host}/` }, gapMs: 700, timeoutMs: 20000 });   // en-IN as the language returns an empty board: the site has no en-in postings
+        if (r.status === 404) return null;
+        if (!r.ok || !Array.isArray(r.data?.jobs)) { if (page === 1 && loc === "Bengaluru") return null; diag.push(`${loc}@${page} HTTP ${r.status}`); break; }
+        total = Number(r.data.totalCount ?? total); const list: any[] = r.data.jobs; got += list.length;
+        for (const j of list) { const d = j.data ?? j; const id = String(d.slug ?? d.req_id ?? d.id ?? ""); if (!id || seen.has(id)) continue; seen.add(id); jobs.push({ id, title: String(d.title ?? ""), location: [d.city, d.state, d.country].filter(Boolean).join(", ") || String(d.full_location ?? d.location_name ?? ""), url: d.apply_url ?? d.meta_data?.canonical_url ?? `https://${host}/jobs/${d.slug ?? id}`, posted_at: iso(d.posted_date ?? d.create_date), updated_at: iso(d.update_date), posted_text: null, description: typeof d.description === "string" && d.description.length > 200 ? d.description.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : undefined }); }
+        if (!list.length || got >= total) break;
+      }
+      diag.push(`${loc}: total ${total}`);
+    }
+    return { system: "icims-attract", ref: host, board_url: `https://${host}/jobs?location=Bengaluru`, company_name: null, jobs, debug: diag.join("; ") };
+  },
+};
+
+SMALL.push(ripplehire, capgemini, icimsAttract);

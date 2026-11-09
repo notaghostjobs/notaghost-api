@@ -110,10 +110,13 @@ export const phenom: System = {
   async read(host) {
     const jobs: FeedJob[] = []; const diag: string[] = []; let total = 0;
     const body = (from: number, city: string[]) => ({ lang: "en_us", deviceType: "desktop", country: "in", pageName: "search-results", ddoKey: "refineSearch", sortBy: "Most recent", subsearch: "", from, jobs: true, counts: true, all_fields: ["category", "country", "state", "city", "type"], size: 100, clearAll: false, jdsource: "facets", isSliderEnable: false, pageId: "page1", siteType: "external", keywords: "", global: true, selected_fields: { city }, locationData: {} });
+    // sites built for India (Titan, Lowe's India) answer only to their own locale: en_us first, en_in when that finds nothing
+    let lang = "en_us";
     for (let from = 0; from < 3000; from += 100) {
-      const r = await getJson<any>(`https://${host}/widgets`, { method: "POST", body: body(from, ["Bengaluru", "Bangalore", "Bengaluru, Karnataka", "Bangalore, Karnataka"]), headers: { ...BROWSERISH, origin: `https://${host}`, referer: `https://${host}/` }, gapMs: 700 });
+      const r = await getJson<any>(`https://${host}/widgets`, { method: "POST", body: { ...body(from, ["Bengaluru", "Bangalore", "Bengaluru, Karnataka", "Bangalore, Karnataka"]), lang }, headers: { ...BROWSERISH, origin: `https://${host}`, referer: `https://${host}/` }, gapMs: 700 });
       if (!r.ok || !r.data) { if (from === 0) return null; diag.push(`@${from} HTTP ${r.status}`); break; }
       const rs = r.data.refineSearch ?? {}; if (from === 0 && !rs.data) return null; total = rs.totalHits ?? total; const list: any[] = rs.data?.jobs ?? [];
+      if (from === 0 && total === 0 && lang === "en_us") { lang = "en_in"; from = -100; diag.push("en_us: 0, trying en_in"); continue; }
       for (const x of list) jobs.push({ id: String(x.jobId ?? x.reqId ?? x.jobSeqNo), title: x.title ?? "", location: [x.city, x.state, x.country].filter(Boolean).join(", "), url: x.applyUrl ?? `https://${host}/job/${x.jobSeqNo ?? x.jobId}`, posted_at: iso(x.postedDate), updated_at: iso(x.dateCreated), posted_text: null });
       if (list.length < 100 || jobs.length >= total) break;
     }
@@ -125,7 +128,8 @@ export const phenom: System = {
 /** Oracle Recruiting Cloud career sites. ref: "host/CX_n". Keyword search for Bengaluru, server-side. */
 export const oracle: System = {
   id: "oracle",
-  detect: (u) => { const m = u.match(/^https?:\/\/([a-z0-9.-]+\.oraclecloud\.com)\/hcmUI\/CandidateExperience\/[a-z-]+\/sites\/(CX_\d+)/i); return m ? `${m[1]}/${m[2]}` : null; },
+  // oraclecloud.com hosts and the custom hosts that front one (jobs.nokia.com, enterpriseplatform.dell.com); site ids are usually CX_n but also "CX", "careers", "BNY-Careers"
+  detect: (u) => { const m = u.match(/^https?:\/\/([a-z0-9.-]+)\/(?:hcmUI\/CandidateExperience\/[a-z-]+|[a-z]{2})\/sites\/([A-Za-z0-9_-]+)/i); return m && (/oraclecloud\.com$/i.test(m[1]) || /^(CX|CX_\d+)$/i.test(m[2])) ? `${m[1]}/${m[2]}` : null; },
   // Oracle Recruiting Cloud. The LOCATIONS facet is a tree: country → state → city. Selecting India lists its
   // cities with ids; selecting Bengaluru's id gives the exact set (JPMC: 145 vs 10 by keyword). Keyword is the fallback.
   async read(ref) {
@@ -140,7 +144,7 @@ export const oracle: System = {
         if (!r.ok || !r.data) { if (offset === 0 && (r.status === ROBOTS_STATUS || r.status === 403 || r.status === 429 || r.status === 0)) throw new Error(`oracle ${label}: HTTP ${r.status}`); diag.push(`${label}@${offset} HTTP ${r.status}`); break; }
         const item = r.data.items?.[0] ?? {}; total = item.TotalJobsCount ?? total; const list: any[] = item.requisitionList ?? [];
         got += list.length; take(list);
-        if (list.length < 100 || offset + 100 >= total) break;
+        if (!list.length || got >= total) break;   // Oracle pages are sometimes 99 long; a short page is not the last one
       }
       diag.push(`${label}: total ${total}, read ${got}`);
     };

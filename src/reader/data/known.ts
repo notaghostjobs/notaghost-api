@@ -3,8 +3,42 @@
 // (step 0, "known ref re-read"); this file only tells it where to look. `names` are the spellings in our employer table.
 export interface KnownRef { names: string[]; ats: string; ref: string; blr: number; force?: boolean }   // force: replace a feed we already read (this one is the bigger board)
 /** Bump when entries are added; the worker applies the file once per version. */
-export const KNOWN_VERSION = 2;
+export const KNOWN_VERSION = 3;
 export const KNOWN: KnownRef[] = [
+  // v3 (9 Nov, afternoon recon of the biggest unread Bengaluru employers; each verified with the real reader)
+  { names: ["Tata Capital"], ats: "oracle", ref: "eofh.fa.em2.oraclecloud.com/CX_1", blr: 244 },
+  { names: ["Marriott", "Marriott International"], ats: "oracle", ref: "ejwl.fa.us2.oraclecloud.com/CX", blr: 202 },
+  { names: ["KPMG India", "KPMG Global Services India", "KPMG Global Services (KGS)", "KPMG"], ats: "oracle", ref: "ejgk.fa.em2.oraclecloud.com/CX_1", blr: 172, force: true },
+  { names: ["JioStar", "Viacom18", "JioStar (Viacom18)"], ats: "workday", ref: "jiostar/wd102/JioStar", blr: 124 },
+  { names: ["Honeywell", "Honeywell Technology Solutions"], ats: "oracle", ref: "ibqbjb.fa.ocs.oraclecloud.com/CX_1", blr: 119 },
+  { names: ["Birlasoft"], ats: "successfactors", ref: "https://jobs.birlasoft.com", blr: 117 },
+  { names: ["AMD", "Advanced Micro Devices (AMD)", "Advanced Micro Devices"], ats: "icims-attract", ref: "careers.amd.com", blr: 116, force: true },
+  { names: ["PhonePe"], ats: "smartrecruiters", ref: "PHONEPELIMITED", blr: 114 },
+  { names: ["Titan", "Titan Company"], ats: "phenom", ref: "careers.titan.in", blr: 98 },
+  { names: ["Visa"], ats: "workday", ref: "visa/wd5/Visa", blr: 87 },
+  { names: ["Photon"], ats: "oracle", ref: "fa-ertb-saasfaprod1.fa.ocs.oraclecloud.com/CX_2", blr: 78 },
+  { names: ["Siemens Healthineers"], ats: "phenom", ref: "careers.siemens-healthineers.com", blr: 77 },
+  { names: ["Northern Trust"], ats: "workday", ref: "ntrs/wd1/northerntrust", blr: 55 },
+  { names: ["Wells Fargo"], ats: "workday", ref: "wf/wd1/WellsFargoJobs", blr: 50 },
+  { names: ["Meesho"], ats: "lever", ref: "meesho", blr: 48 },
+  { names: ["Lowe's India", "Lowe's", "Lowe's Companies"], ats: "phenom", ref: "talent.lowes.com", blr: 47 },
+  { names: ["Citi", "Citibank", "Citi India", "Citigroup"], ats: "workday", ref: "citi/wd5/2", blr: 34 },
+  { names: ["Barclays"], ats: "workday", ref: "barclays/wd3/External_Career_Site_Barclays", blr: 34 },
+  { names: ["Quantiphi"], ats: "workday", ref: "quantiphi/wd1/Careers_at_Quantiphi", blr: 27 },
+  { names: ["Dell", "Dell Technologies"], ats: "oracle", ref: "enterpriseplatform.dell.com/careers", blr: 22 },
+  { names: ["Paytm"], ats: "lever", ref: "paytm", blr: 22 },
+  { names: ["Razorpay"], ats: "greenhouse", ref: "razorpaysoftwareprivatelimited", blr: 16 },
+  { names: ["Freshworks"], ats: "smartrecruiters", ref: "Freshworks", blr: 12 },
+  { names: ["CRED"], ats: "lever", ref: "cred", blr: 10 },
+  { names: ["Groww"], ats: "greenhouse", ref: "groww", blr: 9 },
+  { names: ["Nokia"], ats: "oracle", ref: "fa-evmr-saasfaprod1.fa.ocs.oraclecloud.com/CX_1", blr: 5 },
+  // Darwinbox tenants seen linked from the employers' own careers pages (rendered reads; the resolver verifies each)
+  { names: ["Bigbasket", "BigBasket"], ats: "darwinbox", ref: "bigbasket", blr: 0 },
+  { names: ["Delhivery"], ats: "darwinbox", ref: "delhivery", blr: 0 },
+  { names: ["Unacademy"], ats: "darwinbox", ref: "unacademy", blr: 0 },
+  { names: ["Brigade Group", "Brigade"], ats: "darwinbox", ref: "brigadegroup", blr: 0 },
+  { names: ["Tata CLiQ", "Tata Cliq"], ats: "darwinbox", ref: "cliqonnect", blr: 0 },
+  { names: ["PharmEasy"], ats: "darwinbox", ref: "myhr", blr: 0 },
   { names: ["Capgemini", "Capgemini India", "Capgemini Engineering", "Capgemini Invent"], ats: "capgemini", ref: "capgemini", blr: 331, force: true },
   { names: ["LTIMindtree", "LTM", "LTIMindtree (LTM)", "L&T Infotech", "Mindtree"], ats: "ripplehire", ref: "ltm.ripplehire.com|nP1GISU2A024qt3otg3V", blr: 212, force: true },
   { names: ["Mphasis"], ats: "ripplehire", ref: "mphasis.ripplehire.com|ty4DfyWddnOrtpclQeia", blr: 56 },
