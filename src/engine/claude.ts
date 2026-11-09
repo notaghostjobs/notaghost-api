@@ -20,6 +20,7 @@ export async function json<T>(system: string, user: string, maxTokens = 4000, mo
     const r = await client.messages.create({
       model,
       max_tokens: maxTokens,
+      temperature: 0,      // the same résumé against the same posting must get the same number tomorrow (9 Nov)
       // the instructions repeat call after call: cache them (billed at a tenth after the first call, and faster to start)
       // a pinned block (the résumé profile, say) sits after the instructions as its own cached prefix: the same résumé
       // across a Radar run's hundred calls is then read from cache at a tenth of the price

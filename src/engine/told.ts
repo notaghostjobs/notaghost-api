@@ -121,7 +121,8 @@ export function applyRemembered(matches: Match[], bank: Remembered[]): { matches
   if (!bank.length) return { matches, n: 0 };
   let n = 0;
   const out = matches.map((m) => {
-    if (m.bucket !== "missing" || m.told) return m;
+    // a missing requirement, or one the person has done but the résumé can't prove: an answer makes it sayable
+    if (m.told || !(m.bucket === "missing" || (m.bucket === "have_not_said" && !m.sayable))) return m;
     const r = bank.find((x) => sameRequirement(x.requirement, m.requirement) && x.line);
     if (!r) return m; n++;
     return { ...m, bucket: "have_not_said" as const, evidence: r.fact, evidence_kind: "line" as const, line: r.line, sayable: true, told: true, remembered: true, vet_reason: "told · remembered from an earlier answer" };

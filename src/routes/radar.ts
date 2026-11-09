@@ -269,7 +269,7 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   }).sort((x, y) => y.fit - x.fit);
   run.dropped_band = (run.dropped_band ?? 0) + droppedBand;
   const perEmp: Record<string, number> = {}; const kept: typeof ranked = [];
-  for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 16) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
+  for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 30) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
   kept.forEach((x, i) => trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: i + 1, fit: Math.round(x.fit * 100) / 100 }));
   // 2. cheap bands, in batches of twenty down the free ranking: keep going while batches still find roles in reach,
   //    stop after two empty batches in a row, or once thirty are in reach, or at the ceiling (140 on day one — seven batches; past that the profile, not the search, is the question). The spend follows the value.
@@ -301,11 +301,17 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
     while (i < items.length) {
       const it = items[i++];
       try {
-        const pp = await postingFor(it.sighting_id);
-        if (!pp) { it.error = "unreadable"; continue; }
-        let { matches } = await matchAndGrade(resume.parsed, pp.posting); run.cost_calls += 2;
+        const mk = `radar:m:${user.id}:${it.sighting_id}`;
+        const prior = await kv.get<{ matches: Match[]; resume_id?: string }>(mk);
+        let matches: Match[];
+        if (prior?.matches?.length && prior.resume_id === resume.id) { matches = prior.matches; }   // same résumé, same posting: the number holds
+        else {
+          const pp = await postingFor(it.sighting_id);
+          if (!pp) { it.error = "unreadable"; continue; }
+          matches = (await matchAndGrade(resume.parsed, pp.posting)).matches; run.cost_calls += 2;
+        }
         matches = applyRemembered(matches, opt.bank).matches;
-        await kv.set(`radar:m:${user.id}:${it.sighting_id}`, { matches });
+        await kv.set(mk, { matches, resume_id: resume.id });
         summarise(it, matches);
       } catch (e) { it.error = (e as Error).message.slice(0, 120); }
       done++;
@@ -357,16 +363,20 @@ async function commonQuestions(userId: string, items: Item[]): Promise<Gap[]> {
     if (typeof it.now !== "number") continue;
     const m = await kv.get<{ matches: Match[] }>(`radar:m:${userId}:${it.sighting_id}`); if (!m) continue;
     for (const x of m.matches) {
-      if (x.bucket !== "missing" || x.told) continue;
+      // what to ask: a must-have the résumé lacks, or one the person has plainly done but the résumé can't prove
+      // (for a strong profile almost nothing is missing and everything is unproven — those are the questions that lift)
+      const ask = !x.told && (x.bucket === "missing" || (x.bucket === "have_not_said" && !x.sayable && x.kind === "must"));
+      if (!ask) continue;
       const g = groups.find((g) => sameRequirement(g.requirement, x.requirement));
-      if (g) { g.n++; if (x.kind === "must") g.weight += 2; else g.weight += 1; } else groups.push({ requirement: x.requirement, kind: x.kind, n: 1, weight: x.kind === "must" ? 2 : 1 });
+      const w = (x.kind === "must" ? 2 : 1) + (x.bucket === "missing" ? 1 : 0);
+      if (g) { g.n++; g.weight += w; } else groups.push({ requirement: x.requirement, kind: x.kind, n: 1, weight: w });
     }
   }
-  const top = groups.filter((g) => g.n >= 2).sort((a, b) => b.weight - a.weight || b.n - a.n).slice(0, 10);
+  const top = groups.sort((a, b) => b.weight - a.weight || b.n - a.n).slice(0, 8);
   if (!top.length) return [];
   const asMatches: Match[] = top.map((g) => ({ requirement: g.requirement, kind: g.kind, bucket: "missing", evidence: "", suggestion: `Asked by ${g.n} of the roles on your list.` }));
   const filled = await fillOptions(asMatches);
-  return gapsOf(filled).map((gap, i) => ({ ...gap, why: `Asked by ${top[i].n} of the roles on your list.` }));
+  return gapsOf(filled).map((gap, i) => ({ ...gap, why: top[i].n > 1 ? `Asked by ${top[i].n} of the roles on your list.` : `Asked by a role on your list — the résumé doesn’t show it yet.` }));
 }
 /** Re-score every item whose matches carry this requirement, after an answer or a withdrawal. */
 async function rescore(userId: string, run: Run, requirement: string, apply: (m: Match[]) => Match[]) {
