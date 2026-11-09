@@ -273,8 +273,13 @@ async function setPriorities() {
 async function runWorkdayScan() {
   const key = "wdscan-v1";
   if ((await getControl<{ at: string }>(`once:${key}`))?.at) return;
-  const { data } = await db.from("employers").select("key, name, priority").in("ats", ["none", "page"]).order("priority", { ascending: false }).order("created_at", { ascending: false }).limit(6000);   // the resolver queue walks the other way; they meet in the middle
-  const q = [...(data ?? [])]; const total = q.length; let done = 0, found = 0; const t0 = Date.now();
+  // PostgREST hands out 1,000 rows at a time; page through all of them. The resolver queue walks the other way; they meet in the middle.
+  const q: { key: string; name: string; priority: number }[] = [];
+  for (let from = 0; from < 20000; from += 1000) {
+    const { data } = await db.from("employers").select("key, name, priority").in("ats", ["none", "page"]).order("priority", { ascending: false }).order("created_at", { ascending: false }).range(from, from + 999);
+    q.push(...((data ?? []) as any[])); if (!data || data.length < 1000) break;
+  }
+  const total = q.length; let done = 0, found = 0; const t0 = Date.now();
   log("wdscan", `${total} employers to try`);
   const worker = async () => {
     for (;;) {
