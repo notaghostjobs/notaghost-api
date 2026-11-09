@@ -256,6 +256,10 @@ async function setPriorities() {
     const { data, error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null).in("source", ["oracle", "phenom", "workday", "page", "greenhouse", "lever", "ashby"]).select("id");
     log("enrich retry v2", error ? error.message : `${data?.length ?? 0} sightings queued`);
   });
+  await onceOnly("enrich-retry-ibm-v1", async () => {
+    const { data, error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).is("gone_at", null).eq("blr", true).is("description", null).eq("source", "ibm").select("id");
+    log("enrich retry ibm", error ? error.message : `${data?.length ?? 0} sightings queued for rendered reads`);
+  });
   await onceOnly("reresolve-none-workday-v1", async () => {
     const { data, error } = await db.from("employers").update({ resolved_at: null, resolve_error: null }).in("ats", ["none", "page"]).lte("priority", 1).select("key");
     log("reresolve none/page", error ? error.message : `${data?.length ?? 0} employers queued`);

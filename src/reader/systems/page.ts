@@ -102,6 +102,23 @@ export function harvestLinks(url: string): Promise<{ jobs: FeedJob[]; html: stri
   });
 }
 
+/** Render one job page and return its visible text (for sites whose pages are script shells and whose detail JSON needs a
+ *  browser session, e.g. IBM on Avature). Serialized on the shared browser; images, fonts and styles are not fetched. */
+export function renderText(url: string): Promise<string> {
+  return serial(async () => {
+    if (!(await robotsAllows(url))) throw new RobotsDisallowed(url);
+    const b = await getBrowser();
+    const ctx = await b.newContext({ userAgent: UA });
+    try {
+      const p = await ctx.newPage();
+      await p.route("**/*", (route) => (/\.(png|jpe?g|gif|webp|svg|woff2?|ttf|mp4|css)(\?|$)/i.test(route.request().url()) || /doubleclick|googleads|facebook\.com\/tr|bing\.com|hodes\.com|analytics/i.test(route.request().url()) ? route.abort() : route.continue()));
+      await p.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+      await p.waitForTimeout(3500);
+      return (await p.evaluate(() => document.body?.innerText ?? "")).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    } finally { await ctx.close().catch(() => {}); }
+  });
+}
+
 /** Render a search page and collect links matching `link`, scrolling or paging until nothing new appears. Serialized on the shared browser. */
 export async function renderAndCollect(url: string, link: RegExp, o: { next: "scroll" | "page"; pageParam?: string; maxPages: number }): Promise<{ links: { h: string; t: string; loc: string }[]; debug: string }> {
   try { return await renderOnce(url, link, o); }

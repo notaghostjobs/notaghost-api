@@ -4,6 +4,13 @@ import { db } from "../lib/db.js";
 import { getText, getJson, ROBOTS_STATUS } from "./http.js";
 import { htmlToText } from "../engine/extract.js";
 import { fingerprint } from "../engine/ghost/canon.js";
+import { renderText } from "./systems/page.js";
+
+/** Hosts whose job pages only speak to a browser; a plain fetch is empty. Rendered one at a time, a few per batch. */
+const RENDER_HOSTS = /^(careers\.ibm\.com|apply\.deloitte\.com|usijobs\.deloitte\.com)$/i;
+let rendersThisBatch = 0;
+export const RENDERS_PER_BATCH = 25;
+export const resetRenderBudget = () => { rendersThisBatch = 0; };
 
 const iso = (v: unknown): string | null => { if (!v) return null; const d = new Date(String(v)); return isNaN(d.getTime()) ? null : d.toISOString(); };
 
@@ -82,6 +89,11 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
     ld = jsonLd(r.text);
     text = (ld?.description && ld.description.length > 300 ? ld.description : htmlToText(r.text)).slice(0, 20000);
     if (text.length < 200 || /phApp\.ddo/.test(r.text)) { const ph = await phenomDetail(s.url, r.text); if (ph) { text = ph.text.slice(0, 20000); if (ph.posted && !ld?.datePosted) ld = { ...(ld ?? {}), datePosted: ph.posted }; if (ph.url) betterUrl = ph.url; } }
+    if (text.length < 200 && RENDER_HOSTS.test(new URL(s.url).host)) {
+      if (rendersThisBatch >= RENDERS_PER_BATCH) { await db.from("sightings").update({ enrich_error: "render budget for this batch used; next batch" }).eq("id", s.id); return false; }   // enriched_at stays null: tried again next batch
+      rendersThisBatch++;
+      try { const t = await renderText(s.url); if (t.length >= 200) text = t.slice(0, 20000); } catch (e) { await fail(`render: ${(e as Error).message.slice(0, 120)}`); return false; }
+    }
   }
   if (text.length < 200) { await fail("page has no readable text (likely rendered by script)"); return false; }
   const p = pick(text);
@@ -97,6 +109,7 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
 
 /** Enrich a batch of live Bengaluru sightings that have not been opened yet. Gentle: 3 at a time, per-host spacing from http(). */
 export async function enrichDue(limit = 300, concurrency = 6) {
+  resetRenderBudget();
   const { data } = await db.from("sightings").select("id, url, posted_at, salary_text, raw, employer_key").eq("blr", true).is("gone_at", null).is("enriched_at", null).not("url", "is", null).order("first_seen", { ascending: false }).limit(limit);
   // spread the batch across employers: the per-host pacing in http() then runs in parallel instead of serialising one big employer
   type Row = NonNullable<typeof data>[number];
