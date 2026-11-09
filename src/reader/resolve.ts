@@ -164,7 +164,8 @@ export async function resolveBatch(limit = 20, concurrency = 6, onDone?: (key: s
     for (;;) {
       const e = q.shift(); if (!e) return;
       try {
-        const r = await withTimeout(resolveEmployer(e), 120000, e.name);
+        // a known ref re-read is a full feed read (Accenture: 8,000 rows); give it ten minutes, a cold search two
+        const r = await withTimeout(resolveEmployer(e), e.ats && e.ats_ref && e.ats !== "none" && e.ats !== "page" ? 600000 : 120000, e.name);
         // a "none" must not overwrite a ref another pass (the Workday scan) wrote while this one was running
         let upd = db.from("employers").update({ ats: r.ats, ats_ref: r.ats_ref, careers_url: r.careers_url, website: r.website, confidence: r.confidence, evidence: r.evidence, resolved_at: new Date().toISOString(), resolve_error: null }).eq("key", e.key);
         if (r.ats === "none") upd = e.ats ? upd.eq("ats", e.ats) : upd.is("ats", null);
@@ -174,7 +175,9 @@ export async function resolveBatch(limit = 20, concurrency = 6, onDone?: (key: s
         onProgress?.(e.name, r);
       } catch (err) {
         stats.errors++; onProgress?.(e.name, null, (err as Error).message);
-        await db.from("employers").update({ resolved_at: new Date().toISOString(), ats: "none", confidence: "none", resolve_error: (err as Error).message.slice(0, 300) }).eq("key", e.key);
+        // an error never erases a ref we hold (a timeout on a big feed is not "no feed"); only a ref-less employer becomes none
+        const keep = !!(e.ats && e.ats_ref && e.ats !== "none" && e.ats !== "page");
+        await db.from("employers").update({ resolved_at: new Date().toISOString(), ...(keep ? {} : { ats: "none", confidence: "none" }), resolve_error: (err as Error).message.slice(0, 300) }).eq("key", e.key);
       }
     }
   }
