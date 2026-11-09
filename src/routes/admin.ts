@@ -22,7 +22,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|meter|diag\/radar|diag\/razorpay|reader\/(stats|status|probe|employers|sightings|experience))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|meter|diag\/radar|diag\/razorpay|reader\/(stats|status|probe|employers|sightings|experience|gone))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -113,6 +113,21 @@ on.get("/reader/stats", async (c) => {
 });
 
 /** Employers with what we decided and why; filter by system. */
+// Roles marked gone since a time, grouped by employer and system — the read-only answer to "where did the count go?"
+on.get("/reader/gone", async (c) => {
+  const since = c.req.query("since") ?? new Date(Date.now() - 6 * 3600e3).toISOString();
+  const rows: { source: string | null; employer_key: string | null; company_name: string | null; gone_at: string }[] = [];
+  for (let from = 0; from < 50000; from += 1000) {
+    const { data, error } = await db.from("sightings").select("source, employer_key, company_name, gone_at").eq("blr", true).gte("gone_at", since).order("id", { ascending: true }).range(from, from + 999);
+    if (error) return c.json({ error: error.message }, 500);
+    rows.push(...(data ?? [])); if (!data || data.length < 1000) break;
+  }
+  const by = new Map<string, { source: string; company: string; gone: number; first: string; last: string }>();
+  for (const r of rows) { const k = `${r.source}|${r.employer_key ?? r.company_name}`; const e = by.get(k) ?? { source: r.source ?? "?", company: r.company_name ?? r.employer_key ?? "?", gone: 0, first: r.gone_at, last: r.gone_at }; e.gone++; if (r.gone_at < e.first) e.first = r.gone_at; if (r.gone_at > e.last) e.last = r.gone_at; by.set(k, e); }
+  const bySource: Record<string, number> = {}; for (const r of rows) bySource[r.source ?? "?"] = (bySource[r.source ?? "?"] ?? 0) + 1;
+  return c.json({ since, total: rows.length, by_source: bySource, by_employer: [...by.values()].sort((a, b) => b.gone - a.gone).slice(0, 60) });
+});
+
 on.get("/reader/employers", async (c) => {
   let q = db.from("employers").select("name, ats, ats_ref, confidence, evidence, careers_url, openings, blr_openings, read_error, resolve_error, source").order("blr_openings", { ascending: false, nullsFirst: false }).limit(Number(c.req.query("limit") ?? 200));
   if (c.req.query("ats")) q = q.eq("ats", c.req.query("ats")!);

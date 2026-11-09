@@ -23,7 +23,9 @@ export async function recordFeed(e: Employer, feed: Feed) {
       return { jobs: feed.jobs.length, blr: 0, gone: 0, held: true };
     }
   }
-  const rows = feed.jobs.map((j) => ({
+  // a feed can list the same posting twice (two locations, two pages); one row per id, or the upsert refuses the batch
+  const seenIds = new Set<string>();
+  const rows = feed.jobs.filter((j) => { const k = String(j.id); if (seenIds.has(k)) return false; seenIds.add(k); return true; }).map((j) => ({
     source: feed.system, source_id: `${feed.ref}:${j.id}`, employer_key: e.key, company_name: feed.company_name ?? e.name,
     title: j.title.slice(0, 300), location: (j.location ?? "").slice(0, 300), url: j.url, posted_at: j.posted_at, updated_at_src: j.updated_at, posted_text: j.posted_text,
     blr: isBlr(j.location ?? ""), last_seen: now, gone_at: null,
