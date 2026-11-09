@@ -22,7 +22,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|meter|diag\/radar|reader\/(stats|status|probe|employers|sightings|experience))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|meter|diag\/radar|diag\/razorpay|reader\/(stats|status|probe|employers|sightings|experience))$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -223,6 +223,20 @@ admin.get("/unreadable", async (c) => {
 /** The last payments and plans, for checking a test or live payment end to end (no card data is ever stored). */
 /** The meter: model spend by day and by what it was for (radar:run, radar:morning, sharpen…), every process; and the
  *  accounts that cost the most in the last 30 days against the ₹600 Radar cap. Estimates at list prices; the invoice is the truth. */
+/** Read-only: can the API talk to Razorpay with the keys it holds? Lists one order (no order is created, nothing charged). */
+admin.get("/diag/razorpay", async (c) => {
+  const out: Record<string, unknown> = { key_id_set: !!env.razorpayKeyId, key_secret_set: !!env.razorpayKeySecret, webhook_secret_set: !!env.razorpayWebhookSecret, key_prefix: (env.razorpayKeyId ?? "").slice(0, 8) };
+  try {
+    const { default: Razorpay } = await import("razorpay");
+    const rz = new Razorpay({ key_id: env.razorpayKeyId, key_secret: env.razorpayKeySecret });
+    const t0 = Date.now(); const r: any = await rz.orders.all({ count: 1 });
+    out.orders_api = { ok: true, ms: Date.now() - t0, count: r?.count ?? null, latest: r?.items?.[0] ? { id: r.items[0].id, status: r.items[0].status, amount: r.items[0].amount, created_at: r.items[0].created_at } : null };
+  } catch (e: any) { out.orders_api = { ok: false, status: e?.statusCode ?? null, error: e?.error?.description ?? e?.message ?? String(e) }; }
+  const { data: last } = await db.from("payments").select("product, status, created_at, paid_at").order("created_at", { ascending: false }).limit(5);
+  out.last_payments = last ?? [];
+  return c.json(out);
+});
+
 admin.get("/meter", async (c) => {
   const days = Number(c.req.query("days") ?? 7);
   const m = await meterDays(days);
