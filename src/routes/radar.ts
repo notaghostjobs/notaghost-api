@@ -234,7 +234,9 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   let droppedBand = 0;
   const bandOf = (text: string) => (years ? statedBand(text) : null);
   const trail: NonNullable<Run["trail"]> = [];
-  const all = cands.map((s) => ({ s, text: descs.get(s.id) ?? "", fit: textFit(rw, descs.get(s.id) ?? "") }));
+  const tws = [...new Set([...a.titles, ...(resume.parsed.roles ?? []).slice(0, 3).map((r) => (r.title ?? "").replace(/[|/,(].*$/, "").trim())])].map(words).filter((w) => w.length);
+  // rank = the posting's shared vocabulary with the résumé, weighted by how well its title matches what we're searching for
+  const all = cands.map((s) => { const text = descs.get(s.id) ?? ""; const ts = titleScore(s.title ?? "", tws, a.level, true); return { s, text, fit: textFit(rw, text) * (0.5 + ts) }; });
   const ranked = all.filter((x) => {
     if (x.text.length < 200) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "no text" }); return false; }
     const b = bandOf(x.text);
@@ -244,7 +246,7 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   }).sort((x, y) => y.fit - x.fit);
   run.dropped_band = (run.dropped_band ?? 0) + droppedBand;
   const perEmp: Record<string, number> = {}; const kept: typeof ranked = [];
-  for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 12) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
+  for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 16) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
   kept.forEach((x, i) => trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: i + 1, fit: Math.round(x.fit * 100) / 100 }));
   // 2. cheap bands, in batches of twenty down the free ranking: keep going while batches still find roles in reach,
   //    stop after two empty batches in a row, or once thirty are in reach, or at the ceiling (140 on day one — seven batches; past that the profile, not the search, is the question). The spend follows the value.
@@ -370,18 +372,21 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
   try {
     await save();
     const pool = await livePool(); run.pool = pool.length;
-    const targetWords = answers.titles.map(words).filter((w) => w.length);
+    // the titles we search with: what the recruiter named, plus the résumé's own recent titles verbatim — a BU head who was
+    // a Senior Category Manager is searched as both; the market's plain "Category Manager" must never lose to "Director, Operations"
+    const ownTitles = (resume.parsed.roles ?? []).slice(0, 3).map((r) => (r.title ?? "").replace(/[|/,(].*$/, "").trim()).filter((t) => t.length > 3);
+    const titles = [...new Set([...answers.titles, ...ownTitles])];
+    const targetWords = titles.map(words).filter((w) => w.length);
     const avoid = answers.avoid.map(norm).filter(Boolean);
-    const scored = pool
-      .filter((s) => s.readable)
-      .filter((s) => !avoid.some((a) => norm(s.company_name ?? "").includes(a) || norm(s.title).includes(a)))
-      .map((s) => ({ s, sc: titleScore(s.title ?? "", targetWords, answers.level, answers.stretch) }))
-      .filter((x) => x.sc > 0.3)
-      .sort((a, b) => b.sc - a.sc);
-    // at most 6 per employer in the long list, so one big feed does not crowd the rest out
-    const perEmp: Record<string, number> = {}; const longList: Sighting[] = [];
-    // twenty per employer at the title stage (was eight — that cap alone hid nine of Amazon's fifteen category roles on 9 Nov)
-    for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 20) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 420) break; }
+    const eligible = pool.filter((s) => s.readable).filter((s) => !avoid.some((a) => norm(s.company_name ?? "").includes(a) || norm(s.title).includes(a)));
+    // every title gets its own share of the long list: the best sixty live roles for each, then the union (9 Nov — one shared
+    // list ranked by word overlap let "Director, Business Operations" crowd out every "Category Manager")
+    const longList: Sighting[] = []; const seenIds = new Set<number>();
+    for (const tw of targetWords) {
+      const mine = eligible.map((s) => ({ s, sc: titleScore(s.title ?? "", [tw], answers.level, answers.stretch) })).filter((x) => x.sc > 0.3).sort((a, b) => b.sc - a.sc || Date.parse(b.s.first_seen) - Date.parse(a.s.first_seen));
+      const perEmp: Record<string, number> = {}; let n = 0;
+      for (const { s } of mine) { if (seenIds.has(s.id)) continue; const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 20) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; seenIds.add(s.id); longList.push(s); if (++n >= 60) break; }
+    }
     run.by_title = longList.length; run.status = "picking"; run.dropped_band = 0; await save();
     if (!longList.length) { run.status = "done"; run.finished = new Date().toISOString(); await save(); return; }
     run.status = "scoring"; run.picked = 0; await save();
@@ -445,7 +450,8 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
     // 2. what came in since the last run (two hours of slack for the reader's own timing), never seen by the picker before
     const since = Date.parse(run.refreshed ?? run.finished ?? run.started) - 2 * 3600e3;
     const seen = new Set([...(run.seen ?? []), ...run.items.map((i) => i.sighting_id)]);
-    const targetWords = run.answers.titles.map(words).filter((w) => w.length);
+    const ownTitles = (resume.parsed.roles ?? []).slice(0, 3).map((r) => (r.title ?? "").replace(/[|/,(].*$/, "").trim()).filter((t) => t.length > 3);
+    const targetWords = [...new Set([...run.answers.titles, ...ownTitles])].map(words).filter((w) => w.length);
     const avoid = run.answers.avoid.map(norm).filter(Boolean);
     const scored = pool
       .filter((s) => s.readable && !seen.has(s.id) && Date.parse(s.first_seen) >= since)
