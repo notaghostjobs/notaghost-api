@@ -32,6 +32,11 @@ export function atsLinksIn(html: string): string[] {
     /https?:\/\/[a-z0-9-]+\.pinpointhq\.com\/?[a-z0-9_\-/]*/gi,
     /https?:\/\/ats\.rippling\.com\/[a-z0-9-]+\/jobs[a-z0-9_\-/]*/gi,
     /https?:\/\/apply\.workable\.com\/[a-z0-9-]+\/?/gi,
+    /https?:\/\/[a-z0-9-]+\.peoplestrong\.com\/?[a-z0-9_\-/]*/gi,
+    /https?:\/\/[a-z0-9-]+\.njoyn\.com\/[a-z0-9_-]+\/xweb\/xweb\.asp\?[^"'\s<>]*/gi,
+    /https?:\/\/[a-z0-9.-]*zinghr\.com\/[^"'\s<>]*careerClientKey=[A-Za-z0-9-]+/gi,
+    /https?:\/\/io\.spire2grow\.com\/ies\/v1\/p\/[^"'\s<>]*/gi,
+    /https?:\/\/[a-z0-9-]+\.mynexthire\.com\/employer\/[a-z0-9_\-/]*/gi,
   ];
   for (const p of pats) for (const m of html.matchAll(p)) out.add(m[0].replace(/[.,;)]+$/, ""));
   return [...out];

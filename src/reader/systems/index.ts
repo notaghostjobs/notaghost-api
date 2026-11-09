@@ -5,9 +5,10 @@ import { successfactors } from "./successfactors.js";
 import { RENDERED } from "./rendered.js";
 import { PORTALS } from "./portals.js";
 import { SMALL } from "./small.js";
+import { INDIA } from "./india.js";
 import type { System } from "./types.js";
 
-export const SYSTEMS: System[] = [...ATS, ...BIG.filter((b) => b.id !== "microsoft"), ...PORTALS, successfactors, ...RENDERED, keka, darwinbox, ...SMALL];
+export const SYSTEMS: System[] = [...ATS, ...BIG.filter((b) => b.id !== "microsoft"), ...PORTALS, successfactors, ...RENDERED, keka, darwinbox, ...SMALL, ...INDIA];
 export const byId = (id: string): System | undefined => (id === "page" ? page : SYSTEMS.find((s) => s.id === id));
 
 /** Which system does this URL belong to, and what ref would we read? */

@@ -3,8 +3,15 @@
 // (step 0, "known ref re-read"); this file only tells it where to look. `names` are the spellings in our employer table.
 export interface KnownRef { names: string[]; ats: string; ref: string; blr: number; force?: boolean }   // force: replace a feed we already read (this one is the bigger board)
 /** Bump when entries are added; the worker applies the file once per version. */
-export const KNOWN_VERSION = 4;
+export const KNOWN_VERSION = 5;
 export const KNOWN: KnownRef[] = [
+  // v5: Indian ATSs (PeopleStrong, Njoyn, spire2grow, mynexthire)
+  { names: ["Larsen & Toubro", "L&T", "Larsen & Toubro (L&T)", "L&T Construction", "Larsen and Toubro"], ats: "peoplestrong", ref: "larsentoubrocareers.peoplestrong.com", blr: 137 },
+  { names: ["CGI", "CGI Inc", "CGI Information Systems"], ats: "njoyn", ref: "cgi.njoyn.com|corp|21001", blr: 84 },
+  { names: ["Myntra", "Myntra Designs"], ats: "spire2grow", ref: "MYNTRA-93as3|jobs.myntra.com", blr: 49, force: true },
+  { names: ["Licious", "Delightful Gourmet (Licious)"], ats: "mynexthire", ref: "licious", blr: 27 },
+  { names: ["Aditya Birla Fashion and Retail", "ABFRL", "Aditya Birla Fashion & Retail (ABFRL)"], ats: "peoplestrong", ref: "abfrlcareers.peoplestrong.com", blr: 10 },
+  { names: ["Sobha", "Sobha Limited", "Sobha Realty"], ats: "peoplestrong", ref: "sobhalimited-careers.peoplestrong.com", blr: 5 },
   // v4: SuccessFactors "Unify" sites read from their sitemaps
   { names: ["TE Connectivity", "TE Connectivity India"], ats: "successfactors", ref: "https://careers.te.com", blr: 161 },
   { names: ["Standard Chartered", "Standard Chartered Bank", "Standard Chartered GBS", "Standard Chartered Global Business Services"], ats: "successfactors", ref: "https://jobs.standardchartered.com", blr: 80 },
