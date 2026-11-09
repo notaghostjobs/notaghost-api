@@ -29,7 +29,7 @@ type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "question
   pool: number; by_title: number; picked: number; scored: number; items: Item[]; error?: string; cost_calls: number;
   questions?: Gap[];            // (legacy) the missing must-haves that repeat across the picked roles
   pq?: ProfileQ[];              // the Radar questions: career-level facts, asked once
-  shots?: number; within_reach?: number; threshold: number;
+  shots?: number; within_reach?: number; almost?: number; gap?: number; threshold: number;
   refreshed?: string;           // the last morning re-run
   seen?: number[];              // sightings already put to the model (picked or passed over), so a morning never re-asks
   gone?: { sighting_id: number; title: string; company: string; gone_at: string; promised?: number }[];   // roles that went quiet after they were on the list
@@ -40,7 +40,7 @@ type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "question
   trail?: { id: number; title: string; company: string; rank: number; fit: number; band?: number; why?: string; chosen?: boolean; dropped?: string }[];   // the audit trail of the last pass
   examined?: number };   // what this account has cost us, from the meter
 /** A real shot: sharpened ≥ 75 (decided 7 Nov). Under 50 is never shown. */
-const SHOT = 75, REACH = 50;
+const SHOT = 75, ALMOST = 60, REACH = 50;   // the three tiers (9 Nov): apply right now · almost there · let's close the gap
 
 const LEVEL_WORDS: Record<Targets["level"], RegExp> = {
   ic: /\b(associate|analyst|executive|specialist|engineer|developer|designer|coordinator|consultant|officer|intern|trainee|junior|ii|iii)\b/i,
@@ -373,6 +373,8 @@ function summarise(it: Item, matches: Match[]) {
 function tally(run: Run) {
   run.shots = run.items.filter((i) => (i.promised ?? 0) >= SHOT).length;
   run.within_reach = run.items.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < SHOT).length;
+  run.almost = run.items.filter((i) => (i.promised ?? 0) >= ALMOST && (i.promised ?? 0) < SHOT).length;
+  run.gap = run.items.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < ALMOST).length;
 }
 /** A Radar question (9 Nov): a career-level fact about the person — a tool, years in a function, the scale they ran, a
  *  domain, a credential — never one job at one company, never a soft skill, never something the résumé already states.
@@ -569,7 +571,7 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
     for (const it of run.items) if (it.new_at && it.new_at !== now && Date.now() - Date.parse(it.new_at) > 36 * 3600e3) delete it.new_at;
     run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
     tally(run);
-    const new_shots = added.filter((i) => (i.promised ?? 0) >= SHOT).length;
+    const new_shots = added.filter((i) => (i.promised ?? 0) >= REACH).length;   // new in any tier (9 Nov: the list is three tiers now)
     run.refreshed = now; run.today = { new: new_shots, gone: gone.length, at: now };
     await kv.set(key, run);
     return { new_shots, new_scored: added.filter((i) => typeof i.now === "number").length, gone: gone.length, shots: run.shots ?? 0 };
@@ -607,6 +609,8 @@ radar.post("/test/reset", async (c) => {
   if (running.has(u.id)) return c.json({ error: "A run is in progress; wait for it to finish." }, 409);
   for (const pat of [`radar:run:${u.id}`, `radar:unlock:${u.id}`, `told:${u.id}`]) await db.from("reader_control").delete().eq("key", pat);
   for (const pat of [`radar:m:${u.id}:%`, `radar:targets:${u.id}:%`]) await db.from("reader_control").delete().like("key", pat);
+  // ?all=1: the résumé is set aside as well (not deleted — Sharpen's history keeps it), so the next visit uploads fresh
+  if (c.req.query("all") === "1") await db.from("resumes").update({ is_current: false }).eq("user_id", u.id).eq("is_current", true);
   return c.json({ ok: true });
 });
 
@@ -759,11 +763,15 @@ radar.get("/test/result", async (c) => {
   const unlocked = (await hasRadar(u.id)) || !!(await kv.get(`radar:unlock:${u.id}`));
   const scored = run.items.filter((i) => typeof i.now === "number");
   const shots = scored.filter((i) => (i.promised ?? 0) >= SHOT);
+  const almost = scored.filter((i) => (i.promised ?? 0) >= ALMOST && (i.promised ?? 0) < SHOT);
+  const gap = scored.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < ALMOST);
+  const chance = [...shots, ...almost, ...gap];
   const since = Date.now() - 86400e3;
-  const oldest = shots.reduce((m, i) => Math.max(m, (Date.now() - Date.parse(i.first_seen)) / 86400e3), 0);
-  const reveal = { by_title: run.by_title ?? 0, examined: run.examined ?? run.picked ?? 0, shots: shots.length, opened_today: shots.filter((i) => Date.parse(i.first_seen) >= since).length, within_reach: scored.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < SHOT).length, oldest_days: Math.round(oldest),
-    // the taste: the employer and the shot, the role hidden
-    taste: shots.slice(0, 3).map((i) => ({ company: i.company, location: i.location, now: i.now, promised: i.promised, first_seen: i.first_seen, posted_at: i.posted_at })) };
+  const oldest = chance.reduce((m, i) => Math.max(m, (Date.now() - Date.parse(i.first_seen)) / 86400e3), 0);
+  const reveal = { by_title: run.by_title ?? 0, examined: run.examined ?? run.picked ?? 0, shots: shots.length, almost: almost.length, gap: gap.length, chance: chance.length,
+    opened_today: chance.filter((i) => Date.parse(i.first_seen) >= since).length, within_reach: almost.length + gap.length, oldest_days: Math.round(oldest),
+    // the taste: the employer and the two numbers, the role hidden — the best three across the tiers
+    taste: chance.slice(0, 3).map((i) => ({ company: i.company, location: i.location, now: i.now, promised: i.promised, first_seen: i.first_seen, posted_at: i.posted_at })) };
   const my = (title: string) => titleScore(title, run.answers.titles.map(words), run.answers.level, true) >= 0.5;
   const mine = run.status === "done" ? await pulse(my).catch(() => null) : null;
   if (!isTester(u)) { delete (run as any).spend; delete (run as any).trail; }   // ours to see, not the customer's
