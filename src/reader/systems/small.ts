@@ -165,4 +165,42 @@ export const icimsAttract: System = {
   },
 };
 
-SMALL.push(ripplehire, capgemini, icimsAttract);
+
+/** beesite (Deutsche Bank, Mercedes-Benz): GET /search/?data={json}, 100 a page, every job with its cities; the city
+ *  criterion is ignored by the server, so the whole board is paged and Bengaluru kept. ref: the API host. */
+export const beesite: System = {
+  id: "beesite",
+  detect: (u) => { const m = u.match(/^https?:\/\/([a-z0-9.-]*beesite\.de|jobs\.api\.mercedes-benz\.com)\//i); return m ? m[1].toLowerCase() : null; },
+  async read(host) {
+    const jobs: FeedJob[] = []; const seen = new Set<string>(); const diag: string[] = []; let total = 0; void total;
+    const jobUrl = (uri: string, id: string) => /^https?:/i.test(uri) ? uri : host.includes("deutschebank") ? `https://careers.db.com/professionals/search-roles/#/professional/job/${id}` : `https://${host}${uri}`;
+    // the full-text criterion is the one filter the server honours; the city criterion is ignored. Rows are still checked by
+    // their own location, since the text also matches a Pune posting that mentions Bangalore. No hit at all → page the board.
+    const page = async (criteria: unknown[], label: string) => {
+      let got = 0, kept = 0, all = 0;
+      for (let first = 1; first <= 6000; first += 100) {
+        const data = { LanguageCode: "EN", SearchParameters: { FirstItem: first, CountItem: 100, Sort: [{ Criterion: "PublicationStartDate", Direction: "DESC" }], MatchedObjectDescriptor: ["ID", "PositionTitle", "PositionURI", "PositionLocation.CityName", "PositionLocation.CountryName", "PublicationStartDate", "PositionID"] }, SearchCriteria: criteria };
+        const r = await getJson<any>(`https://${host}/search/?data=${encodeURIComponent(JSON.stringify(data))}`, { headers: H, gapMs: 900, timeoutMs: 25000 });
+        if (!r.ok || !r.data?.SearchResult) { if (first === 1 && label === "Bengaluru") { if (r.status === 404) return null; throw new Error(`beesite ${host}: HTTP ${r.status}`); } diag.push(`${label}@${first} HTTP ${r.status}`); break; }
+        const sr = r.data.SearchResult; all = Number(sr.SearchResultCountAll ?? 0); const items: any[] = sr.SearchResultItems ?? []; got += items.length;
+        for (const it of items) {
+          const d = it.MatchedObjectDescriptor ?? {}; const id = String(d.PositionID ?? d.ID ?? ""); if (!id || seen.has(id)) continue;
+          const locs: any[] = Array.isArray(d.PositionLocation) ? d.PositionLocation : [];
+          const location = locs.map((l) => [l.CityName, l.CountryName].filter(Boolean).join(", ")).join(" · ");
+          if (criteria.length && !/bengaluru|bangalore|karnataka/i.test(location)) continue;
+          seen.add(id); kept++;
+          jobs.push({ id, title: String(d.PositionTitle ?? ""), location, url: jobUrl(String(d.PositionURI ?? ""), id), posted_at: iso(d.PublicationStartDate), updated_at: null, posted_text: null });
+        }
+        if (!items.length || got >= all) break;
+      }
+      diag.push(`${label}: ${all} matched, ${kept} in Bengaluru`); total = Math.max(total, all);
+      return all;
+    };
+    let any = 0;
+    for (const term of ["Bengaluru", "Bangalore"]) { const n = await page([{ CriterionName: "PositionFormattedDescription.Content", CriterionValue: term }], term); if (n === null) return null; any += n; }
+    if (!any) await page([], "whole board");
+    return { system: "beesite", ref: host, board_url: host.includes("deutschebank") ? "https://careers.db.com/professionals/search-roles/" : `https://${host.replace(/^jobs\.api\./, "jobs.")}/`, company_name: null, jobs, debug: diag.join("; ") };
+  },
+};
+
+SMALL.push(ripplehire, capgemini, icimsAttract, beesite);

@@ -8,6 +8,8 @@ export const KNOWN: KnownRef[] = [
   // v4: SuccessFactors "Unify" sites read from their sitemaps
   { names: ["TE Connectivity", "TE Connectivity India"], ats: "successfactors", ref: "https://careers.te.com", blr: 161 },
   { names: ["Standard Chartered", "Standard Chartered Bank", "Standard Chartered GBS", "Standard Chartered Global Business Services"], ats: "successfactors", ref: "https://jobs.standardchartered.com", blr: 80 },
+  { names: ["Deutsche Bank", "Deutsche Bank India", "Deutsche Bank Technology Centre", "Deutsche India"], ats: "beesite", ref: "api-deutschebank.beesite.de", blr: 52 },
+  { names: ["Mercedes-Benz Research and Development India", "Mercedes-Benz R&D India", "Mercedes-Benz", "MBRDI"], ats: "beesite", ref: "jobs.api.mercedes-benz.com", blr: 58 },
   // v3 (9 Nov, afternoon recon of the biggest unread Bengaluru employers; each verified with the real reader)
   { names: ["Tata Capital"], ats: "oracle", ref: "eofh.fa.em2.oraclecloud.com/CX_1", blr: 244 },
   { names: ["Marriott", "Marriott International"], ats: "oracle", ref: "ejwl.fa.us2.oraclecloud.com/CX", blr: 202 },
