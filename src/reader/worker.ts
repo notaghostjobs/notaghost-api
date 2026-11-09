@@ -267,6 +267,11 @@ async function setPriorities() {
     const { data, error } = await db.from("employers").update({ resolved_at: null, resolve_error: null }).in("ats", ["none", "page"]).lte("priority", 1).select("key");
     log("reresolve none/page", error ? error.message : `${data?.length ?? 0} employers queued`);
   });
+  // 9 Nov, night: every employer we gave up on, back through the resolver now that it knows the Indian and small systems.
+  await onceOnly("reresolve-none-full-v1", async () => {
+    const { data, error } = await db.from("employers").update({ resolved_at: null, resolve_error: null }).eq("ats", "none").select("key");
+    log("reresolve none (full detector set)", error ? error.message : `${data?.length ?? 0} employers queued`);
+  });
   await onceOnly("enrich-retry-workday-v1", async () => { const { error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).eq("source", "workday").is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null); if (error) log("enrich retry", error.message); });
 }
 
