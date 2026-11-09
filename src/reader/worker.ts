@@ -282,8 +282,12 @@ async function runWorkdayScan() {
     const { data } = await db.from("employers").select("key, name, priority").in("ats", ["none", "page"]).order("priority", { ascending: false }).order("created_at", { ascending: false }).range(from, from + 999);
     q.push(...((data ?? []) as any[])); if (!data || data.length < 1000) break;
   }
-  const total = q.length; let done = 0, found = 0; const t0 = Date.now();
-  log("wdscan", `${total} employers to try`);
+  // resume after a restart: the last key finished is kept in reader_control, so a deploy mid-pass does not start over
+  const prev = await getControl<{ cursor?: string; done?: number; found?: number }>("wdscan");
+  let done = prev?.done ?? 0, found = prev?.found ?? 0;
+  if (prev?.cursor) { const i = q.findIndex((e) => e.key === prev.cursor); if (i >= 0) q.splice(0, i + 1); }
+  const total = q.length + done; const t0 = Date.now();
+  log("wdscan", `${q.length} employers to try (${done} done before this boot)`);
   const worker = async () => {
     for (;;) {
       const e = q.shift(); if (!e) return;
@@ -292,7 +296,7 @@ async function runWorkdayScan() {
         if (d) { found++; await db.from("employers").update({ ats: "workday", ats_ref: d.ref, priority: 1, resolved_at: null, resolve_error: null, confidence: null, evidence: `workday tenant "${d.tenant}" on ${d.wd} by name; ${d.ref.split("/")[2]} has ${d.blr} Bengaluru roles of ${d.total}` }).eq("key", e.key); log("wdscan", `${e.name} → ${d.ref} (${d.blr} Bengaluru)`); }
       } catch (err) { log("wdscan", e.name, (err as Error).message); }
       done++;
-      if (done % 25 === 0) await setControl("wdscan", { done, total, found, minutes: Math.round((Date.now() - t0) / 60000) });
+      if (done % 10 === 0) await setControl("wdscan", { cursor: e.key, done, total, found, minutes: Math.round((Date.now() - t0) / 60000) });
     }
   };
   await Promise.all(Array.from({ length: 6 }, worker));
