@@ -36,6 +36,7 @@ type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "question
   spend?: { run_paise: number; total_paise: number; capped?: boolean };
   triaged?: number;             // how far down the free ranking the cheap pass went before it stopped finding anything
   dropped_band?: number;        // roles whose years band ruled the person out before any model saw them
+  trail?: { id: number; title: string; company: string; rank: number; fit: number; band?: number; why?: string; chosen?: boolean; dropped?: string }[];   // the audit trail of the last pass
   examined?: number };   // what this account has cost us, from the meter
 /** A real shot: sharpened ≥ 75 (decided 7 Nov). Under 50 is never shown. */
 const SHOT = 75, REACH = 50;
@@ -211,7 +212,7 @@ async function descriptionsFor(ids: number[]): Promise<Map<number, string>> {
 /** Stage 2: a calibrated guess per posting from the posting's text, résumé pinned. ~₹0.25 a role. */
 async function triage(resume: ResumeProfile, t: Targets, a: Answers, batch: { s: Sighting; text: string }[]): Promise<Map<number, { band: number; why: string }>> {
   const r = await json<{ bands: { id: number; band: number; why: string }[] }>(
-    `You are a fair Bengaluru recruiter doing a first screen. For EACH numbered posting, estimate the score (0-100) this candidate's CURRENT résumé would get from a fair screener reading it against the posting's requirements. Calibration: 75+ = would be shortlisted today; 55-74 = close, a few requirements the résumé names but does not show; under 40 = different function, wrong level, or core must-haves absent. Judge function and level honestly, both ways: a category manager is not a software engineer; a 'head of' role is not for a 5-year IC; and a 2-5 year posting is not a shortlist for a 10-year leader — being far over the band is a mismatch, score it under 40. One short reason each (≤10 words).`,
+    `You are a fair Bengaluru recruiter doing a first screen. For EACH numbered posting, estimate the score (0-100) this candidate's CURRENT résumé would get from a fair screener reading it against the posting's requirements. Calibration — the score is the share of the posting's requirements the résumé evidences today, must-haves counting double: 75+ = nearly every must-have is evidenced on the résumé as written; 55-74 = most must-haves evidenced, a few named but not shown; 40-54 = the function fits but several must-haves are absent from the résumé; under 40 = different function, wrong level, or most must-haves absent. Be strict: a résumé that never mentions the posting's domain does not score above 40 however senior the person is. Judge function and level honestly, both ways: a category manager is not a software engineer; a 'head of' role is not for a 5-year IC; and a 2-5 year posting is not a shortlist for a 10-year leader — being far over the band is a mismatch, score it under 40. One short reason each (≤10 words).`,
     `Candidate in one line: ${t.one_line}\nYears: ${t.years}. Level: ${a.level}${a.stretch ? " (open to one step up)" : ""}. Functions: ${t.functions.join("; ")}.\n\nPOSTINGS:\n${batch.map((b, i) => `#${i + 1} (id ${b.s.id}) ${b.s.title} — ${b.s.company_name ?? ""}\n${b.text.replace(/\s+/g, " ").slice(0, 2200)}`).join("\n\n")}\n\nReturn: {bands:[{id, band, why}]} — one entry per posting, by id.`,
     1500, MODEL, undefined, `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}`
   );
@@ -219,9 +220,9 @@ async function triage(resume: ResumeProfile, t: Targets, a: Answers, batch: { s:
   for (const b of r.bands ?? []) { const id = Number(b.id); if (batch.some((x) => x.s.id === id)) out.set(id, { band: Math.max(0, Math.min(100, Number(b.band) || 0)), why: String(b.why ?? "").slice(0, 120) }); }
   return out;
 }
-const TRIAGE_IN = 50;      // stage 3 only for bands at or above this (Sharpen lifts ~15-20; 75 is the bar)
+const TRIAGE_IN = 45;      // stage 3 only for bands at or above this (Sharpen lifts ~15-20; 75 is the bar)
 /** Stages 1b → 2 → 3 over a candidate set. Returns the scored items (stage 3) and the triaged-out ones (band only). */
-async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfile }, t: Targets, a: Answers, cands: Sighting[], opt: { stage1Keep: number; stage3Cap: number; enough?: number; ceiling?: number; bank: Awaited<ReturnType<typeof recallAnswers>>; onProgress?: (scored: number) => Promise<void> | void; onChosen?: (items: Item[]) => Promise<void> | void; mark?: string; run: Run }) {
+async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfile }, t: Targets, a: Answers, cands: Sighting[], opt: { stage1Keep: number; stage3Cap: number; enough?: number; ceiling?: number; earlyQuestions?: boolean; bank: Awaited<ReturnType<typeof recallAnswers>>; onProgress?: (scored: number) => Promise<void> | void; onChosen?: (items: Item[]) => Promise<void> | void; mark?: string; run: Run }) {
   const { run } = opt;
   // 1b. free ranking on the posting's own words
   const rw = resumeWords(resume.parsed);
@@ -231,11 +232,20 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   // band's floor is not a shot either. Read from the posting's text with the experience parser; free.
   const years = Number(resume.parsed.years_total ?? t.years ?? 0);
   let droppedBand = 0;
-  const inBand = (text: string) => { if (!years) return true; const b = statedBand(text); if (!b) return true; if (b.max !== null && years >= b.max + 4) return false; if (years + 2 <= b.min) return false; return true; };
-  const ranked = cands.map((s) => ({ s, text: descs.get(s.id) ?? "", fit: textFit(rw, descs.get(s.id) ?? "") })).filter((x) => x.text.length >= 200).filter((x) => { const ok = inBand(x.text); if (!ok) droppedBand++; return ok; }).sort((x, y) => y.fit - x.fit);
+  const bandOf = (text: string) => (years ? statedBand(text) : null);
+  const trail: NonNullable<Run["trail"]> = [];
+  const all = cands.map((s) => ({ s, text: descs.get(s.id) ?? "", fit: textFit(rw, descs.get(s.id) ?? "") }));
+  const ranked = all.filter((x) => {
+    if (x.text.length < 200) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "no text" }); return false; }
+    const b = bandOf(x.text);
+    if (b && b.max !== null && years >= b.max + 4) { droppedBand++; trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: `band ${b.min}-${b.max}, you ${years}` }); return false; }
+    if (b && years + 2 <= b.min) { droppedBand++; trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: `band ${b.min}+, you ${years}` }); return false; }
+    return true;
+  }).sort((x, y) => y.fit - x.fit);
   run.dropped_band = (run.dropped_band ?? 0) + droppedBand;
   const perEmp: Record<string, number> = {}; const kept: typeof ranked = [];
-  for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 6) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
+  for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 12) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
+  kept.forEach((x, i) => trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: i + 1, fit: Math.round(x.fit * 100) / 100 }));
   // 2. cheap bands, in batches of twenty down the free ranking: keep going while batches still find roles in reach,
   //    stop after two empty batches in a row, or once thirty are in reach, or at the ceiling (140 on day one — seven batches; past that the profile, not the search, is the question). The spend follows the value.
   const bands = new Map<number, { band: number; why: string }>();
@@ -251,10 +261,14 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
     run.triaged = at; await opt.onProgress?.(0);
   }
   const kept2 = examined;
+  for (const tr of trail) { const b = bands.get(tr.id); if (b) { tr.band = b.band; tr.why = b.why; } }
   // 3. the expert check on the ones in reach, best first, capped; at most 4 per employer
   const inReach = kept2.filter((x) => (bands.get(x.s.id)?.band ?? 0) >= TRIAGE_IN).sort((x, y) => (bands.get(y.s.id)!.band - bands.get(x.s.id)!.band));
   const per3: Record<string, number> = {}; const chosen: typeof kept = [];
-  for (const x of inReach) { const k = x.s.company_name ?? "?"; if ((per3[k] ?? 0) >= 4) continue; per3[k] = (per3[k] ?? 0) + 1; chosen.push(x); if (chosen.length >= opt.stage3Cap) break; }
+  // at most six per employer through the full check: Amazon alone is a quarter of the city, and for some profiles Amazon is the market
+  for (const x of inReach) { const k = x.s.company_name ?? "?"; if ((per3[k] ?? 0) >= 6) continue; per3[k] = (per3[k] ?? 0) + 1; chosen.push(x); if (chosen.length >= opt.stage3Cap) break; }
+  for (const x of chosen) { const tr = trail.find((t) => t.id === x.s.id); if (tr) tr.chosen = true; }
+  run.trail = trail.sort((a, b) => (a.rank < 0 ? 1e6 : a.rank) - (b.rank < 0 ? 1e6 : b.rank));
   const items: Item[] = chosen.map(({ s }) => ({ sighting_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "", url: s.url, posted_at: s.posted_at, first_seen: s.first_seen, why: bands.get(s.id)?.why ?? "", tri: bands.get(s.id)?.band, ...(opt.mark ? { new_at: opt.mark } : {}) }));
   if (opt.onChosen) await opt.onChosen(items);
   let i = 0, done = 0;
@@ -269,7 +283,9 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
         await kv.set(`radar:m:${user.id}:${it.sighting_id}`, { matches });
         summarise(it, matches);
       } catch (e) { it.error = (e as Error).message.slice(0, 120); }
-      done++; if (opt.onProgress && done % 3 === 0) await opt.onProgress(done);
+      done++;
+      if (opt.earlyQuestions && !run.questions?.length && done >= 4 && !(run as any)._qTried) { (run as any)._qTried = true; try { run.questions = await commonQuestions(user.id, items.filter((x) => typeof x.now === "number")); run.cost_calls++; } catch {} }
+      if (opt.onProgress && done % 3 === 0) await opt.onProgress(done);
     }
   };
   await Promise.all(Array.from({ length: 6 }, worker));
@@ -364,13 +380,14 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
       .sort((a, b) => b.sc - a.sc);
     // at most 6 per employer in the long list, so one big feed does not crowd the rest out
     const perEmp: Record<string, number> = {}; const longList: Sighting[] = [];
-    for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 8) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 420) break; }
+    // twenty per employer at the title stage (was eight — that cap alone hid nine of Amazon's fifteen category roles on 9 Nov)
+    for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 20) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 420) break; }
     run.by_title = longList.length; run.status = "picking"; run.dropped_band = 0; await save();
     if (!longList.length) { run.status = "done"; run.finished = new Date().toISOString(); await save(); return; }
     run.status = "scoring"; run.picked = 0; await save();
     const planSince = run.started;
     const { paise } = await charge(user.id, planSince, "radar:run", async () => {
-      const r = await stagedScore(user, resume, targets, answers, longList, { stage1Keep: 420, stage3Cap: 25, enough: 30, ceiling: 140, bank, run,
+      const r = await stagedScore(user, resume, targets, answers, longList, { stage1Keep: 420, stage3Cap: 25, enough: 30, ceiling: 140, earlyQuestions: true, bank, run,
         onChosen: async (items) => { run.items = items; run.picked = items.length; await save(); },
         onProgress: async (n) => { run.scored = n; await save(); } });
       run.picked = r.items.length; run.items = r.items; run.scored = r.items.length; run.examined = r.examined;
@@ -437,7 +454,7 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
       .filter((x) => x.sc > 0.3)
       .sort((a, b) => b.sc - a.sc);
     const perEmp: Record<string, number> = {}; const longList: Sighting[] = [];
-    for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 6) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 240) break; }
+    for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 12) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 240) break; }
     let added: Item[] = []; let morningPaise = 0;
     const total = await spent30(userId); const capped = total >= CAP_PAISE;
     if (longList.length) {
@@ -604,11 +621,12 @@ radar.get("/test/prequestions", async (c) => {
   if (!resume) return c.json({ error: "no_resume" }, 404);
   const tkey = `radar:targets:${u.id}:${resume.id}`;
   let t = await kv.get<Targets>(tkey); if (!t) { t = await withMeter({ tag: "radar:targets", user: u.id }, () => deriveTargets(resume.parsed)); await kv.set(tkey, t); }
-  const { questions, from } = await preQuestions(u.id, t);
+  let { questions, from } = await preQuestions(u.id, t);
+  const runNow = await kv.get<Run>(runKey(u.id));
+  if (!questions.length && runNow?.questions?.length) { questions = runNow.questions; from = -1; }
   const bank = await recallAnswers(u.id).catch(() => []);
   const marked = questions.map((q) => { const r = bank.find((x) => sameRequirement(x.requirement, q.requirement)); return r ? { ...q, told: { text: r.fact, line: r.line, remembered: true } } : q; });
-  const run = await kv.get<Run>(runKey(u.id));
-  return c.json({ questions: marked, from, run_status: run?.status ?? "none" });
+  return c.json({ questions: marked, from, run_status: runNow?.status ?? "none" });
 });
 /** One answer, given before (or after) the list exists: remembered on the account, applied to every scored role that asks,
  *  now and every morning after. */
@@ -649,7 +667,8 @@ radar.get("/test/result", async (c) => {
     taste: shots.slice(0, 3).map((i) => ({ company: i.company, location: i.location, now: i.now, promised: i.promised, first_seen: i.first_seen, posted_at: i.posted_at })) };
   const my = (title: string) => titleScore(title, run.answers.titles.map(words), run.answers.level, true) >= 0.5;
   const mine = run.status === "done" ? await pulse(my).catch(() => null) : null;
-  if (!isTester(u)) delete (run as any).spend;   // what a run cost us is ours to see, not the customer's
+  if (!isTester(u)) { delete (run as any).spend; delete (run as any).trail; }   // ours to see, not the customer's
+  delete (run as any)._qTried;
   if (unlocked) return c.json({ ...run, unlocked: true, reveal, pulse: mine });
   // locked: counts and the taste, no titles, no links, no facts
   return c.json({ ...run, unlocked: false, reveal, pulse: mine, items: run.items.map((i) => ({ sighting_id: i.sighting_id, company: i.company, now: i.now, promised: i.promised, first_seen: i.first_seen, error: i.error })), questions: [] });
