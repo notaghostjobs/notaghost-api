@@ -27,8 +27,11 @@ async function status(doing: string, extra: Record<string, unknown> = {}) { busy
 
 /** Prove each reader against an employer we know uses that system. Stored for the admin page. */
 async function selfTest() {
-  const probes: [string, string][] = [["greenhouse", "razorpaysoftwareprivatelimited"], ["lever", "spotify"], ["ashby", "ashby"], ["smartrecruiters", "BoschGroup"],
-    ["successfactors", "https://careers.hcltech.com"], ["successfactors", "https://careers.wipro.com"], ["google", "google"], ["goldman", "goldman"], ["ibm", "ibm"], ["microsoft", "microsoft"], ["oracle", "jpmc.fa.oraclecloud.com/CX_1001"], ["workday", "adobe/wd5/external_experienced"], ["workday", "walmart/wd5/WalmartExternal"], ["workday", "infosys/wd103/InfosysCareers"], ["workday", "wipro/wd3/Wipro_Careers"], ["workday", "nvidia/wd5/NVIDIAExternalCareerSite"], ["workday", "salesforce/wd12/External_Career_Site"]];
+  const probes: [string, string][] = [["greenhouse", "razorpaysoftwareprivatelimited"], ["lever", "meesho"], ["ashby", "ashby"], ["smartrecruiters", "BoschGroup"], ["smartrecruiters", "PHONEPELIMITED"],
+    ["successfactors", "https://careers.wipro.com"], ["successfactors", "https://jobs.birlasoft.com"], ["ibm", "ibm"], ["microsoft", "microsoft"], ["oracle", "jpmc.fa.oraclecloud.com/CX_1001"], ["oracle", "eofh.fa.em2.oraclecloud.com/CX_1"],
+    ["workday", "adobe/wd5/external_experienced"], ["workday", "nvidia/wd5/NVIDIAExternalCareerSite"], ["workday", "salesforce/wd12/External_Career_Site"], ["phenom", "careers.titan.in"], ["eightfold", "jobs.infineon.com|infineon.com"],
+    ["capgemini", "capgemini"], ["ripplehire", "mphasis.ripplehire.com|ty4DfyWddnOrtpclQeia"], ["icims-attract", "careers.amd.com"], ["beesite", "api-deutschebank.beesite.de"], ["amazon", "amazon"]];
+  // dropped 9 Nov: Google (careers results now disallowed by robots.txt), Goldman (list page disallowed), HCLTech (job pages render only through a disallowed endpoint), Walmart/Wipro/Infosys Workday tenants (gone)
   const out: Record<string, unknown>[] = [];
   mode.quick = true; // a few pages per reader: enough to prove it reads, not the whole board
   try { for (const [sys, ref] of probes) {
