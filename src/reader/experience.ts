@@ -43,6 +43,22 @@ export function statedYears(text: string): number | null {
   return null;
 }
 
+/** The years band a posting asks for — {min, max} with max null when it says "5+" — or null when it never says.
+ *  Same anchoring and boilerplate rules as statedYears. */
+export function statedBand(text: string): { min: number; max: number | null } | null {
+  const t = (text ?? "").slice(0, 12000);
+  if (!t) return null;
+  const boiler = (i: number) => BOILER.test(t.slice(i, i + 90));
+  const cands: { i: number; min: number; max: number | null }[] = [];
+  const take = (re: RegExp, anchored: boolean) => { const m = t.match(re); if (!m || m.index === undefined || boiler(m.index)) return; const a = Number(m[1]), b = m[2] ? Number(m[2]) : null; if (a > 18) return; cands.push({ i: m.index - (anchored ? 1e6 : 0), min: b !== null ? Math.min(a, b) : a, max: b !== null ? Math.max(a, b) : null }); };
+  take(OFEXP, true); take(EXP_FIRST, true); take(IN_FIELD, true);
+  { const m = t.match(MIN); if (m && m.index !== undefined && !boiler(m.index) && Number(m[1]) <= 18) cands.push({ i: m.index - 1e6, min: Number(m[1]), max: null }); }
+  take(RANGE, false); take(PLUS, false);
+  if (!cands.length) return FRESH.test(t) ? { min: 0, max: 1 } : null;
+  cands.sort((a, b) => a.i - b.i);
+  return { min: cands[0].min, max: cands[0].max };
+}
+
 /** When the posting states nothing: the title's level word, as a rough guess, reported apart from the stated ones. */
 export function titleBucket(title: string): Bucket | "unknown" {
   const t = (title ?? "").toLowerCase();

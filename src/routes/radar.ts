@@ -13,6 +13,7 @@ import { json, MODEL } from "../engine/claude.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
 import { assess } from "../engine/fit.js";
 import { charge, withMeter } from "../engine/meter.js";
+import { statedBand } from "../reader/experience.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
 
 export const radar = new Hono<{ Variables: { user: User } }>();
@@ -34,6 +35,7 @@ type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "question
   today?: { new: number; gone: number; at: string };
   spend?: { run_paise: number; total_paise: number; capped?: boolean };
   triaged?: number;             // how far down the free ranking the cheap pass went before it stopped finding anything
+  dropped_band?: number;        // roles whose years band ruled the person out before any model saw them
   examined?: number };   // what this account has cost us, from the meter
 /** A real shot: sharpened ≥ 75 (decided 7 Nov). Under 50 is never shown. */
 const SHOT = 75, REACH = 50;
@@ -209,7 +211,7 @@ async function descriptionsFor(ids: number[]): Promise<Map<number, string>> {
 /** Stage 2: a calibrated guess per posting from the posting's text, résumé pinned. ~₹0.25 a role. */
 async function triage(resume: ResumeProfile, t: Targets, a: Answers, batch: { s: Sighting; text: string }[]): Promise<Map<number, { band: number; why: string }>> {
   const r = await json<{ bands: { id: number; band: number; why: string }[] }>(
-    `You are a fair Bengaluru recruiter doing a first screen. For EACH numbered posting, estimate the score (0-100) this candidate's CURRENT résumé would get from a fair screener reading it against the posting's requirements. Calibration: 75+ = would be shortlisted today; 55-74 = close, a few requirements the résumé names but does not show; under 40 = different function, wrong level, or core must-haves absent. Judge function and level honestly (a category manager is not a software engineer; a 'head of' role is not for a 5-year IC). One short reason each (≤10 words).`,
+    `You are a fair Bengaluru recruiter doing a first screen. For EACH numbered posting, estimate the score (0-100) this candidate's CURRENT résumé would get from a fair screener reading it against the posting's requirements. Calibration: 75+ = would be shortlisted today; 55-74 = close, a few requirements the résumé names but does not show; under 40 = different function, wrong level, or core must-haves absent. Judge function and level honestly, both ways: a category manager is not a software engineer; a 'head of' role is not for a 5-year IC; and a 2-5 year posting is not a shortlist for a 10-year leader — being far over the band is a mismatch, score it under 40. One short reason each (≤10 words).`,
     `Candidate in one line: ${t.one_line}\nYears: ${t.years}. Level: ${a.level}${a.stretch ? " (open to one step up)" : ""}. Functions: ${t.functions.join("; ")}.\n\nPOSTINGS:\n${batch.map((b, i) => `#${i + 1} (id ${b.s.id}) ${b.s.title} — ${b.s.company_name ?? ""}\n${b.text.replace(/\s+/g, " ").slice(0, 2200)}`).join("\n\n")}\n\nReturn: {bands:[{id, band, why}]} — one entry per posting, by id.`,
     1500, MODEL, undefined, `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}`
   );
@@ -224,7 +226,14 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   // 1b. free ranking on the posting's own words
   const rw = resumeWords(resume.parsed);
   const descs = await descriptionsFor(cands.map((c) => c.id));
-  const ranked = cands.map((s) => ({ s, text: descs.get(s.id) ?? "", fit: textFit(rw, descs.get(s.id) ?? "") })).filter((x) => x.text.length >= 200).sort((x, y) => y.fit - x.fit);
+  // the years gate (9 Nov): a posting's own band against the person's years, both ways. Four or more years over the band's
+  // top is a level mismatch a recruiter screens out ("2-5 years" is not for a ten-year BU head); two or more under the
+  // band's floor is not a shot either. Read from the posting's text with the experience parser; free.
+  const years = Number(resume.parsed.years_total ?? t.years ?? 0);
+  let droppedBand = 0;
+  const inBand = (text: string) => { if (!years) return true; const b = statedBand(text); if (!b) return true; if (b.max !== null && years >= b.max + 4) return false; if (years + 2 <= b.min) return false; return true; };
+  const ranked = cands.map((s) => ({ s, text: descs.get(s.id) ?? "", fit: textFit(rw, descs.get(s.id) ?? "") })).filter((x) => x.text.length >= 200).filter((x) => { const ok = inBand(x.text); if (!ok) droppedBand++; return ok; }).sort((x, y) => y.fit - x.fit);
+  run.dropped_band = (run.dropped_band ?? 0) + droppedBand;
   const perEmp: Record<string, number> = {}; const kept: typeof ranked = [];
   for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 6) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
   // 2. cheap bands, in batches of twenty down the free ranking: keep going while batches still find roles in reach,
@@ -356,7 +365,7 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     // at most 6 per employer in the long list, so one big feed does not crowd the rest out
     const perEmp: Record<string, number> = {}; const longList: Sighting[] = [];
     for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 8) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 420) break; }
-    run.by_title = longList.length; run.status = "picking"; await save();
+    run.by_title = longList.length; run.status = "picking"; run.dropped_band = 0; await save();
     if (!longList.length) { run.status = "done"; run.finished = new Date().toISOString(); await save(); return; }
     run.status = "scoring"; run.picked = 0; await save();
     const planSince = run.started;
@@ -465,7 +474,9 @@ export async function radarMorning(notify: (userId: string, r: { new_shots: numb
   if (await kv.get(lockKey)) return 0;
   await kv.set(lockKey, { started: new Date().toISOString() });
   const { data: plans } = await db.from("plans").select("user_id").eq("product", "radar").gt("expires_at", new Date().toISOString());
-  const users = [...new Set((plans ?? []).map((p: any) => p.user_id as string))];
+  // testers and favours (radar:unlock) get the morning too, so their list moves like a customer's
+  const { data: unlocks } = await db.from("reader_control").select("key").like("key", "radar:unlock:%");
+  const users = [...new Set([...(plans ?? []).map((p: any) => p.user_id as string), ...(unlocks ?? []).map((r: any) => String(r.key).slice("radar:unlock:".length))])];
   let n = 0;
   for (const userId of users) {
     try {
