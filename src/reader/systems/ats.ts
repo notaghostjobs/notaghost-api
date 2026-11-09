@@ -216,9 +216,11 @@ export async function workdayBlrCount(ref: string): Promise<{ blr: number; total
 export async function workdayDiscover(name: string): Promise<{ ref: string; blr: number; total: number; sites: number; tenant: string; wd: string } | null> {
   for (const tenant of workdayTenantGuesses(name)) {
     const wd = await workdayTenant(tenant); if (!wd) continue;
-    const sites = await workdaySites(tenant, wd);
+    let sites = await workdaySites(tenant, wd);
+    // a tenant whose robots.txt lists nothing (DBS, Equifax, Guidewire) still answers on the usual site names
+    if (!sites.length) sites = ["External", "Careers", "External_Careers", "careers", "jobs", "Global", "EXT", `${tenant}Careers`, `${tenant[0].toUpperCase()}${tenant.slice(1)}_Careers`, `${tenant[0].toUpperCase()}${tenant.slice(1)}Careers`];
     let best: { ref: string; blr: number; total: number } | null = null;
-    for (const site of sites.filter((s) => !WD_SKIP_SITE.test(s)).slice(0, 4)) {
+    for (const site of sites.filter((s) => !WD_SKIP_SITE.test(s)).slice(0, 10)) {
       const c = await workdayBlrCount(`${tenant}/${wd}/${site}`); if (!c) continue;
       if (!best || c.blr > best.blr) best = { ref: `${tenant}/${wd}/${site}`, ...c };
     }

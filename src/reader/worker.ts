@@ -4,6 +4,7 @@ import { KNOWN, KNOWN_VERSION } from "./data/known.js";
 import { companyKey } from "../engine/ghost/canon.js";
 import { db } from "../lib/db.js";
 import { resolveBatch } from "./resolve.js";
+import { workdayDiscover } from "./systems/ats.js";
 import { readDue, recordFeed } from "./read.js";
 import { harvestNaukri } from "./harvest/naukri.js";
 import { harvestSectors } from "./harvest/sectors.js";
@@ -262,6 +263,32 @@ async function setPriorities() {
   await onceOnly("enrich-retry-workday-v1", async () => { const { error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).eq("source", "workday").is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null); if (error) log("enrich retry", error.message); });
 }
 
+/** 9 Nov: one pass of Workday-by-name over every employer we could not read, apart from the resolver queue and six at a
+ *  time (each try is ~30 light requests, no feed read). A hit writes the ref and clears resolution, so the ordinary
+ *  resolver re-reads it as a known ref. Progress in reader_control:wdscan; the once-key is set only when the pass ends. */
+async function runWorkdayScan() {
+  const key = "wdscan-v1";
+  if ((await getControl<{ at: string }>(`once:${key}`))?.at) return;
+  const { data } = await db.from("employers").select("key, name, priority").in("ats", ["none", "page"]).order("priority", { ascending: false }).order("created_at", { ascending: false }).limit(6000);   // the resolver queue walks the other way; they meet in the middle
+  const q = [...(data ?? [])]; const total = q.length; let done = 0, found = 0; const t0 = Date.now();
+  log("wdscan", `${total} employers to try`);
+  const worker = async () => {
+    for (;;) {
+      const e = q.shift(); if (!e) return;
+      try {
+        const d = await Promise.race([workdayDiscover(e.name), new Promise<null>((r) => setTimeout(() => r(null), 90000))]);
+        if (d) { found++; await db.from("employers").update({ ats: "workday", ats_ref: d.ref, priority: 1, resolved_at: null, resolve_error: null, confidence: null, evidence: `workday tenant "${d.tenant}" on ${d.wd} by name; ${d.ref.split("/")[2]} has ${d.blr} Bengaluru roles of ${d.total}` }).eq("key", e.key); log("wdscan", `${e.name} → ${d.ref} (${d.blr} Bengaluru)`); }
+      } catch (err) { log("wdscan", e.name, (err as Error).message); }
+      done++;
+      if (done % 25 === 0) await setControl("wdscan", { done, total, found, minutes: Math.round((Date.now() - t0) / 60000) });
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+  await setControl("wdscan", { done, total, found, minutes: Math.round((Date.now() - t0) / 60000), finished: true });
+  await setControl(`once:${key}`, { at: new Date().toISOString(), done, found });
+  log("wdscan", `done: ${found} of ${done}`);
+}
+
 async function main() {
   log("worker up");
   await setControl("heartbeat", { boot, at: new Date().toISOString(), build: "f051051+" });
@@ -272,6 +299,7 @@ async function main() {
   await selfTest();
   await onceOnly("tier1-first-run-v1", async () => { await runTier1().catch((e) => log("tier1", (e as Error).message)); });
   await status("idle");
+  void runWorkdayScan().catch((e) => log("wdscan", (e as Error).message));
   for (;;) {
     try {
       // 0. ops channel (GitHub)

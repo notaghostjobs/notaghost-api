@@ -165,7 +165,10 @@ export async function resolveBatch(limit = 20, concurrency = 6, onDone?: (key: s
       const e = q.shift(); if (!e) return;
       try {
         const r = await withTimeout(resolveEmployer(e), 120000, e.name);
-        await db.from("employers").update({ ats: r.ats, ats_ref: r.ats_ref, careers_url: r.careers_url, website: r.website, confidence: r.confidence, evidence: r.evidence, resolved_at: new Date().toISOString(), resolve_error: null }).eq("key", e.key);
+        // a "none" must not overwrite a ref another pass (the Workday scan) wrote while this one was running
+        let upd = db.from("employers").update({ ats: r.ats, ats_ref: r.ats_ref, careers_url: r.careers_url, website: r.website, confidence: r.confidence, evidence: r.evidence, resolved_at: new Date().toISOString(), resolve_error: null }).eq("key", e.key);
+        if (r.ats === "none") upd = e.ats ? upd.eq("ats", e.ats) : upd.is("ats", null);
+        await upd;
         stats.done++; if (r.ats === "none") stats.none++; else stats.found++;
         if (onDone) await withTimeout(onDone(e.key, r), 180000, `record ${e.name}`).catch((err) => console.error("[record]", e.name, (err as Error).message));
         onProgress?.(e.name, r);
