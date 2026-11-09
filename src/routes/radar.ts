@@ -776,9 +776,10 @@ radar.get("/test/result", async (c) => {
   const mine = run.status === "done" ? await pulse(my).catch(() => null) : null;
   if (!isTester(u)) { delete (run as any).spend; delete (run as any).trail; }   // ours to see, not the customer's
   delete (run as any)._qTried;
-  if (unlocked) return c.json({ ...run, unlocked: true, reveal, pulse: mine });
+  const tester = isTester(u);   // the web shows its tester-only buttons to testers alone
+  if (unlocked) return c.json({ ...run, unlocked: true, reveal, pulse: mine, tester });
   // locked: counts and the taste, no titles, no links, no facts
-  return c.json({ ...run, unlocked: false, reveal, pulse: mine, items: run.items.map((i) => ({ sighting_id: i.sighting_id, company: i.company, now: i.now, promised: i.promised, first_seen: i.first_seen, error: i.error })), questions: [] });
+  return c.json({ ...run, unlocked: false, reveal, pulse: mine, tester, items: run.items.map((i) => ({ sighting_id: i.sighting_id, company: i.company, now: i.now, promised: i.promised, first_seen: i.first_seen, error: i.error })), questions: [] });
 });
 
 /** One answer, applied to every role on the list that asked for it; remembered on the account like any questionnaire answer. */
