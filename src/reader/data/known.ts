@@ -1,8 +1,13 @@
 // Hiring-system refs verified by hand on 9 Nov 2026: each one was read with the real reader from a machine outside Render
 // and returned Bengaluru roles that day (the count is noted). The resolver still re-reads every ref before it is trusted
 // (step 0, "known ref re-read"); this file only tells it where to look. `names` are the spellings in our employer table.
-export interface KnownRef { names: string[]; ats: string; ref: string; blr: number }
+export interface KnownRef { names: string[]; ats: string; ref: string; blr: number; force?: boolean }   // force: replace a feed we already read (this one is the bigger board)
+/** Bump when entries are added; the worker applies the file once per version. */
+export const KNOWN_VERSION = 2;
 export const KNOWN: KnownRef[] = [
+  { names: ["Capgemini", "Capgemini India", "Capgemini Engineering", "Capgemini Invent"], ats: "capgemini", ref: "capgemini", blr: 331, force: true },
+  { names: ["LTIMindtree", "LTM", "LTIMindtree (LTM)", "L&T Infotech", "Mindtree"], ats: "ripplehire", ref: "ltm.ripplehire.com|nP1GISU2A024qt3otg3V", blr: 212, force: true },
+  { names: ["Mphasis"], ats: "ripplehire", ref: "mphasis.ripplehire.com|ty4DfyWddnOrtpclQeia", blr: 56 },
   { names: ["Accenture"], ats: "workday", ref: "accenture/wd103/AccentureCareers", blr: 2000 },
   { names: ["EY"], ats: "successfactors", ref: "https://careers.ey.com", blr: 746 },
   { names: ["Hewlett Packard Enterprise (HPE)"], ats: "workday", ref: "hpe/wd5/WFMathpe", blr: 372 },

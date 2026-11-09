@@ -2,6 +2,7 @@
 import { db } from "../lib/db.js";
 import { byId, type Feed } from "./systems/index.js";
 import { isBlr } from "./blr.js";
+import { fingerprint } from "../engine/ghost/canon.js";
 
 export interface Employer { key: string; name: string; ats: string | null; ats_ref: string | null }
 
@@ -26,6 +27,7 @@ export async function recordFeed(e: Employer, feed: Feed) {
     source: feed.system, source_id: `${feed.ref}:${j.id}`, employer_key: e.key, company_name: feed.company_name ?? e.name,
     title: j.title.slice(0, 300), location: (j.location ?? "").slice(0, 300), url: j.url, posted_at: j.posted_at, updated_at_src: j.updated_at, posted_text: j.posted_text,
     blr: isBlr(j.location ?? ""), last_seen: now, gone_at: null,
+    ...(j.description && j.description.length >= 200 ? { description: j.description.slice(0, 20000), fingerprint: fingerprint(j.description.slice(0, 20000)), enriched_at: now, enrich_error: null } : {}),
   }));
   // upsert in chunks; first_seen keeps its original value because we never send it
   for (let i = 0; i < rows.length; i += 500) {

@@ -4,7 +4,7 @@ export const UA = "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello@not
 const lastHit = new Map<string, number>();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export interface HttpOpts { method?: "GET" | "POST"; body?: unknown; headers?: Record<string, string>; timeoutMs?: number; gapMs?: number; retries?: number }
+export interface HttpOpts { method?: "GET" | "POST"; body?: unknown; form?: Record<string, string>; headers?: Record<string, string>; timeoutMs?: number; gapMs?: number; retries?: number }
 
 /** Thrown when robots.txt disallows the path for us. Callers that return {ok,status} report it as status -1. */
 export class RobotsDisallowed extends Error { constructor(url: string) { super(`disallowed by robots.txt: ${url}`); this.name = "RobotsDisallowed"; } }
@@ -77,9 +77,11 @@ export async function http(url: string, o: HttpOpts = {}): Promise<Response> {
   lastHit.set(host, Date.now());
   const headers: Record<string, string> = { "user-agent": UA, accept: "application/json, text/html;q=0.9, */*;q=0.8", "accept-language": "en-IN,en;q=0.9", ...(o.headers ?? {}) };
   if (o.body !== undefined) headers["content-type"] = "application/json";
+  if (o.form !== undefined) headers["content-type"] = "application/x-www-form-urlencoded";
+  const payload = o.form !== undefined ? new URLSearchParams(o.form).toString() : o.body === undefined ? undefined : JSON.stringify(o.body);
   let last: Response | null = null;
   for (let attempt = 0; attempt <= (o.retries ?? 2); attempt++) {
-    const r = await fetch(url, { method: o.method ?? "GET", headers, body: o.body === undefined ? undefined : JSON.stringify(o.body), signal: AbortSignal.timeout(o.timeoutMs ?? 15000), redirect: "follow" });
+    const r = await fetch(url, { method: o.method ?? "GET", headers, body: payload, signal: AbortSignal.timeout(o.timeoutMs ?? 15000), redirect: "follow" });
     if (r.status !== 429 && r.status < 500) return r;
     last = r;
     await sleep(1500 * 2 ** attempt);

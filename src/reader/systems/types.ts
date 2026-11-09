@@ -7,6 +7,7 @@ export interface FeedJob {
   posted_at: string | null;   // ISO, the system's own date (created/published)
   updated_at: string | null;
   posted_text: string | null; // "Posted 3 Days Ago" when that is all the system gives
+  description?: string;       // only when the list itself carries the posting text (Capgemini); saves the enrichment visit
   raw?: unknown;
 }
 
