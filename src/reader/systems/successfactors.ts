@@ -14,7 +14,9 @@ async function readApi(origin: string, diag: string[]): Promise<FeedJob[] | null
     body: { locale: "en_US", pageNumber: 0, sortBy: "", keywords: "", location: "", facetFilters: {}, brand: "", skills: [], categoryId: 0, alertId: "", rcmCandidateId: "", ...o } });
   const probe = await call({ location: "Bengaluru" });
   // a refusal is not "no such endpoint": say so, and never fall through to an empty read
-  if (!probe.ok && (probe.status === ROBOTS_STATUS || probe.status === 403 || probe.status === 429 || probe.status === 0)) throw new Error(`successfactors ${origin}: API HTTP ${probe.status}`);
+  // robots.txt that closes /services/ (EY, TE Connectivity, Ericsson's old site) still leaves /search/ open: fall through to the classic pages
+  if (!probe.ok && probe.status === ROBOTS_STATUS) { diag.push("api disallowed by robots.txt; classic pages"); return null; }
+  if (!probe.ok && (probe.status === 403 || probe.status === 429 || probe.status === 0)) throw new Error(`successfactors ${origin}: API HTTP ${probe.status}`);
   if (!probe.ok || !probe.data || typeof probe.data.totalJobs === "undefined") { diag.push(`api probe HTTP ${probe.status}`); return null; }
   const total = Number(probe.data.totalJobs ?? 0);
   // which query to page: the location box when it works, else the India facet (then filter rows by city)

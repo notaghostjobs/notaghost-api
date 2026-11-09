@@ -40,10 +40,39 @@ async function workdayDetail(url: string): Promise<{ ok: true; text: string; pos
   return { ok: true, text, posted: info.startDate ?? null };
 }
 
+/** Oracle Recruiting Cloud job pages are script shells; the requisition-details REST call the page makes returns the posting. */
+async function oracleDetail(url: string): Promise<{ ok: true; text: string; posted?: string | null } | { ok: false; status: number } | null> {
+  const m = url.match(/^https?:\/\/([a-z0-9.-]+\.oraclecloud\.com)\/hcmUI\/CandidateExperience\/[a-z-]+\/sites\/(CX_\d+)\/job\/(\d+)/i);
+  if (!m) return null;
+  const [, host, site, id] = m;
+  const r = await getJson<any>(`https://${host}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?expand=all&onlyData=true&finder=ById;Id=%22${id}%22,siteNumber=${site}`, { timeoutMs: 20000, gapMs: 700, headers: { accept: "application/json", "ora-irc-language": "en" } });
+  if (!r.ok || !r.data) return { ok: false, status: r.status };
+  const it = r.data.items?.[0]; if (!it) return { ok: false, status: 404 };
+  const text = [it.ExternalDescriptionStr, it.ExternalResponsibilitiesStr, it.ExternalQualificationsStr].filter(Boolean).map((h: string) => htmlToText(String(h))).join("\n\n");
+  return { ok: true, text, posted: it.ExternalPostedStartDate ?? null };
+}
+
+/** Phenom job pages carry the posting in an inline `phApp.ddo` object (jobDetail.data.job). The list's applyUrl sometimes
+ *  points at /job/{id}, which lands on the home page; the page that holds the job is /{site}/en/job/{id}. */
+function phenomJob(html: string): { text: string; posted: string | null; url?: string } | null {
+  if (!/phApp\.ddo\s*=/.test(html)) return null;
+  const m = html.match(/phApp\.ddo\s*=\s*(\{[\s\S]*?\});\s*(?:phApp\.|<\/script>)/); if (!m) return null;
+  try { const job = JSON.parse(m[1])?.jobDetail?.data?.job; if (!job?.description) return null; return { text: htmlToText(String(job.description)), posted: job.postedDate ?? job.dateCreated ?? null }; } catch { return null; }
+}
+async function phenomDetail(url: string, firstHtml: string | null): Promise<{ text: string; posted: string | null; url?: string } | null> {
+  if (firstHtml) { const j = phenomJob(firstHtml); if (j) return j; if (!/phApp/.test(firstHtml)) return null; }
+  const m = url.match(/^(https?:\/\/[a-z0-9.-]+)\/job\/([^/?#]+)/i); if (!m) return null;
+  for (const site of ["global", "in", "en-us"]) {
+    const r = await getText(`${m[1]}/${site}/en/job/${m[2]}`, { timeoutMs: 20000, gapMs: 800 });
+    if (r.ok) { const j = phenomJob(r.text); if (j) return { ...j, url: `${m[1]}/${site}/en/job/${m[2]}` }; }
+  }
+  return null;
+}
+
 export async function enrichOne(s: { id: number; url: string; posted_at: string | null; salary_text: string | null; raw: any }) {
   const fail = (why: string) => db.from("sightings").update({ enriched_at: new Date().toISOString(), enrich_error: why }).eq("id", s.id);
-  let ld: ReturnType<typeof jsonLd> = null, text = "";
-  const wd = await workdayDetail(s.url);
+  let ld: ReturnType<typeof jsonLd> = null, text = "", betterUrl: string | null = null;
+  const wd = (await workdayDetail(s.url.replace(/\/apply\/?$/, ""))) ?? (await oracleDetail(s.url));
   if (wd) {
     if (!wd.ok) { await fail(wd.status === ROBOTS_STATUS ? "disallowed by robots.txt" : `HTTP ${wd.status}`); return false; }
     text = wd.text.slice(0, 20000); if (wd.posted) ld = { datePosted: wd.posted };
@@ -52,10 +81,12 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
     if (!r.ok) { await fail(r.status === ROBOTS_STATUS ? "disallowed by robots.txt" : `HTTP ${r.status}`); return false; }
     ld = jsonLd(r.text);
     text = (ld?.description && ld.description.length > 300 ? ld.description : htmlToText(r.text)).slice(0, 20000);
+    if (text.length < 200 || /phApp\.ddo/.test(r.text)) { const ph = await phenomDetail(s.url, r.text); if (ph) { text = ph.text.slice(0, 20000); if (ph.posted && !ld?.datePosted) ld = { ...(ld ?? {}), datePosted: ph.posted }; if (ph.url) betterUrl = ph.url; } }
   }
   if (text.length < 200) { await fail("page has no readable text (likely rendered by script)"); return false; }
   const p = pick(text);
   const upd: Record<string, unknown> = { description: text, fingerprint: fingerprint(text), enriched_at: new Date().toISOString(), enrich_error: null };
+  if (betterUrl) upd.url = betterUrl;   // the page that actually holds the job, so the card's link lands on it
   if (!s.posted_at && ld?.datePosted) upd.posted_at = iso(ld.datePosted);
   if (!s.salary_text && (ld?.salary || p.salary)) upd.salary_text = ld?.salary ?? p.salary;
   upd.raw = { ...(s.raw ?? {}), ...(p.exp ? { exp: s.raw?.exp ?? p.exp } : {}), ...(ld?.validThrough ? { valid_through: ld.validThrough } : {}) };

@@ -1,7 +1,7 @@
 // The hiring systems of the largest Bengaluru employers. Every reader asks for Bengaluru directly; none crawls a global board.
 // Each returns `debug` so the self-test shows how the read went.
 import { getJson, getText, ROBOTS_STATUS } from "../http.js";
-import type { Feed, FeedJob, System } from "./types.js";
+import { mode, type Feed, type FeedJob, type System } from "./types.js";
 
 const iso = (v: unknown): string | null => { if (!v) return null; const d = typeof v === "number" ? new Date(v < 1e12 ? v * 1000 : v) : new Date(String(v)); return isNaN(d.getTime()) ? null : d.toISOString(); };
 const BROWSERISH = { accept: "application/json, text/plain, */*", "accept-language": "en-IN,en;q=0.9" };
@@ -73,6 +73,20 @@ export const eightfold: System = {
   async read(ref) {
     const [host, domainIn] = ref.split("|"); const domain = domainIn || host.replace(/^careers\./, "");
     const jobs: FeedJob[] = []; const diag: string[] = []; let count = 0;
+    // newer Eightfold sites (Infineon, Ericsson, Microsoft) close /api/apply/v2 and answer on /api/pcsx/search, 10 a page, location honoured
+    const first = await getJson<any>(`https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&location=Bengaluru&start=0&num=1`, { headers: BROWSERISH, gapMs: 600 });
+    if (!first.ok && (first.status === 403 || first.status === 404)) {
+      const ts = (v: unknown) => { const n = Number(v); return n > 1e9 ? new Date(n > 1e12 ? n : n * 1000).toISOString() : null; };
+      for (let start = 0; start < (mode.quick ? 20 : 3000); start += 10) {
+        const r = await getJson<any>(`https://${host}/api/pcsx/search?domain=${encodeURIComponent(domain)}&query=&location=Bengaluru&start=${start}&num=10&sort_by=timestamp`, { headers: { ...BROWSERISH, referer: `https://${host}/careers` }, gapMs: 600, timeoutMs: 20000 });
+        if (!r.ok || !r.data?.data) { if (start === 0) return null; diag.push(`pcsx@${start} HTTP ${r.status}`); break; }
+        count = Number(r.data.data.count ?? 0); const list: any[] = r.data.data.positions ?? []; if (!list.length) break;
+        for (const p of list) { const id = String(p.id ?? p.displayJobId ?? ""); if (!id) continue; const loc = Array.isArray(p.standardizedLocations) && p.standardizedLocations.length ? p.standardizedLocations.join(" · ") : (Array.isArray(p.locations) ? p.locations.join(" · ") : String(p.locations ?? "")); jobs.push({ id, title: String(p.name ?? ""), location: loc, url: `https://${host}${p.positionUrl ?? `/careers/job/${id}`}`, posted_at: ts(p.postedTs), updated_at: null, posted_text: null }); }
+        if (start + 10 >= count) break;
+      }
+      diag.push(`pcsx location=Bengaluru: count ${count}, read ${jobs.length}${mode.quick ? " (quick)" : ""}`);
+      return { system: "eightfold", ref, board_url: `https://${host}/careers?location=Bengaluru`, company_name: null, jobs, debug: diag.join("; ") };
+    }
     for (const loc of ["Bengaluru", "Bangalore"]) {
       for (let start = 0; start < 3000; start += 100) {
         const r = await getJson<any>(`https://${host}/api/apply/v2/jobs?domain=${encodeURIComponent(domain)}&location=${encodeURIComponent(loc)}&start=${start}&num=100&sort_by=timestamp`, { headers: BROWSERISH, gapMs: 600 });

@@ -5,6 +5,7 @@ import { companyKey } from "../engine/ghost/canon.js";
 import { research } from "../engine/ghost/research.js";
 import { getText } from "./http.js";
 import { detect, byId, SYSTEMS, type Feed } from "./systems/index.js";
+import { workdayDiscover } from "./systems/ats.js";
 import { atsLinksIn, jsonLdJobs, harvestLinks } from "./systems/page.js";
 import { detectBigFromHtml, probeBig } from "./systems/big.js";
 import { successfactors, isSuccessFactors } from "./systems/successfactors.js";
@@ -108,6 +109,14 @@ async function fromSlugGuess(name: string): Promise<Resolution | null> {
   return null;
 }
 
+/** Workday by name: the tenant confirmed by the API, the site list from robots.txt, the site with the most Bengaluru roles.
+ *  Then the feed is read for real, so what is recorded is what the reader will see every morning. */
+async function fromWorkdayGuess(name: string): Promise<Resolution | null> {
+  const d = await workdayDiscover(name).catch(() => null); if (!d) return null;
+  const f = await tryRef(name, "workday", d.ref); if (!f) return null;
+  return { ats: "workday", ats_ref: d.ref, careers_url: f.board_url, website: null, confidence: "guess", evidence: `workday tenant "${d.tenant}" on ${d.wd} (${d.sites} sites in robots.txt); ${d.ref.split("/")[2]} has ${d.blr} Bengaluru roles of ${d.total}`, feed: f };
+}
+
 /** Web research spend cap: this many careers-page searches per calendar day (≈ ₹2–3 each). */
 export const RESEARCH_PER_DAY = Number(process.env.RESEARCH_PER_DAY ?? 300);
 const researchBudget = { day: "", used: 0 };
@@ -122,6 +131,8 @@ export async function resolveEmployer(e: { key: string; name: string; website: s
   if (e.careers_url) { const r = (await fromUrl(e.name, e.careers_url)) ?? (await fromCareersPage(e.name, e.careers_url, e.website, render)); if (r) return { ...r, website: e.website }; }
   // 1. cheap: exact slug on the name-keyed systems (1 second, name-checked)
   const g = await fromSlugGuess(e.name); if (g) return { ...g, website: e.website };
+  // 1b. cheap: a Workday tenant under the company's name (large employers; the careers page rarely links the tenant)
+  const w = await fromWorkdayGuess(e.name); if (w) return { ...w, website: e.website };
   // 2. free: the usual careers paths on the website we already hold
   if (e.website) {
     const origin = e.website.replace(/\/+$/, "");

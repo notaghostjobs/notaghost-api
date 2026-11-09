@@ -1,5 +1,6 @@
 // The reader worker: its own process. Resolves employers, reads feeds, harvests boards. Reports what it is doing in reader_control.
 import { NAUKRI_BLR } from "./data/naukri-blr.js";
+import { KNOWN } from "./data/known.js";
 import { companyKey } from "../engine/ghost/canon.js";
 import { db } from "../lib/db.js";
 import { resolveBatch } from "./resolve.js";
@@ -223,6 +224,33 @@ async function setPriorities() {
       }
     }
     log("reresolve naukri", `${updated} employers re-queued, ${inserted} added, all at priority 1`);
+  });
+  // 9 Nov: inventory push. (a) Refs verified by hand from outside Render — Workday tenants found through their robots.txt,
+  // Phenom and SuccessFactors hosts that answered with Bengaluru roles — are written onto the matching employer rows (or
+  // inserted) with resolution cleared, so the resolver's step 0 re-reads each and records it. (b) Every employer still at
+  // "none" or "page" is queued again at priority 1, because the resolver now also finds Workday tenants by name.
+  await onceOnly("known-refs-v1", async () => {
+    let updated = 0, inserted = 0, kept = 0;
+    for (const k of KNOWN) {
+      const keys = [...new Set(k.names.map((n) => companyKey(n)))];
+      const { data: rows } = await db.from("employers").select("key, ats, ats_ref").in("key", keys);
+      if (rows?.length) {
+        for (const r of rows) {
+          if (r.ats && r.ats !== "none" && r.ats !== "page" && r.ats_ref) { kept++; continue; }   // already on a real feed; leave it
+          const { error } = await db.from("employers").update({ ats: k.ats, ats_ref: k.ref, priority: 1, resolved_at: null, resolve_error: null, confidence: null, evidence: `known ref, verified 9 Nov (${k.blr} Bengaluru roles)` }).eq("key", r.key);
+          if (!error) updated++;
+        }
+      } else {
+        const { error } = await db.from("employers").upsert({ key: keys[0], name: k.names[0], source: "known:9nov", ats: k.ats, ats_ref: k.ref, priority: 1, evidence: `known ref, verified 9 Nov (${k.blr} Bengaluru roles)` }, { onConflict: "key", ignoreDuplicates: true });
+        if (!error) inserted++;
+      }
+    }
+    log("known refs", `${updated} employers pointed at a verified feed, ${inserted} added, ${kept} already readable`);
+    await setControl("known_refs_v1", { at: new Date().toISOString(), updated, inserted, kept, listed: KNOWN.length });
+  });
+  await onceOnly("reresolve-none-workday-v1", async () => {
+    const { data, error } = await db.from("employers").update({ resolved_at: null, resolve_error: null }).in("ats", ["none", "page"]).lte("priority", 1).select("key");
+    log("reresolve none/page", error ? error.message : `${data?.length ?? 0} employers queued`);
   });
   await onceOnly("enrich-retry-workday-v1", async () => { const { error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).eq("source", "workday").is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null); if (error) log("enrich retry", error.message); });
 }

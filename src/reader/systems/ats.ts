@@ -1,5 +1,5 @@
 // The hiring systems with public JSON feeds. Each reader is exact: it returns what the system says, or null if the ref does not exist.
-import { getJson } from "../http.js";
+import { getJson, getText } from "../http.js";
 import { progress, type Feed, type FeedJob, type System } from "./types.js";
 
 const iso = (v: unknown): string | null => {
@@ -161,5 +161,70 @@ export const workday: System = {
     return { system: "workday", ref, board_url: `${base}/${site}`, company_name: null, jobs, debug: diag.join("; ") };
   },
 };
+
+// ---- Workday discovery. Tenant names are not guessable from a careers page, but a tenant is cheap to confirm: a POST to a
+// made-up site answers 404 on a real tenant and 422 on no tenant at all; a real tenant's robots.txt then lists every one of
+// its career sites. So from a company name we try a few spellings across the Workday data centres, read the site list,
+// and keep the site with the most Bengaluru roles. Nothing is accepted without a Bengaluru count from the API itself.
+const WD_DCS = ["wd1", "wd3", "wd5", "wd12", "wd10", "wd103", "wd104", "wd108"];
+const WD_SKIP_SITE = /intern|campus|student|graduate|contractor|conversion|canada|costa|brazil|mexico|china|japan|korea|france|german|uk_|_uk|usa|us_|_us\b|europe|emea|internal|employee|alumni|referral|executive|temp|hourly|store/i;
+const WD_STOP = new Set("the and of for bank hospital hotel school university college institute international systems software digital consulting capital finance financial health healthcare media networks network energy power motors industries enterprises ventures partners holdings foods pharma pharmaceuticals lifesciences life sciences india bengaluru bangalore".split(" "));
+/** Tenant spellings worth trying for a company name: words run together, the core words, the first core word, the acronym. */
+export function workdayTenantGuesses(name: string): string[] {
+  const key = name.toLowerCase().replace(/\(.*?\)/g, " ").replace(/\b(pvt|private|ltd|limited|inc|llc|llp|technologies|technology|tech|solutions|services|india|global|group|labs|co|corp|corporation)\b\.?/g, " ").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+  const words = key.split(" ").filter(Boolean), core = words.filter((w) => !WD_STOP.has(w));
+  const out = new Set<string>();
+  const j = words.join(""); if (j.length >= 3 && j.length <= 24) out.add(j);
+  const cj = core.join(""); if (cj.length >= 3 && cj.length <= 24) out.add(cj);
+  if (core[0] && core[0].length >= 4) out.add(core[0]);
+  if (words.length >= 3) { const ac = words.map((w) => w[0]).join(""); if (ac.length >= 3) out.add(ac); }
+  if (core.length >= 2) out.add(core.slice(0, 2).join(""));
+  return [...out].filter((t) => /^[a-z0-9]+$/.test(t)).slice(0, 3);
+}
+const wdPost = (tenant: string, wd: string, site: string, body: unknown, timeoutMs = 12000) =>
+  getJson<any>(`https://${tenant}.${wd}.myworkdayjobs.com/wday/cxs/${tenant}/${site}/jobs`, { method: "POST", body, timeoutMs, gapMs: 100, retries: 0, headers: { accept: "application/json" } });
+/** Which data centre hosts this tenant, or null when no Workday tenant has this name. */
+export async function workdayTenant(tenant: string): Promise<string | null> {
+  const ask = async (wd: string) => (await wdPost(tenant, wd, "zz_no_site_zz", { appliedFacets: {}, limit: 1, offset: 0, searchText: "" }, 8000)).status;
+  const first = await Promise.all(WD_DCS.map(async (wd) => ({ wd, status: await ask(wd) })));
+  const hit = first.find((r) => r.status === 404); if (hit) return hit.wd;
+  // a timed-out data centre is not a "no": ask those once more
+  const unsure = first.filter((r) => r.status === 0 || r.status >= 500);
+  if (!unsure.length) return null;
+  const again = await Promise.all(unsure.map(async ({ wd }) => ({ wd, status: await ask(wd) })));
+  return again.find((r) => r.status === 404)?.wd ?? null;
+}
+/** Every career site of a tenant, from its robots.txt. */
+export async function workdaySites(tenant: string, wd: string): Promise<string[]> {
+  const r = await getText(`https://${tenant}.${wd}.myworkdayjobs.com/robots.txt`, { timeoutMs: 12000, gapMs: 100, headers: { accept: "*/*" } });
+  if (!r.ok) return [];
+  return [...new Set([...r.text.matchAll(/myworkdayjobs\.com\/([^/\s]+)\/siteMap\.xml/gi)].map((m) => m[1]))];
+}
+/** The Bengaluru count of one site (facet when the tenant has one, text search otherwise), without reading the jobs. */
+export async function workdayBlrCount(ref: string): Promise<{ blr: number; total: number } | null> {
+  const [tenant, wd, site] = ref.split("/");
+  let r = await wdPost(tenant, wd, site, { appliedFacets: {}, limit: 20, offset: 0, searchText: "" }, 15000);
+  if (r.status === 422 || r.status === 400) r = await wdPost(tenant, wd, site, { appliedFacets: {}, limit: 20, offset: 0, searchText: "Bengaluru" }, 15000);
+  if (!r.ok || !r.data) return null;
+  const total = Number(r.data.total ?? 0);
+  const fac = blrFacets(r.data.facets ?? []);
+  if (fac) { const q = await wdPost(tenant, wd, site, { appliedFacets: { [fac.param]: fac.ids }, limit: 20, offset: 0, searchText: "" }, 15000); return { blr: Number(q.data?.total ?? 0), total }; }
+  const s = await wdPost(tenant, wd, site, { appliedFacets: {}, limit: 20, offset: 0, searchText: "Bengaluru" }, 15000);
+  return { blr: Number(s.data?.total ?? 0), total };
+}
+/** From a company name to the Workday ref with the most Bengaluru roles, or null. ~10–40 cheap requests. */
+export async function workdayDiscover(name: string): Promise<{ ref: string; blr: number; total: number; sites: number; tenant: string; wd: string } | null> {
+  for (const tenant of workdayTenantGuesses(name)) {
+    const wd = await workdayTenant(tenant); if (!wd) continue;
+    const sites = await workdaySites(tenant, wd);
+    let best: { ref: string; blr: number; total: number } | null = null;
+    for (const site of sites.filter((s) => !WD_SKIP_SITE.test(s)).slice(0, 4)) {
+      const c = await workdayBlrCount(`${tenant}/${wd}/${site}`); if (!c) continue;
+      if (!best || c.blr > best.blr) best = { ref: `${tenant}/${wd}/${site}`, ...c };
+    }
+    if (best && best.blr > 0) return { ...best, sites: sites.length, tenant, wd };
+  }
+  return null;
+}
 
 export const ATS: System[] = [greenhouse, lever, ashby, smartrecruiters, workday];
