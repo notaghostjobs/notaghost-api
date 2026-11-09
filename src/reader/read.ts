@@ -38,11 +38,12 @@ export async function recordFeed(e: Employer, feed: Feed) {
     const { error } = await db.from("sightings").upsert(rows.slice(i, i + 500), { onConflict: "source,source_id" });
     if (error) throw new Error(`sightings upsert: ${error.message}`);
   }
-  // anything from this feed not seen this run is gone (by feed, not employer row: several rows may share one feed)
-  const { data: gone } = await db.from("sightings").update({ gone_at: now }).eq("source", feed.system).like("source_id", `${feed.ref}:%`).is("gone_at", null).lt("last_seen", now).select("id");
+  // anything from this feed not seen this run is gone (by feed, not employer row: several rows may share one feed) —
+  // unless the read itself was incomplete: then what we saw is updated and what we did not see is left as it was
+  const { data: gone } = feed.partial ? { data: [] as { id: number }[] } : await db.from("sightings").update({ gone_at: now }).eq("source", feed.system).like("source_id", `${feed.ref}:%`).is("gone_at", null).lt("last_seen", now).select("id");
   const blr = rows.filter((r) => r.blr).length;
   // every employer row on this feed is now read
-  await db.from("employers").update({ read_at: now, read_error: null, openings: rows.length, blr_openings: blr }).eq("ats", feed.system).eq("ats_ref", feed.ref);
+  await db.from("employers").update({ read_at: feed.partial ? new Date(Date.now() - 19 * 3600e3).toISOString() : now, read_error: feed.partial ? `partial read (${rows.length} seen) — nothing marked gone; retrying` : null, openings: rows.length, blr_openings: blr }).eq("ats", feed.system).eq("ats_ref", feed.ref);
   return { jobs: rows.length, blr, gone: gone?.length ?? 0, held: false };
 }
 

@@ -18,6 +18,7 @@ export interface Feed {
   company_name: string | null;// the system's own name for the employer, when it tells us (used to catch wrong matches)
   jobs: FeedJob[];
   debug?: string;             // how the read went (pages, totals) — shown in the self-test
+  partial?: boolean;          // some pages failed: what is here is true, what is missing may not be gone
 }
 
 export interface System {

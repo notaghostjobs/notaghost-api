@@ -268,6 +268,17 @@ async function setPriorities() {
     log("reresolve none/page", error ? error.message : `${data?.length ?? 0} employers queued`);
   });
   // 9 Nov, night: every employer we gave up on, back through the resolver now that it knows the Indian and small systems.
+  // 9 Nov evening: Accenture's Workday read came back with 2,002 of ~8,250 (slices failed under load) and Wipro's with 55%;
+  // both passed the old one-fifth rule and 7,700 live roles were marked gone. Put them back as they were and read both again now.
+  await onceOnly("restore-9nov-partial-reads-v1", async () => {
+    let restored = 0;
+    for (const [source, like] of [["workday", "accenture/%"], ["successfactors", "wipro%"]] as const) {
+      const { data } = await db.from("sightings").update({ gone_at: null }).eq("source", source).like("source_id", like).gte("gone_at", "2026-11-09T12:00:00Z").select("id");
+      restored += data?.length ?? 0;
+      await db.from("employers").update({ read_at: null, read_error: "restored after a partial read; re-reading" }).eq("ats", source).like("ats_ref", like);
+    }
+    log("restore 9 Nov", `${restored} sightings back; Accenture and Wipro queued to read now`);
+  });
   await onceOnly("reresolve-none-full-v1", async () => {
     const { data, error } = await db.from("employers").update({ resolved_at: null, resolve_error: null }).eq("ats", "none").select("key");
     log("reresolve none (full detector set)", error ? error.message : `${data?.length ?? 0} employers queued`);

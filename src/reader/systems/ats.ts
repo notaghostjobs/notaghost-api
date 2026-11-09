@@ -142,6 +142,7 @@ export const workday: System = {
       }
     };
     // 1. probe: learn the facets (an empty search returns the full facet tree)
+    let partial = false;   // set when any page of the read failed: the feed is then true but incomplete
     let probe = await post({ appliedFacets: {}, limit: 20, offset: 0, searchText: "" });
     if (probe.status === 404) return null;
     // some tenants (Walmart, Wipro) answer 422 to an empty search; a worded search still returns the facet tree
@@ -156,7 +157,7 @@ export const workday: System = {
         for (let offset = 0; offset < 2000; offset += 20) {
           if (offset % 200 === 0) progress(`workday ${ref} offset ${offset}${maxTotal ? `/${maxTotal}` : ""}, ${jobs.length} read`);
           const r = await post({ appliedFacets: applied, limit: 20, offset, searchText: "" });
-          if (!r.ok || !r.data) { diag.push(`@${offset} HTTP ${r.status}`); break; }
+          if (!r.ok || !r.data) { diag.push(`@${offset} HTTP ${r.status}`); partial = true; break; }
           const t = Number(r.data.total ?? 0); if (t > maxTotal) maxTotal = t;
           const pg: any[] = r.data.jobPostings ?? []; got += pg.length; take(pg, true);
           if (pg.length < 20) break;
@@ -192,7 +193,7 @@ export const workday: System = {
       }
     }
     diag.push(`locations e.g. ${[...new Set(jobs.map((j) => j.location))].slice(0, 5).join(" | ")}`);
-    return { system: "workday", ref, board_url: `${base}/${site}`, company_name: null, jobs, debug: diag.join("; ") };
+    return { system: "workday", ref, board_url: `${base}/${site}`, company_name: null, jobs, debug: diag.join("; "), partial };
   },
 };
 
