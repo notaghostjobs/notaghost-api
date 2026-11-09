@@ -37,7 +37,7 @@ app.get("/health", async (c) => {
   const { data: ur } = await db.from("reader_control").select("value").like("key", "unreadable:%").gt("updated_at", since);
   const rows = (ur ?? []).map((r: any) => r.value ?? {});
   const reader = { window_h: 3, unreadable: rows.length, recovered: rows.filter((v: any) => v.recovered).length, failed: rows.filter((v: any) => !v.recovered).length };
-  return c.json({ ok: !error, v: "0.1.3", db: error ? JSON.stringify(error) : "ok", raw, url: env.supabaseUrl, keylen: env.supabaseServiceKey.length, otp: env.otpProvider, dev_code: !!process.env.OTP_DEV_CODE, reader });
+  return c.json({ ok: !error, v: "0.1.3", commit: (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || null, db: error ? JSON.stringify(error) : "ok", raw, url: env.supabaseUrl, keylen: env.supabaseServiceKey.length, otp: env.otpProvider, dev_code: !!process.env.OTP_DEV_CODE, reader });
 });
 app.route("/auth", auth);
 app.route("/resumes", resumes);

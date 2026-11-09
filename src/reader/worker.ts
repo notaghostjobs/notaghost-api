@@ -295,8 +295,8 @@ async function runWorkdayScan() {
 
 async function main() {
   log("worker up");
-  await setControl("heartbeat", { boot, at: new Date().toISOString(), build: "f051051+" });
-  setInterval(() => void setControl("heartbeat", { boot, at: new Date().toISOString(), build: "f051051+", rss_mb: Math.round(process.memoryUsage().rss / 1048576) }), 60000);
+  await setControl("heartbeat", { boot, at: new Date().toISOString(), build: (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || "local" });
+  setInterval(() => void setControl("heartbeat", { boot, at: new Date().toISOString(), build: (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || "local", rss_mb: Math.round(process.memoryUsage().rss / 1048576) }), 60000);
   // these three already ran earlier tonight; mark them done so this boot does not repeat them
   for (const k of ["workday-facet-reread-v1", "page-reresolve-v1", "tier1-first-run-v1"]) { const d = await getControl<{ at: string }>(`once:${k}`); if (!d?.at) await setControl(`once:${k}`, { at: "2026-10-24T17:30:00.000Z", note: "already done before onceOnly existed" }); }
   await setPriorities();
