@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
-import { isTester } from "../lib/testers.js";
+import { isRadarTester as isTester } from "../lib/testers.js";
 import { json, MODEL } from "../engine/claude.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
 import { assess } from "../engine/fit.js";
