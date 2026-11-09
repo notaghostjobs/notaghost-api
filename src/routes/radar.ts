@@ -51,6 +51,22 @@ const norm = (t: string) => (t ?? "").toLowerCase().replace(/[’']/g, "").repla
 const STOP = new Set(["and", "the", "of", "for", "in", "to", "with", "a", "an", "at", "on", "or", "&", "ii", "iii", "i", "india", "bengaluru", "bangalore", "remote"]);
 const words = (t: string) => norm(t).split(" ").filter((w) => w && !STOP.has(w) && w.length > 1);
 const stem = (w: string) => w.replace(/(ies)$/, "y").replace(/(ing|ers?|s)$/, "");
+/** Words that say how senior a role is, or nothing at all — never what the job is. They never decide a title match (9 Nov:
+ *  with them counted, "Director, Project Management" beat "Category Manager" for a category person every time). */
+const GENERIC = new Set("management manager mgr mgmt head director lead leader senior sr jr junior associate assistant specialist executive officer analyst coordinator principal staff chief vp president vice avp gm general group global regional national team role roles ind karnataka hybrid level l1 l2 l3 new founder founders cofounder co ex".split(" "));
+const fstem = (w: string) => { let x = w.replace(/(ies)$/, "y"); if (x.endsWith("ment") && x.length > 7) x = x.replace(/e?ment$/, ""); return x.replace(/(ing|ers?|s)$/, ""); };
+/** The function words of a title: what the job is, stemmed, level words and filler gone. */
+const fwords = (t: string) => words(t).filter((w) => !GENERIC.has(w) && !/^\d+$/.test(w)).map(fstem);
+let idfCache: { at: number; n: number; df: Map<string, number> } | null = null;
+/** How rare each function word is across the city's live titles — "category" is heavy, "business" is light. Refreshed hourly. */
+function titleIdf(pool: Sighting[]) {
+  if (idfCache && Date.now() - idfCache.at < 3600e3) return idfCache;
+  const df = new Map<string, number>();
+  for (const s of pool) for (const w of new Set(fwords(s.title ?? ""))) df.set(w, (df.get(w) ?? 0) + 1);
+  idfCache = { at: Date.now(), n: pool.length, df };
+  return idfCache;
+}
+const idfOf = (w: string) => { const c = idfCache; if (!c) return 1; return Math.log((c.n + 1) / ((c.df.get(w) ?? 0) + 1)) + 0.2; };
 
 const currentResume = async (userId: string) => {
   const { data } = await db.from("resumes").select("id, parsed").eq("user_id", userId).eq("is_current", true).order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -125,7 +141,7 @@ async function gonePool(): Promise<Gone[]> {
 const dayKey = (iso: string) => new Date(new Date(iso).getTime() + 5.5 * 3600e3).toISOString().slice(0, 10);   // IST calendar day
 /** Fourteen days of came-in / went-quiet, oldest first, today last. `keep` filters both pools (personal strips). */
 export async function pulse(keep?: (title: string) => boolean) {
-  const [live, gone] = await Promise.all([livePool(), gonePool()]);
+  const [live, gone] = await Promise.all([livePool(), gonePool()]); titleIdf(live);
   const days: { day: string; in: number; out: number }[] = [];
   for (let i = 13; i >= 0; i--) days.push({ day: dayKey(new Date(Date.now() - i * 86400e3).toISOString()), in: 0, out: 0 });
   const idx = new Map(days.map((d, i) => [d.day, i]));
@@ -150,24 +166,31 @@ async function companiesChecked(): Promise<number> {
 }
 
 /** Title match, ₹0: overlap between the sighting's title and any target title, with a level check. */
+/** How well a live title matches one of the titles we search with: function words only, rarity-weighted — the share of the
+ *  target's meaning the live title carries (70%) and how much of the live title that explains (30%). Level words then
+ *  adjust: a head-level person may be shown manager roles (India's ladders differ); a non-head person sees head roles only
+ *  as a stretch; nobody but an IC sees intern or trainee roles. `targets` are the search titles already split into words. */
 function titleScore(title: string, targets: string[][], level: Targets["level"], stretch: boolean): number {
-  const tw = words(title).map(stem); if (!tw.length) return 0;
+  const tw = new Set(fwords(title)); if (!tw.size) return 0;
+  const twTot = [...tw].reduce((n, w) => n + idfOf(w), 0);
   let best = 0;
   for (const tg of targets) {
-    const set = new Set(tg.map(stem));
-    const hit = tw.filter((w) => set.has(w)).length;
-    const s = hit / Math.max(tg.length, 1) * 0.7 + hit / tw.length * 0.3;
-    if (s > best) best = s;
+    const tf = [...new Set(tg.filter((w) => !GENERIC.has(w) && !/^\d+$/.test(w)).map(fstem))];
+    if (!tf.length) continue;
+    const tot = tf.reduce((n, w) => n + idfOf(w), 0);
+    const hit = tf.filter((w) => tw.has(w)).reduce((n, w) => n + idfOf(w), 0);
+    if (!hit) continue;
+    const sc = (hit / tot) * 0.7 + (hit / twTot) * 0.3;
+    if (sc > best) best = sc;
   }
   if (best === 0) return 0;
-  const lv = LEVEL_WORDS[level].test(title);
   const senior = /\b(head|director|vp|vice president|svp|chief|president)\b/i.test(title);
   const junior = /\b(intern|trainee|fresher|junior|apprentice)\b/i.test(title);
-  if (level !== "head" && senior) best *= stretch ? 0.6 : 0.3;
+  if (level !== "head" && senior) best *= stretch ? 0.7 : 0.5;
   if (level !== "ic" && junior) best *= 0.2;
-  if (!lv && !stretch) best *= 0.85;
   return best;
 }
+const TITLE_IN = 0.35;   // a title enters the long list at or above this
 
 /** The posting checklist for a sighting — parsed once, shared by every candidate. */
 async function postingFor(sightingId: number): Promise<{ posting: PostingProfile; text: string } | null> {
@@ -371,7 +394,7 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
   const save = () => kv.set(key, run);
   try {
     await save();
-    const pool = await livePool(); run.pool = pool.length;
+    const pool = await livePool(); run.pool = pool.length; titleIdf(pool);
     // the titles we search with: what the recruiter named, plus the résumé's own recent titles verbatim — a BU head who was
     // a Senior Category Manager is searched as both; the market's plain "Category Manager" must never lose to "Director, Operations"
     const ownTitles = (resume.parsed.roles ?? []).slice(0, 3).map((r) => (r.title ?? "").replace(/[|/,(].*$/, "").trim()).filter((t) => t.length > 3);
@@ -383,7 +406,7 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     // list ranked by word overlap let "Director, Business Operations" crowd out every "Category Manager")
     const longList: Sighting[] = []; const seenIds = new Set<number>();
     for (const tw of targetWords) {
-      const mine = eligible.map((s) => ({ s, sc: titleScore(s.title ?? "", [tw], answers.level, answers.stretch) })).filter((x) => x.sc > 0.3).sort((a, b) => b.sc - a.sc || Date.parse(b.s.first_seen) - Date.parse(a.s.first_seen));
+      const mine = eligible.map((s) => ({ s, sc: titleScore(s.title ?? "", [tw], answers.level, answers.stretch) })).filter((x) => x.sc >= TITLE_IN).sort((a, b) => b.sc - a.sc || Date.parse(b.s.first_seen) - Date.parse(a.s.first_seen));
       const perEmp: Record<string, number> = {}; let n = 0;
       for (const { s } of mine) { if (seenIds.has(s.id)) continue; const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 20) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; seenIds.add(s.id); longList.push(s); if (++n >= 60) break; }
     }
@@ -441,7 +464,7 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
   running.add(userId);
   try {
     const now = new Date().toISOString();
-    const pool = await livePool();
+    const pool = await livePool(); titleIdf(pool);
     const liveIds = new Set(pool.map((s) => s.id));
     // 1. roles that went quiet leave the list
     const gone = run.items.filter((i) => !liveIds.has(i.sighting_id));
@@ -457,7 +480,7 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
       .filter((s) => s.readable && !seen.has(s.id) && Date.parse(s.first_seen) >= since)
       .filter((s) => !avoid.some((a) => norm(s.company_name ?? "").includes(a) || norm(s.title).includes(a)))
       .map((s) => ({ s, sc: titleScore(s.title ?? "", targetWords, run.answers.level, run.answers.stretch) }))
-      .filter((x) => x.sc > 0.3)
+      .filter((x) => x.sc >= TITLE_IN)
       .sort((a, b) => b.sc - a.sc);
     const perEmp: Record<string, number> = {}; const longList: Sighting[] = [];
     for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 12) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 240) break; }
@@ -556,7 +579,7 @@ radar.get("/test/targets", async (c) => {
   let t = await kv.get<Targets>(key);
   if (!t) { t = await withMeter({ tag: "radar:targets", user: u.id }, () => deriveTargets(resume.parsed)); await kv.set(key, t); }
   // live count and came-in-today per title, from the pool (₹0)
-  const pool = await livePool(); const since = Date.now() - 86400e3;
+  const pool = await livePool(); titleIdf(pool); const since = Date.now() - 86400e3;
   const counts = t.titles.map((title) => { const tw = [words(title)]; let live = 0, today = 0; for (const s of pool) { if (titleScore(s.title ?? "", tw, t.level, true) >= 0.5) { live++; if (Date.parse(s.first_seen) >= since) today++; } } return { title, live, today }; });
   const my = (title: string) => titleScore(title, t.titles.map(words), t.level, true) >= 0.5;
   const mine = await pulse(my);
@@ -599,8 +622,8 @@ async function preQuestions(userId: string, t: Targets): Promise<{ questions: Ga
   const key = `radar:pq:${[...t.titles].map(norm).sort().join("|").slice(0, 200)}:${t.level}`;
   const cached = await kv.get<{ questions: Gap[]; from: number; at: string }>(key);
   if (cached && Date.now() - Date.parse(cached.at) < 24 * 3600e3 && cached.from >= 10) return cached;
-  const pool = await livePool(); const tw = t.titles.map(words).filter((w) => w.length);
-  const ids = pool.filter((s) => s.readable && titleScore(s.title ?? "", tw, t.level, true) > 0.3).map((s) => s.id).slice(0, 600);
+  const pool = await livePool(); titleIdf(pool); const tw = t.titles.map(words).filter((w) => w.length);
+  const ids = pool.filter((s) => s.readable && titleScore(s.title ?? "", tw, t.level, true) >= TITLE_IN).map((s) => s.id).slice(0, 600);
   const groups: { requirement: string; kind: "must" | "nice"; n: number; weight: number }[] = [];
   let from = 0;
   for (let i = 0; i < ids.length; i += 100) {
