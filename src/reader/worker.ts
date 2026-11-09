@@ -248,6 +248,13 @@ async function setPriorities() {
     log("known refs", `${updated} employers pointed at a verified feed, ${inserted} added, ${kept} already readable`);
     await setControl("known_refs_v1", { at: new Date().toISOString(), updated, inserted, kept, listed: KNOWN.length });
   });
+  // 9 Nov: text-less live roles that the new detail readers can now open — Oracle (REST details), Phenom (inline job JSON),
+  // Workday /apply links — go back in the enrichment queue once. IBM stays out: its pages are script-only and its search
+  // API carries a 250-character summary, not the posting.
+  await onceOnly("enrich-retry-detail-v2", async () => {
+    const { data, error } = await db.from("sightings").update({ enriched_at: null, enrich_error: null }).is("gone_at", null).eq("blr", true).is("description", null).not("enriched_at", "is", null).in("source", ["oracle", "phenom", "workday", "page", "greenhouse", "lever", "ashby"]).select("id");
+    log("enrich retry v2", error ? error.message : `${data?.length ?? 0} sightings queued`);
+  });
   await onceOnly("reresolve-none-workday-v1", async () => {
     const { data, error } = await db.from("employers").update({ resolved_at: null, resolve_error: null }).in("ats", ["none", "page"]).lte("priority", 1).select("key");
     log("reresolve none/page", error ? error.message : `${data?.length ?? 0} employers queued`);
