@@ -14,7 +14,9 @@ export async function recordFeed(e: Employer, feed: Feed) {
   // on the next cycle; accept the drop only once it has held for three consecutive reads.
   const { count: liveBefore } = await db.from("sightings").select("*", { count: "exact", head: true }).eq("source", feed.system).like("source_id", `${feed.ref}:%`).is("gone_at", null);
   const before = liveBefore ?? 0;
-  if (before > 0 && (feed.jobs.length === 0 || (before >= 50 && feed.jobs.length < before / 5))) {
+  // A feed of 50+ that comes back with fewer than 60% of what was live is held too: a page that failed, a facet that
+  // changed or a read cut short under load looks exactly like a hiring freeze to the code, and nothing hires that way.
+  if (before > 0 && (feed.jobs.length === 0 || (before >= 50 && feed.jobs.length < before * 0.6))) {
     const { data: prev } = await db.from("employers").select("read_error").eq("key", e.key).maybeSingle();
     const held = Number(prev?.read_error?.match(/held (\d+)x/)?.[1] ?? 0) + 1;
     if (held < 3) {
