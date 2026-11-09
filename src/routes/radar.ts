@@ -488,6 +488,16 @@ export async function radarMorning(notify: (userId: string, r: { new_shots: numb
   return n;
 }
 
+/** Testers: wipe this account's Radar — run, matches, unlock, cached targets, remembered answers — to walk the flow from scratch. */
+radar.post("/test/reset", async (c) => {
+  const u = c.get("user");
+  if (!isTester(u)) return c.json({ error: "Not available on this account." }, 403);
+  if (running.has(u.id)) return c.json({ error: "A run is in progress; wait for it to finish." }, 409);
+  for (const pat of [`radar:run:${u.id}`, `radar:unlock:${u.id}`, `told:${u.id}`]) await db.from("reader_control").delete().eq("key", pat);
+  for (const pat of [`radar:m:${u.id}:%`, `radar:targets:${u.id}:%`]) await db.from("reader_control").delete().like("key", pat);
+  return c.json({ ok: true });
+});
+
 /** Testers: run this morning's refresh on your own account now. */
 radar.post("/test/refresh", async (c) => {
   const u = c.get("user");
@@ -634,7 +644,7 @@ radar.get("/test/result", async (c) => {
   const shots = scored.filter((i) => (i.promised ?? 0) >= SHOT);
   const since = Date.now() - 86400e3;
   const oldest = shots.reduce((m, i) => Math.max(m, (Date.now() - Date.parse(i.first_seen)) / 86400e3), 0);
-  const reveal = { shots: shots.length, opened_today: shots.filter((i) => Date.parse(i.first_seen) >= since).length, within_reach: scored.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < SHOT).length, oldest_days: Math.round(oldest),
+  const reveal = { by_title: run.by_title ?? 0, examined: run.examined ?? run.picked ?? 0, shots: shots.length, opened_today: shots.filter((i) => Date.parse(i.first_seen) >= since).length, within_reach: scored.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < SHOT).length, oldest_days: Math.round(oldest),
     // the taste: the employer and the shot, the role hidden
     taste: shots.slice(0, 3).map((i) => ({ company: i.company, location: i.location, now: i.now, promised: i.promised, first_seen: i.first_seen, posted_at: i.posted_at })) };
   const my = (title: string) => titleScore(title, run.answers.titles.map(words), run.answers.level, true) >= 0.5;
