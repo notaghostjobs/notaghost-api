@@ -4,9 +4,11 @@ import { statedBand, titleBucket } from "../reader/experience.js";
 
 /** Years the candidate has vs the band the posting states. One year over the ceiling is out ("2-3 years" is not for a
  *  six-year manager); two or more under the floor is out. A posting that states nothing passes here. */
+const SHORT_BAND = /(\d{1,2})\s*(?:Y|yrs?|years?)?\s*(?:-|–|to)\s*(\d{1,2})\s*(?:Y\b|yrs?\b|years?\b)/i;   // "1Y - 6Y", "3 - 5 yrs" as some boards print it
 export function bandGate(years: number, text: string): string | null {
   if (!years) return null;
-  const b = statedBand(text);
+  let b = statedBand(text);
+  if (!b) { const m = (text ?? "").slice(0, 12000).match(SHORT_BAND); if (m && Number(m[2]) >= Number(m[1]) && Number(m[2]) <= 30) b = { min: Number(m[1]), max: Number(m[2]) }; }
   if (!b) return null;
   if (b.max !== null && years > b.max + 1) return `asks ${b.min}–${b.max} years; you have ${years}`;
   if (years + 2 <= b.min) return `asks ${b.min}+ years; you have ${years}`;
@@ -24,7 +26,8 @@ export function titleGate(title: string, level: string, stretch: boolean, years:
     // the title says junior; only a stated band that fits the candidate rescues it ("Principal Associate, 1-6 years")
     const b = statedBand(text);
     if (b && b.max !== null && years <= b.max + 1 && years >= b.min) return null;
-    return `the title is ${titleBucket(title).replace("2-4", "an associate-level").replace("fresher", "an entry-level")} seat`;
+    const name: Record<string, string> = { fresher: "an entry-level", "2-4": "an associate-level", "4-6": "a senior-associate", "6-8": "a manager-level", "8-10": "a senior-manager", "10+": "a head-level" };
+    return `the title is ${name[titleBucket(title)] ?? "a junior"} seat for your level`;
   }
   return null;
 }
@@ -61,3 +64,38 @@ export function resumeBlob(parsed: unknown, text?: string | null): string {
 }
 
 export const GATE_CAP = 55;   // a gated role can never read as a shot or almost: it sits in "close the gap" with the gate named
+
+/** Years of experience from the résumé's own dates — earliest role start to the latest end (or today) — rather than a
+ *  model's guess. "Sep 2014 → Present" is twelve years whatever the headline says. Null when no role has a parsable date. */
+const MONTHS: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11 };
+export function parseWhen(s: string | null | undefined, end = false): Date | null {
+  const t = (s ?? "").trim().toLowerCase();
+  if (!t) return null;
+  if (/present|current|till date|to date|now|ongoing/.test(t)) return new Date();
+  const m = t.match(/([a-z]{3,9})?[\s.,'-]*((?:19|20)\d{2})/);
+  if (!m) return null;
+  const y = Number(m[2]); const mo = m[1] ? MONTHS[m[1].slice(0, 4)] ?? MONTHS[m[1].slice(0, 3)] : undefined;
+  return new Date(y, mo ?? (end ? 11 : 0), end ? 28 : 1);
+}
+export function yearsFromRoles(roles: { start?: string | null; end?: string | null; title?: string | null }[] | undefined): number | null {
+  let first: Date | null = null, last: Date | null = null;
+  for (const r of roles ?? []) {
+    const a = parseWhen(r.start), b = parseWhen(r.end, true) ?? (r.start ? new Date() : null);
+    if (a && (!first || a < first)) first = a;
+    if (b && (!last || b > last)) last = b;
+  }
+  if (!first || !last) return null;
+  const y = (last.getTime() - first.getTime()) / (365.25 * 86400e3);
+  return y > 0 && y < 50 ? Math.round(y * 2) / 2 : null;
+}
+
+/** The level a recruiter reads off the latest employed title (a founder line is skipped: it says nothing about the seat
+ *  they would be hired into). */
+export function levelFromRoles(roles: { title?: string | null }[] | undefined): "ic" | "lead" | "manager" | "head" | null {
+  const t = (roles ?? []).map((r) => (r.title ?? "").toLowerCase()).find((x) => x && !/\b(founder|co-?founder|owner|proprietor|self[- ]employed|freelanc)/.test(x));
+  if (!t) return null;
+  if (/\b(chief|ceo|cfo|coo|cto|president|vice president|vp|svp|evp|avp|director|head|bu head|general manager|gm|dgm)\b/.test(t)) return "head";
+  if (/\b(senior manager|sr\.? manager|manager|group manager|program manager|product manager)\b/.test(t)) return "manager";
+  if (/\b(lead|principal|staff|architect|supervisor)\b/.test(t)) return "lead";
+  return "ic";
+}

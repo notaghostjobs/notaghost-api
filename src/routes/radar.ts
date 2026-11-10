@@ -13,7 +13,7 @@ import { json, MODEL } from "../engine/claude.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
 import { assess } from "../engine/fit.js";
 import { charge, withMeter } from "../engine/meter.js";
-import { bandGate, titleGate, pedigreeGate, gateFromMissing, resumeBlob, GATE_CAP } from "../radar/gates.js";
+import { bandGate, titleGate, pedigreeGate, gateFromMissing, resumeBlob, GATE_CAP, yearsFromRoles, levelFromRoles } from "../radar/gates.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
 
 export const radar = new Hono<{ Variables: { user: User } }>();
@@ -87,6 +87,15 @@ const kv = {
 
 /** What this person is a fit for, from the profile alone — the questionnaire is pre-filled from it. */
 async function deriveTargets(p: ResumeProfile): Promise<Targets> {
+  const t = await deriveTargetsModel(p);
+  // the dates and the latest title decide years and level, not the model: "Sep 2014 → Present" is twelve years, and a
+  // Director is not a manager whatever the headline says
+  const y = yearsFromRoles(p.roles), lv = levelFromRoles(p.roles);
+  if (y !== null) t.years = Math.max(y, Number(p.years_total ?? 0));
+  if (lv) t.level = lv;
+  return t;
+}
+async function deriveTargetsModel(p: ResumeProfile): Promise<Targets> {
   const brief = { headline: p.headline, years: p.years_total, roles: (p.roles ?? []).slice(0, 6).map((r) => ({ company: r.company, title: r.title, start: r.start, end: r.end, bullets: (r.bullets ?? []).slice(0, 4) })), skills: (p.skills ?? []).slice(0, 14).map((s: any) => s?.name ?? s) };
   return json<Targets>(
     `You read a candidate's profile and say what roles they are a realistic fit for in Bengaluru today — the titles a recruiter would shortlist them for, not aspirations. Be concrete and conventional in title wording (the words employers use on their own careers pages).`,
@@ -254,7 +263,7 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   // the years gate (9 Nov): a posting's own band against the person's years, both ways. Four or more years over the band's
   // top is a level mismatch a recruiter screens out ("2-5 years" is not for a ten-year BU head); two or more under the
   // band's floor is not a shot either. Read from the posting's text with the experience parser; free.
-  const years = Number(resume.parsed.years_total ?? t.years ?? 0);
+  const years = Math.max(Number(resume.parsed.years_total ?? 0), Number(t.years ?? 0), yearsFromRoles(resume.parsed.roles) ?? 0);
   let droppedBand = 0;
   const trail: NonNullable<Run["trail"]> = [];
   const tws = [...new Set([...a.titles, ...(resume.parsed.roles ?? []).slice(0, 3).map((r) => (r.title ?? "").replace(/[|/,(].*$/, "").trim())])].map(words).filter((w) => w.length);
