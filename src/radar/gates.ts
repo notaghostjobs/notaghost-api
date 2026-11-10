@@ -35,17 +35,26 @@ const SEAT: Record<string, string> = { fresher: "an entry-level", "2-4": "an ass
 export function titleGate(title: string, level: string, stretch: boolean, years: number, text: string): string | null {
   const r = RUNG[titleBucket(title)] ?? -1, want = wantRung(level, years);
   if (r < 0) return null;
-  const b = statedBand(text);
-  const bandFits = !!(b && years >= b.min - 1 && (b.max === null || years <= b.max + 1));
+  const b = realBand(statedBand(text));
   if (r <= want - 2 || (r === want - 1 && !stretch && r <= 1)) {
-    if (b && b.max !== null && years <= b.max + 1 && years >= b.min) return null;
+    if (b && b.max !== null && years <= b.max + 1 && years >= b.min) return null;   // "Principal Associate, 1–6 years" for a five-year person
     return `the title is ${SEAT[titleBucket(title)] ?? "a junior"} seat for your level`;
   }
   if (r >= want + 2) {
-    if (bandFits && b!.min <= years) return null;   // the posting itself says someone with these years is welcome
+    // only a band that plainly welcomes these years rescues a senior title — and "0–1 years" under a Senior Developer is a misread, not a welcome
+    if (b && b.min <= years && b.min >= 1 && (b.max === null || years <= b.max + 1)) return null;
     return `the title is ${SEAT[titleBucket(title)] ?? "a senior"} seat; you are at ${years} years`;
   }
   return null;
+}
+/** A band worth acting on: "0+ years" is a parser's shrug, not a requirement. */
+export function realBand(b: { min: number; max: number | null } | null): { min: number; max: number | null } | null {
+  if (!b) return null;
+  if (b.min === 0 && b.max === null) return null;
+  return b;
+}
+export function bandFits(b: { min: number; max: number | null } | null, years: number): boolean {
+  const r = realBand(b); return !!(r && years >= r.min - 1 && (r.max === null || years <= r.max + 1));
 }
 
 /** A language the posting requires that the résumé does not carry is a gate, not a gap. */
@@ -63,7 +72,7 @@ const OTHER_CITY = /\b(gurugram|gurgaon|mumbai|pune|hyderabad|chennai|new delhi|
 export function cityGate(title: string): string | null {
   const t = title ?? "";
   if (/bengaluru|bangalore|blr\b/i.test(t)) return null;
-  const m = t.match(OTHER_CITY);
+  const m = t.match(new RegExp(OTHER_CITY.source.replace(/\\b$/, ""), "i"));   // "GurugramFull-Time": no word boundary after the city
   return m ? `the title names ${m[1]}` : null;
 }
 

@@ -82,6 +82,7 @@ export function titleBucket(title: string): Bucket | "unknown" {
   if (/\b(intern|internship|trainee|graduate|fresher|apprentice|campus|entry)\b/.test(t)) return "fresher";
   if (/\b(chief|ceo|cfo|cto|coo|president|vice president|vp|svp|evp|avp|director|head)\b/.test(t)) return "10+";
   if (/\b(principal|distinguished|fellow|staff|senior manager|sr\.? manager|general manager|gm|dgm|agm|architect|group manager)\b/.test(t)) return "8-10";
+  if (/\b(assistant manager|associate manager|deputy manager|asst\.? manager)\b/.test(t)) return "4-6";   // India's first management rung, three to six years in
   if (/\b(manager|lead|leader|supervisor)\b/.test(t)) return "6-8";
   if (/\b(senior|sr\.?|iii|expert|consultant)\b/.test(t)) return "4-6";
   if (/\b(junior|jr\.?|associate|assistant|analyst|executive|coordinator|representative|specialist|planner|officer|ii|i)\b/.test(t)) return "2-4";

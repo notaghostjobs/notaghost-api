@@ -6,7 +6,7 @@ import { json, MODEL } from "../engine/claude.js";
 import type { ResumeProfile } from "../engine/sharpen.js";
 import { statedBand, titleBucket } from "../reader/experience.js";
 import { isBlr } from "../reader/blr.js";
-import { bandGate, titleGate, pedigreeGate, languageGate, cityGate, resumeBlob, wantRung } from "./gates.js";
+import { bandGate, titleGate, pedigreeGate, languageGate, cityGate, resumeBlob, wantRung, bandFits as fits } from "./gates.js";
 
 export type Label = "for_you" | "adjacent" | "stretch";
 export type Same = "yes" | "adjacent" | "no";
@@ -19,7 +19,7 @@ export async function functionCheck(cand: { one_line: string; functions: string[
     `You are a fair Bengaluru recruiter doing the first screen, and you answer ONE question per posting: is this posting the same FUNCTION as the candidate's work?
 "yes" — the day-to-day work of this posting is what the candidate has done for most of their recent years (same craft: e.g. category management for a category manager; program management for a program manager; data engineering for a data engineer). Industry may differ; the craft must not.
 "adjacent" — a neighbouring craft a recruiter would still consider (program ↔ business operations; category ↔ key-account/vendor management in commerce; data engineering ↔ data platform/analytics engineering).
-"no" — a different craft, however similar the title words: a "Key Account Manager" in field sales is not category management; a "PMO" in pharma clinical operations is not consumer-tech program management; a procurement "Category Manager" is not e-commerce category management; "Program Manager" in engineering services delivery is not product program management.
+"no" — a different craft, however similar the title words: a "Key Account Manager" in field sales is not category management; a "PMO" in pharma clinical operations is not consumer-tech program management; a procurement "Category Manager" is not e-commerce category management; "Program Manager" in engineering services delivery is not product program management; a Technical Program Manager running engineering releases, chip/IP development or software platforms is not the craft of a business or operations program manager (and the reverse) unless the candidate has done that technical work; HRIS/Workday project management, Scrum Master, SAP programme delivery and sales-ops reporting are their own crafts, not "adjacent" to general program or business operations.
 Judge the posting's actual requirements, not its title. Years and level are already checked; do not judge them. "why": at most 15 words, quoting or paraphrasing the posting's own requirement that decided it. Never invent a requirement.`,
     `CANDIDATE: ${cand.one_line}\nFunctions: ${cand.functions.join("; ")}. Years: ${cand.years}. Level: ${cand.level}.\n\nPOSTINGS:\n${batch.map((b, i) => `#${i + 1} (id ${b.id}) ${b.title} — ${b.company}\n${b.text.replace(/\s+/g, " ").slice(0, 1800)}`).join("\n\n")}\n\nReturn: {verdicts:[{id, same: "yes"|"adjacent"|"no", why}]} — one per posting, by id.`,
     1400, MODEL
@@ -43,7 +43,8 @@ const WORLD: { key: string; re: RegExp }[] = [
   { key: "data_eng", re: /\b(data engineer|data platform|etl|databricks|data architect|analytics engineer)\b/i },
   { key: "data_sci", re: /\b(data scientist|machine learning|ml engineer|applied scientist|research scientist)\b/i },
   { key: "finance", re: /\b(accountant|accounting|controller|treasury|audit|tax|fp&a|financial analyst|fund (accounting|services)|valuation|billing)\b/i },
-  { key: "hr", re: /\b(human resources|\bhr\b|talent acquisition|recruiter|recruitment|payroll|l&d|learning and development)\b/i },
+  { key: "hr", re: /\b(human resources|\bhr\b|hrcs|hris|hr(is|ms)? (project|program)|workday hcm|talent acquisition|recruiter|recruitment|payroll|l&d|learning and development)\b/i },
+  { key: "agile_process", re: /\b(scrum master|agile coach|release train engineer|operations engineer)\b/i },
   { key: "legal", re: /\b(legal counsel|lawyer|paralegal|compliance officer|company secretary)\b/i },
   { key: "procurement", re: /\b(procurement|sourcing manager|purchase|buyer\b|vendor development)\b/i },
   { key: "design", re: /\b(ux|ui designer|visual design|graphic|interior design|visual merchandis)\b/i },
@@ -61,6 +62,7 @@ const RESUME_WORLD: Record<string, RegExp> = {
   procurement: /\b(procurement|sourcing|purchase|buyer|vendor)\b/i,
   design: /\b(design|ux|ui|creative)\b/i,
   facilities: /\b(facilities|administration|admin)\b/i,
+  agile_process: /\b(scrum|agile|safe|release train|sprint)\b/i,
 };
 export function worldExclusion(title: string, resumeText: string): string | null {
   for (const w of WORLD) {
@@ -79,7 +81,7 @@ export function nearMiss(years: number, level: string, title: string, text: stri
   const RUNG: Record<string, number> = { fresher: 0, "2-4": 1, "4-6": 2, "6-8": 3, "8-10": 4, "10+": 5 };
   const NAME: Record<string, string> = { fresher: "an entry-level", "2-4": "an associate-level", "4-6": "a senior-associate", "6-8": "a manager-level", "8-10": "a senior-manager", "10+": "a head-level" };
   const r = RUNG[titleBucket(title)], want = wantRung(level, years);
-  const bandFits = !!(b && years >= b.min - 1 && (b.max === null || years <= b.max + 1));
+  const bandFits = fits(b, years);
   if (r !== undefined && r === want - 1 && !bandFits) return `${NAME[titleBucket(title)]} title, one rung below yours`;
   if (r !== undefined && r === want + 1 && !bandFits) return `${NAME[titleBucket(title)]} title, one rung above yours`;
   return null;
