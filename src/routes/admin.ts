@@ -1,3 +1,4 @@
+import { panelLast } from "./radar.js";
 import { Hono } from "hono";
 import { experienceSplit } from "../reader/experience.js";
 import { meterDays } from "../engine/meter.js";
@@ -22,7 +23,7 @@ const both = (method: "get" | "post") => (path: string, h: H) => { (admin as any
 const on = { get: both("get"), post: both("post") };
 // the secret may come as a header, a ?key= query, or a path segment (/admin/r/<secret>/...) for fetch tools that refuse key-bearing queries
 // AUDIT_SECRET is a second, read-only key: it opens GET endpoints only (stats, postings, employers, sightings), never anything that writes or runs the reader
-const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|meter|diag\/radar|diag\/razorpay|reader\/(stats|status|probe|employers|sightings|experience|gone))$/;
+const READ_ONLY = /^\/admin\/(postings|unreadable|diag\/posting|diag\/shot|diag\/resumes|payments|previews|shots|funnel|audit\/signals|whatsapp(\/status|\/templates)?|sharpen\/selftest(\/result)?|meter|diag\/radar|diag\/razorpay|reader\/(stats|status|probe|employers|sightings|experience|gone)|radar\/panel)$/;
 admin.use("*", async (c, next) => {
   const fromPath = c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1];
   const k = c.req.header("x-admin") ?? c.req.query("key") ?? fromPath;
@@ -114,6 +115,14 @@ on.get("/reader/stats", async (c) => {
 
 /** Employers with what we decided and why; filter by system. */
 // Roles marked gone since a time, grouped by employer and system — the read-only answer to "where did the count go?"
+// The Radar panel: the last run of the live pipeline on the stored résumés, checked against employers' live pages. Read-only.
+on.get("/radar/panel", async (c) => {
+  const last = await panelLast();
+  if (!last) return c.json({ status: "not run yet" });
+  const brief = c.req.query("full") !== "1";
+  return c.json(brief ? { ...last, resumes: last.resumes.map((r) => ({ ...r, items: r.items.map((i) => ({ label: i.label, title: i.title, company: i.company, why: i.why, band_text: i.band_text, near: i.near, live_check: i.live_check })) })) } : last);
+});
+
 on.get("/reader/gone", async (c) => {
   const since = c.req.query("since") ?? new Date(Date.now() - 6 * 3600e3).toISOString();
   const rows: { source: string | null; employer_key: string | null; company_name: string | null; gone_at: string }[] = [];

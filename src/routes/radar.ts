@@ -338,6 +338,23 @@ async function rescore(_userId: string, run: Run, _requirement: string, _apply: 
   tally(run);
 }
 
+/** The long list, ₹0: the best hundred live roles for each title we search with — the recruiter's titles plus the résumé's
+ *  own recent ones — twenty per employer, the union. */
+function shortlistFor(pool: Sighting[], parsed: ResumeProfile, answers: Answers): Sighting[] {
+  const ownTitles = (parsed.roles ?? []).slice(0, 3).map((r) => (r.title ?? "").replace(/[|/,(].*$/, "").trim()).filter((t) => t.length > 3);
+  const titles = [...new Set([...answers.titles, ...ownTitles])];
+  const targetWords = titles.map(words).filter((w) => w.length);
+  const avoid = answers.avoid.map(norm).filter(Boolean);
+  const eligible = pool.filter((s) => s.readable).filter((s) => !avoid.some((a) => norm(s.company_name ?? "").includes(a) || norm(s.title).includes(a)));
+  const longList: Sighting[] = []; const seenIds = new Set<number>();
+  for (const tw of targetWords) {
+    const mine = eligible.map((s) => ({ s, sc: titleScore(s.title ?? "", [tw], answers.level, answers.stretch) })).filter((x) => x.sc >= TITLE_IN).sort((a, b) => b.sc - a.sc || Date.parse(b.s.first_seen) - Date.parse(a.s.first_seen));
+    const perEmp: Record<string, number> = {}; let n = 0;
+    for (const { s } of mine) { if (seenIds.has(s.id)) continue; const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 20) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; seenIds.add(s.id); longList.push(s); if (++n >= 100) break; }
+  }
+  return longList;
+}
+
 const runKey = (userId: string) => `radar:run:${userId}`;
 const running = new Set<string>();
 
@@ -348,21 +365,7 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
   try {
     await save();
     const pool = await livePool(); run.pool = pool.length; titleIdf(pool);
-    // the titles we search with: what the recruiter named, plus the résumé's own recent titles verbatim — a BU head who was
-    // a Senior Category Manager is searched as both; the market's plain "Category Manager" must never lose to "Director, Operations"
-    const ownTitles = (resume.parsed.roles ?? []).slice(0, 3).map((r) => (r.title ?? "").replace(/[|/,(].*$/, "").trim()).filter((t) => t.length > 3);
-    const titles = [...new Set([...answers.titles, ...ownTitles])];
-    const targetWords = titles.map(words).filter((w) => w.length);
-    const avoid = answers.avoid.map(norm).filter(Boolean);
-    const eligible = pool.filter((s) => s.readable).filter((s) => !avoid.some((a) => norm(s.company_name ?? "").includes(a) || norm(s.title).includes(a)));
-    // every title gets its own share of the long list: the best sixty live roles for each, then the union (9 Nov — one shared
-    // list ranked by word overlap let "Director, Business Operations" crowd out every "Category Manager")
-    const longList: Sighting[] = []; const seenIds = new Set<number>();
-    for (const tw of targetWords) {
-      const mine = eligible.map((s) => ({ s, sc: titleScore(s.title ?? "", [tw], answers.level, answers.stretch) })).filter((x) => x.sc >= TITLE_IN).sort((a, b) => b.sc - a.sc || Date.parse(b.s.first_seen) - Date.parse(a.s.first_seen));
-      const perEmp: Record<string, number> = {}; let n = 0;
-      for (const { s } of mine) { if (seenIds.has(s.id)) continue; const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 20) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; seenIds.add(s.id); longList.push(s); if (++n >= 100) break; }
-    }
+    const longList = shortlistFor(pool, resume.parsed, answers);
     run.by_title = longList.length; run.status = "picking"; run.dropped_band = 0; await save();
     if (!longList.length) { run.status = "done"; run.finished = new Date().toISOString(); await save(); return; }
     run.status = "scoring"; run.picked = 0; await save();
@@ -495,6 +498,74 @@ export async function radarMorning(notify: (userId: string, r: { new_shots: numb
   }
   await kv.set(lockKey, { started: new Date().toISOString(), done: new Date().toISOString(), users: users.length, refreshed: n });
   return n;
+}
+
+
+/** ---------- the panel (10 Nov): the live pipeline on the résumés we hold, checked against the employers' live pages ----------
+ *  No human reads a list before a customer does; this does. Every stored panel résumé goes through the same discovery as a
+ *  customer's, then every "for you" role is opened on the employer's page and the gates re-run on the LIVE text (not the
+ *  stored copy), and a dead page fails it. Pass = zero failures across the panel. Runs after every deploy and nightly;
+ *  the result is read-only at /admin/radar/panel. */
+export type PanelResult = { at: string; commit: string | null; pass: boolean; cost_calls: number; resumes: { resume_id: string; name: string; years: number; level: string; titles: string[]; by_title: number; examined: number; for_you: number; adjacent: number; stretch: number; items: { title: string; company: string; label: Label; why: string; band_text: string | null; near: string | null; url: string; first_seen: string; live_check: "ok" | string }[]; dropped: Record<string, number>; failures: { title: string; company: string; rule: string }[]; }[]; failures: number };
+const PANEL_KEY = "radar:panel:last";
+let panelRunning = false;
+export async function runPanel(reason: string): Promise<PanelResult | null> {
+  if (panelRunning) return null; panelRunning = true;
+  const commit = (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || null;
+  try {
+    // the panel: the latest résumé of each of the last twelve people who uploaded one (distinct by name)
+    const { data: rows } = await db.from("resumes").select("id, user_id, parsed, created_at").order("created_at", { ascending: false }).limit(60);
+    const byPerson = new Map<string, { id: string; user_id: string; parsed: ResumeProfile }>();
+    for (const r of (rows ?? []) as any[]) { const nm = norm(r.parsed?.name ?? r.user_id); if (!r.parsed?.roles?.length || byPerson.has(nm)) continue; byPerson.set(nm, { id: r.id, user_id: r.user_id, parsed: r.parsed }); if (byPerson.size >= 12) break; }
+    const pool = await livePool(); titleIdf(pool);
+    const out: PanelResult = { at: new Date().toISOString(), commit, pass: true, cost_calls: 0, resumes: [], failures: 0 };
+    for (const r of byPerson.values()) {
+      const tkey = `radar:targets:panel:${r.id}`;
+      let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(r.parsed); await kv.set(tkey, t); out.cost_calls++; }
+      const a: Answers = { titles: t.titles, level: t.level, stretch: false, avoid: (r.parsed.roles ?? []).filter((x) => /present|current|now/i.test(x.end ?? "")).map((x) => (x.company ?? "").split(/[·,(]/)[0].trim()).filter(Boolean) };
+      const run: Run = { status: "scoring", started: new Date().toISOString(), answers: a, resume_id: r.id, pool: pool.length, by_title: 0, picked: 0, scored: 0, items: [], cost_calls: 0, threshold: 0 };
+      const longList = shortlistFor(pool, r.parsed, a); run.by_title = longList.length;
+      const res = await discover({ id: `panel:${r.id}` } as User, { id: r.id, parsed: r.parsed }, t, a, longList, { cap: 40, ceiling: 240, run });
+      out.cost_calls += run.cost_calls;
+      const years = Math.max(Number(r.parsed.years_total ?? 0), Number(t.years ?? 0), yearsFromRoles(r.parsed.roles) ?? 0);
+      const blob = resumeBlob(r.parsed);
+      // the external check: every "for you" role on the employer's live page, gates on the live text, dead pages fail
+      const items: PanelResult["resumes"][number]["items"] = []; const failures: PanelResult["resumes"][number]["failures"] = [];
+      for (const it of res.items) {
+        let live_check = "ok";
+        if (it.label === "for_you") {
+          try {
+            const txt = await readPostingText(it.url);
+            if (!txt || txt.length < 200) live_check = "page unreadable today";
+            else if (DEAD_PAGE.test(txt.slice(0, 3000))) live_check = "page says the job is closed";
+            else live_check = bandGate(years, txt) ?? titleGate(it.title, t.level, false, years, txt) ?? pedigreeGate(txt, blob) ?? "ok";
+          } catch (e) { live_check = `unreachable: ${(e as Error).message.slice(0, 60)}`; }
+          if (live_check !== "ok" && !/unreadable|unreachable/.test(live_check)) failures.push({ title: it.title, company: it.company, rule: live_check });
+        }
+        items.push({ title: it.title, company: it.company, label: it.label!, why: it.why, band_text: it.band_text ?? null, near: it.near ?? null, url: it.url, first_seen: it.first_seen, live_check });
+      }
+      const dropped: Record<string, number> = {};
+      for (const tr of run.trail ?? []) if (tr.dropped) { const k = tr.dropped.replace(/\d+/g, "N").slice(0, 40); dropped[k] = (dropped[k] ?? 0) + 1; }
+      out.resumes.push({ resume_id: r.id, name: r.parsed.name ?? "", years, level: t.level, titles: t.titles, by_title: run.by_title, examined: res.examined, for_you: items.filter((i) => i.label === "for_you").length, adjacent: items.filter((i) => i.label === "adjacent").length, stretch: items.filter((i) => i.label === "stretch").length, items, dropped, failures });
+      out.failures += failures.length;
+    }
+    out.pass = out.failures === 0 && out.resumes.length > 0;
+    await kv.set(PANEL_KEY, { ...out, reason });
+    console.log(`[radar] panel ${out.pass ? "PASS" : "FAIL"}: ${out.resumes.length} résumés, ${out.failures} failures, ${out.cost_calls} calls (${reason})`);
+    return out;
+  } catch (e) { console.error("[radar] panel", (e as Error).message); return null; }
+  finally { panelRunning = false; }
+}
+export async function panelLast(): Promise<(PanelResult & { reason?: string }) | null> { return kv.get<PanelResult & { reason?: string }>(PANEL_KEY); }
+/** After every deploy (a new commit) and once a night at 03:30 IST. Called every ten minutes from index.ts. */
+export async function panelTick(): Promise<void> {
+  const last = await panelLast();
+  const commit = (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || null;
+  const ist = new Date(Date.now() + 5.5 * 3600e3);
+  const nightly = ist.getUTCHours() === 3 && ist.getUTCMinutes() >= 30 && (!last || Date.now() - Date.parse(last.at) > 20 * 3600e3);
+  const fresh = commit && (!last || last.commit !== commit);
+  if (fresh) await runPanel(`deploy ${commit}`);
+  else if (nightly) await runPanel("nightly");
 }
 
 /** Testers: wipe this account's Radar — run, matches, unlock, cached targets, remembered answers — to walk the flow from scratch. */
