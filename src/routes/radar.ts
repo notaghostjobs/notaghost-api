@@ -226,7 +226,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   for (const s of cands) {
     const text = descs.get(s.id) ?? "";
     if (text.length < 200) { trail.push({ id: s.id, title: s.title, company: s.company_name ?? "", rank: -1, fit: 0, dropped: "no text" }); continue; }
-    const gate = bandGate(years, text) ?? titleGate(s.title ?? "", level, stretch, years, text) ?? pedigreeGate(text, blob) ?? languageGate(text, blob) ?? cityGate(s.title ?? "") ?? worldExclusion(s.title ?? "", blob);
+    const gate = bandGate(years, text, s.title ?? "") ?? titleGate(s.title ?? "", level, stretch, years, text) ?? pedigreeGate(text, blob) ?? languageGate(text, blob) ?? cityGate(s.title ?? "") ?? worldExclusion(s.title ?? "", blob);
     if (gate) { dropped++; trail.push({ id: s.id, title: s.title, company: s.company_name ?? "", rank: -1, fit: 0, dropped: gate }); continue; }
     passed.push({ s, text });
   }
@@ -236,7 +236,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   const perEmp: Record<string, number> = {}; const ask: typeof passed = [];
   for (const x of passed) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 12) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; ask.push(x); if (ask.length >= opt.ceiling) break; }
   // 2. the one question, cached per posting × function profile
-  const fnKey = createHash("sha1").update(`${t.functions.join("|")}|${level}|${t.one_line}`).digest("hex").slice(0, 10);
+  const fnKey = createHash("sha1").update(`v3|${t.functions.join("|")}|${level}|${t.one_line}`).digest("hex").slice(0, 10);   // v3: the question's wording changed on 10 Nov
   const verdicts = new Map<number, Verdict>(); const need: typeof ask = [];
   for (let i = 0; i < ask.length; i += 100) {
     const slice = ask.slice(i, i + 100);
@@ -284,9 +284,30 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
     if ((perEmpFinal[k] ?? 0) >= 4) continue;             // no employer is more than four lines of anyone's list
     seenTitle.add(tk); perEmpFinal[k] = (perEmpFinal[k] ?? 0) + 1; final.push(it); if (final.length >= opt.cap) break;
   }
+  // 6. the employer's live page, for every line that will be shown: a page that says the job is closed, or whose live text
+  //    fails a gate the stored copy passed (a band added since we read it), takes the line off — and the stored copy is refreshed
+  const liveOk: Item[] = []; let li = 0;
+  const liveWorker = async () => {
+    while (li < final.length) {
+      const it = final[li++];
+      let txt = ""; try { txt = await readPostingText(it.url); } catch { /* unreachable today: the stored copy stands */ }
+      if (txt && txt.length >= 200) {
+        if (DEAD_PAGE.test(txt.slice(0, 3000))) { trail.push({ id: it.sighting_id, title: it.title, company: it.company, rank: -1, fit: 0, dropped: "page says the job is closed" }); void db.from("sightings").update({ gone_at: new Date().toISOString(), enrich_error: "page says the job is closed" }).eq("id", it.sighting_id).is("gone_at", null); continue; }
+        const gate = bandGate(years, txt, it.title) ?? titleGate(it.title, level, stretch, years, txt) ?? pedigreeGate(txt, blob) ?? languageGate(txt, blob) ?? cityGate(it.title);
+        if (gate) { trail.push({ id: it.sighting_id, title: it.title, company: it.company, rank: -1, fit: 0, dropped: `live page: ${gate}` }); run.violations = [{ sighting_id: it.sighting_id, title: it.title, rule: `live page: ${gate}`, at }, ...(run.violations ?? [])].slice(0, 50); }
+        if (txt.length > (descs.get(it.sighting_id)?.length ?? 0) || gate) void db.from("sightings").update({ description: txt.slice(0, 20000), enriched_at: new Date().toISOString() }).eq("id", it.sighting_id);
+        if (gate) continue;
+        it.band_text = BAND_TEXT(txt) ?? it.band_text;
+      }
+      liveOk.push(it);
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, liveWorker));
+  const order = new Map(final.map((it, i) => [it.sighting_id, i]));
+  liveOk.sort((a, b) => (order.get(a.sighting_id) ?? 0) - (order.get(b.sighting_id) ?? 0));
   run.trail = trail;
   run.seen = [...ask.map((x) => x.s.id), ...(run.seen ?? []).filter((id) => !cands.some((c) => c.id === id))].slice(0, 4000);
-  return { items: final, examined: ask.length, kept: passed.length };
+  return { items: liveOk, examined: ask.length, kept: passed.length };
 }
 /** Sharpen asks: did Radar already score this résumé against this posting? Then that match is the match (same engine), and
  *  the Sharpen that follows pays only for the rewrite. Matched on the posting URL Radar handed out. */

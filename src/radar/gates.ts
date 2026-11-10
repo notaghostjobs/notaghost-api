@@ -5,9 +5,11 @@ import { statedBand, titleBucket } from "../reader/experience.js";
 /** Years the candidate has vs the band the posting states. One year over the ceiling is out ("2-3 years" is not for a
  *  six-year manager); two or more under the floor is out. A posting that states nothing passes here. */
 const SHORT_BAND = /(\d{1,2})\s*(?:Y|yrs?|years?)?\s*(?:-|–|to)\s*(\d{1,2})\s*(?:Y\b|yrs?\b|years?\b)/i;   // "1Y - 6Y", "3 - 5 yrs" as some boards print it
-export function bandGate(years: number, text: string): string | null {
+export function bandGate(years: number, text: string, title = ""): string | null {
   if (!years) return null;
-  let b = statedBand(text);
+  // a band printed in the title itself ("Growth Manager | Experience : 3-5 yrs") is the posting's own word
+  let b = title ? (statedBand(title) ?? ((m) => m && Number(m[2]) >= Number(m[1]) ? { min: Number(m[1]), max: Number(m[2]) } : null)(title.match(SHORT_BAND))) : null;
+  if (!b) b = statedBand(text);
   if (!b) { const m = (text ?? "").slice(0, 12000).match(SHORT_BAND); if (m && Number(m[2]) >= Number(m[1]) && Number(m[2]) <= 30) b = { min: Number(m[1]), max: Number(m[2]) }; }
   if (!b) return null;
   if (b.max !== null && years > b.max + 1) return `asks ${b.min}–${b.max} years; you have ${years}`;

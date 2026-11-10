@@ -84,6 +84,8 @@ export function nearMiss(years: number, level: string, title: string, text: stri
   const bandFits = fits(b, years);
   if (r !== undefined && r === want - 1 && !bandFits) return `${NAME[titleBucket(title)]} title, one rung below yours`;
   if (r !== undefined && r === want + 1 && !bandFits) return `${NAME[titleBucket(title)]} title, one rung above yours`;
+  // a title with no level word and a floor far below the candidate ("Data Engineer, 3+ years" for a twelve-year lead) is a mid-level seat
+  if (r === undefined && b && b.max === null && b.min >= 1 && years - b.min >= 7) return `asks ${b.min}+ years; you are at ${years}`;
   return null;
 }
 
@@ -105,7 +107,7 @@ export function verify(items: Checkable[], resume: ResumeProfile, years: number,
     const text = it.text ?? textOf(it.sighting_id) ?? "";
     const fail = (rule: string) => violations.push({ sighting_id: it.sighting_id, title: it.title, rule });
     if (!text || text.length < 200) { fail("no posting text on file"); continue; }
-    const gate = bandGate(years, text) ?? titleGate(it.title, level, stretch, years, text) ?? pedigreeGate(text, blob) ?? languageGate(text, blob) ?? cityGate(it.title);
+    const gate = bandGate(years, text, it.title) ?? titleGate(it.title, level, stretch, years, text) ?? pedigreeGate(text, blob) ?? languageGate(text, blob) ?? cityGate(it.title);
     if (gate) { fail(gate); continue; }
     if (!isBlr(it.location ?? "") && !/bengaluru|bangalore/i.test(text.slice(0, 400))) { fail("location is not Bengaluru"); continue; }
     if ((Date.now() - Date.parse(it.first_seen)) / 86400e3 > 45) { fail("first seen more than 45 days ago"); continue; }
