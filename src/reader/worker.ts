@@ -311,6 +311,24 @@ async function setPriorities() {
     }
     log("fix company names", `${fixed} sightings renamed`);
   });
+  // v2: the `.or()` form above missed the patterns with spaces ("% is %"); one filter per pattern
+  await onceOnly("fix-company-names-v2", async () => {
+    const { data: emps } = await db.from("employers").select("key, name");
+    const names = new Map((emps ?? []).map((e) => [e.key, e.name as string]));
+    const pairs = new Map<string, { key: string; bad: string }>();
+    for (const pat of ["% is %", "% are %", "%leading%", "%destination%", "%largest%", "careers at %", "jobs at %", "work at %"]) {
+      const { data } = await db.from("sightings").select("employer_key, company_name").ilike("company_name", pat).limit(5000);
+      for (const r of data ?? []) if (r.employer_key && r.company_name) pairs.set(`${r.employer_key}|${r.company_name}`, { key: r.employer_key, bad: r.company_name });
+    }
+    let fixed = 0;
+    for (const { key, bad } of pairs.values()) {
+      const good = employerName(bad, names.get(key) ?? bad);
+      if (good === bad) continue;
+      const { data: upd } = await db.from("sightings").update({ company_name: good }).eq("employer_key", key).eq("company_name", bad).select("id");
+      fixed += upd?.length ?? 0; log("fix company name", `${JSON.stringify(bad)} → ${good} (${upd?.length ?? 0})`);
+    }
+    log("fix company names v2", `${fixed} sightings renamed`);
+  });
   await onceOnly("reresolve-none-full-v1", async () => {
     const { data, error } = await db.from("employers").update({ resolved_at: null, resolve_error: null }).eq("ats", "none").select("key");
     log("reresolve none (full detector set)", error ? error.message : `${data?.length ?? 0} employers queued`);

@@ -5,6 +5,7 @@ import { getText, getJson, ROBOTS_STATUS } from "./http.js";
 import { htmlToText } from "../engine/extract.js";
 import { fingerprint } from "../engine/ghost/canon.js";
 import { renderText } from "./systems/page.js";
+import { KNOWN } from "./data/known.js";
 
 /** Hosts whose job pages only speak to a browser; a plain fetch is empty. Rendered one at a time, a few per batch. */
 const RENDER_HOSTS = /^(careers\.ibm\.com|apply\.deloitte\.com|usijobs\.deloitte\.com)$/i;
@@ -47,6 +48,23 @@ async function workdayDetail(url: string): Promise<{ ok: true; text: string; pos
   const info = r.data.jobPostingInfo ?? {};
   const text = htmlToText(String(info.jobDescription ?? ""));
   return { ok: true, text, posted: info.startDate ?? null };
+}
+
+/** Spire2Grow career sites (jobs.myntra.com) are Flutter shells; the requisition call the app makes returns the posting.
+ *  The workspace comes from the host, through the known-employer list. A 404 is the posting gone. */
+async function spire2growDetail(url: string): Promise<{ ok: true; text: string; posted?: string | null } | { ok: false; status: number } | null> {
+  const m = url.match(/^https?:\/\/([a-z0-9.-]+)\/jobs\/(\d+)/i);
+  if (!m) return null;
+  const [, host, id] = m;
+  const known = KNOWN.find((k) => k.ats === "spire2grow" && k.ref.split("|")[1] === host.toLowerCase());
+  if (!known) return null;
+  const ws = known.ref.split("|")[0];
+  const r = await getJson<any>(`https://io.spire2grow.com/ies/v1/p/requisition/displayId/${id}`, { timeoutMs: 20000, gapMs: 800, headers: { accept: "application/json", workspaceid: ws, language: "en" } });
+  if (r.status === 404) return { ok: true, text: "This job is no longer available." };   // DEAD_PAGE reads it as closed
+  if (!r.ok || !r.data) return { ok: false, status: r.status };
+  const x = r.data?.entity ?? r.data;
+  const text = htmlToText(String(x.jobDescription ?? x.description ?? ""));
+  return { ok: true, text, posted: x.jobPosting?.startDate ?? null };
 }
 
 /** Oracle Recruiting Cloud job pages are script shells; the requisition-details REST call the page makes returns the posting. */
@@ -148,7 +166,7 @@ export async function enrichDue(limit = 300, concurrency = 6) {
 /** The posting's text by whatever door the host offers — Workday/Oracle JSON, Phenom's inline object, JSON-LD, or the
  *  page itself — with no database and no browser. For checks and panels outside the worker. */
 export async function readPostingText(url: string): Promise<string> {
-  const wd = (await workdayDetail(url.replace(/\/apply\/?$/, ""))) ?? (await oracleDetail(url));
+  const wd = (await workdayDetail(url.replace(/\/apply\/?$/, ""))) ?? (await oracleDetail(url)) ?? (await spire2growDetail(url));
   if (wd) return wd.ok ? wd.text.slice(0, 20000) : "";
   const r = await getText(url, { timeoutMs: 20000, gapMs: 600 });
   if (!r.ok) return "";
