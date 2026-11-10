@@ -36,10 +36,16 @@ const SEAT: Record<string, string> = { fresher: "an entry-level", "2-4": "an ass
  *  when it fits the candidate, overrides the title's word ("Principal Associate, 1–6 years"). */
 export function titleGate(title: string, level: string, stretch: boolean, years: number, text: string): string | null {
   const r = RUNG[titleBucket(title)] ?? -1, want = wantRung(level, years);
-  if (r < 0) return null;
   const b = realBand(statedBand(text));
+  if (r < 0) {
+    // no level word in the title and a floor seven or more years under a senior candidate ("Pricing Advisor, 2+ years" for a
+    // twelve-year head): a mid-level seat, not a near-miss
+    if (want >= 4 && b && b.max === null && b.min >= 1 && years - b.min >= 7) return `asks ${b.min}+ years — a mid-level seat for your ${years}`;
+    return null;
+  }
+  if (r <= want - 3) return `the title is ${SEAT[titleBucket(title)] ?? "a junior"} seat for your level`;   // three rungs down, no band rescues it: a head is not shown an associate's seat
   if (r <= want - 2 || (r === want - 1 && !stretch && r <= 1)) {
-    if (b && b.max !== null && years <= b.max + 1 && years >= b.min) return null;   // "Principal Associate, 1–6 years" for a five-year person
+    if (b && years >= b.min && (b.max !== null ? years <= b.max + 1 : b.min >= 8)) return null;   // "Principal Associate, 1–6 years" for a five-year person; "Category Manager, 10+ years" is a senior seat by the posting's own word
     return `the title is ${SEAT[titleBucket(title)] ?? "a junior"} seat for your level`;
   }
   if (r >= want + 2) {
@@ -48,6 +54,11 @@ export function titleGate(title: string, level: string, stretch: boolean, years:
     return `the title is ${SEAT[titleBucket(title)] ?? "a senior"} seat; you are at ${years} years`;
   }
   return null;
+}
+/** The whole screen, in the order a recruiter runs it: years, title rung, pedigree, language, city. One function so the
+ *  discovery pass, the live re-check, the stored-list verify and the panel can never drift apart. */
+export function screenGate(title: string, text: string, c: { years: number; level: string; stretch: boolean; blob: string }): string | null {
+  return bandGate(c.years, text, title) ?? titleGate(title, c.level, c.stretch, c.years, text) ?? pedigreeGate(text, c.blob) ?? languageGate(text, c.blob) ?? cityGate(title);
 }
 /** A band worth acting on: "0+ years" is a parser's shrug, not a requirement. */
 export function realBand(b: { min: number; max: number | null } | null): { min: number; max: number | null } | null {

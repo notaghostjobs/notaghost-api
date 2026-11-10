@@ -4,6 +4,15 @@ import { byId, type Feed } from "./systems/index.js";
 import { isBlr } from "./blr.js";
 import { fingerprint } from "../engine/ghost/canon.js";
 
+/** The employer's name as a person says it. A board's own "name" field is sometimes a tagline ("Myntra is India's leading
+ *  fashion and lifestyle destination") or a page title ("Careers at Eurofins"); our record's name wins over those. */
+export function employerName(fromFeed: string | null | undefined, ours: string): string {
+  let n = (fromFeed ?? "").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+  n = n.replace(/^(careers?|jobs|work(ing)?|join( us)?)\s+(at|with|@)\s+/i, "").replace(/\s+(careers?|jobs)$/i, "");
+  if (!n || n.length > 40 || /\b(is|are|was|offers?|provides?|helps?|the world'?s|india'?s|leading|largest)\b/i.test(n)) return ours;
+  return n;
+}
+
 export interface Employer { key: string; name: string; ats: string | null; ats_ref: string | null }
 
 /** Write a feed's jobs as sightings for this employer; mark the ones that vanished. */
@@ -28,7 +37,7 @@ export async function recordFeed(e: Employer, feed: Feed) {
   // a feed can list the same posting twice (two locations, two pages); one row per id, or the upsert refuses the batch
   const seenIds = new Set<string>();
   const rows = feed.jobs.filter((j) => { const k = String(j.id); if (seenIds.has(k)) return false; seenIds.add(k); return true; }).map((j) => ({
-    source: feed.system, source_id: `${feed.ref}:${j.id}`, employer_key: e.key, company_name: feed.company_name ?? e.name,
+    source: feed.system, source_id: `${feed.ref}:${j.id}`, employer_key: e.key, company_name: employerName(feed.company_name, e.name),
     title: j.title.slice(0, 300), location: (j.location ?? "").slice(0, 300), url: j.url, posted_at: j.posted_at, updated_at_src: j.updated_at, posted_text: j.posted_text,
     blr: isBlr(j.location ?? ""), last_seen: now, gone_at: null,
     ...(j.description && j.description.length >= 200 ? { description: j.description.slice(0, 20000), fingerprint: fingerprint(j.description.slice(0, 20000)), enriched_at: now, enrich_error: null } : {}),

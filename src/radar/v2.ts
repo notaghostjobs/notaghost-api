@@ -6,7 +6,7 @@ import { json, MODEL } from "../engine/claude.js";
 import type { ResumeProfile } from "../engine/sharpen.js";
 import { statedBand, titleBucket } from "../reader/experience.js";
 import { isBlr } from "../reader/blr.js";
-import { bandGate, titleGate, pedigreeGate, languageGate, cityGate, resumeBlob, wantRung, bandFits as fits } from "./gates.js";
+import { screenGate, resumeBlob, wantRung, bandFits as fits } from "./gates.js";
 
 export type Label = "for_you" | "adjacent" | "stretch";
 export type Same = "yes" | "adjacent" | "no";
@@ -107,7 +107,7 @@ export function verify(items: Checkable[], resume: ResumeProfile, years: number,
     const text = it.text ?? textOf(it.sighting_id) ?? "";
     const fail = (rule: string) => violations.push({ sighting_id: it.sighting_id, title: it.title, rule });
     if (!text || text.length < 200) { fail("no posting text on file"); continue; }
-    const gate = bandGate(years, text, it.title) ?? titleGate(it.title, level, stretch, years, text) ?? pedigreeGate(text, blob) ?? languageGate(text, blob) ?? cityGate(it.title);
+    const gate = screenGate(it.title, text, { years, level, stretch, blob });
     if (gate) { fail(gate); continue; }
     if (!isBlr(it.location ?? "") && !/bengaluru|bangalore/i.test(text.slice(0, 400))) { fail("location is not Bengaluru"); continue; }
     if ((Date.now() - Date.parse(it.first_seen)) / 86400e3 > 45) { fail("first seen more than 45 days ago"); continue; }

@@ -12,7 +12,7 @@ import { json, MODEL } from "../engine/claude.js";
 import { type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
 import { createHash } from "node:crypto";
 import { charge, withMeter } from "../engine/meter.js";
-import { bandGate, titleGate, pedigreeGate, languageGate, cityGate, resumeBlob, yearsFromRoles, levelFromRoles, settleLevel } from "../radar/gates.js";
+import { screenGate, resumeBlob, yearsFromRoles, levelFromRoles, settleLevel } from "../radar/gates.js";
 import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict } from "../radar/v2.js";
 import { readPostingText, DEAD_PAGE } from "../reader/enrich.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
@@ -226,7 +226,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   for (const s of cands) {
     const text = descs.get(s.id) ?? "";
     if (text.length < 200) { trail.push({ id: s.id, title: s.title, company: s.company_name ?? "", rank: -1, fit: 0, dropped: "no text" }); continue; }
-    const gate = bandGate(years, text, s.title ?? "") ?? titleGate(s.title ?? "", level, stretch, years, text) ?? pedigreeGate(text, blob) ?? languageGate(text, blob) ?? cityGate(s.title ?? "") ?? worldExclusion(s.title ?? "", blob);
+    const gate = screenGate(s.title ?? "", text, { years, level, stretch, blob }) ?? worldExclusion(s.title ?? "", blob);
     if (gate) { dropped++; trail.push({ id: s.id, title: s.title, company: s.company_name ?? "", rank: -1, fit: 0, dropped: gate }); continue; }
     passed.push({ s, text });
   }
@@ -293,7 +293,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
       let txt = ""; try { txt = await readPostingText(it.url); } catch { /* unreachable today: the stored copy stands */ }
       if (txt && txt.length >= 200) {
         if (DEAD_PAGE.test(txt.slice(0, 3000))) { trail.push({ id: it.sighting_id, title: it.title, company: it.company, rank: -1, fit: 0, dropped: "page says the job is closed" }); void db.from("sightings").update({ gone_at: new Date().toISOString(), enrich_error: "page says the job is closed" }).eq("id", it.sighting_id).is("gone_at", null); continue; }
-        const gate = bandGate(years, txt, it.title) ?? titleGate(it.title, level, stretch, years, txt) ?? pedigreeGate(txt, blob) ?? languageGate(txt, blob) ?? cityGate(it.title);
+        const gate = screenGate(it.title, txt, { years, level, stretch, blob });
         if (gate) { trail.push({ id: it.sighting_id, title: it.title, company: it.company, rank: -1, fit: 0, dropped: `live page: ${gate}` }); run.violations = [{ sighting_id: it.sighting_id, title: it.title, rule: `live page: ${gate}`, at }, ...(run.violations ?? [])].slice(0, 50); }
         if (txt.length > (descs.get(it.sighting_id)?.length ?? 0) || gate) void db.from("sightings").update({ description: txt.slice(0, 20000), enriched_at: new Date().toISOString() }).eq("id", it.sighting_id);
         if (gate) continue;
@@ -397,17 +397,35 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     const { paise } = await charge(user.id, planSince, "radar:run", async () => {
       const r = await discover(user, resume, targets, answers, longList, { cap: 40, ceiling: 240, run, onProgress: async (n) => { run.scored = n; await save(); } });
       run.picked = r.items.length; run.items = r.items; run.scored = r.items.length; run.examined = r.examined;
-      run.status = "questions"; await save();
-      // the questions screen: career-level facts the market keeps asking for these titles (from the posting checklists on file)
-      try { if (!run.pq?.length) { run.pq = (await preQuestions(user.id, resume.parsed, resume.id, targets)).questions; } } catch (e) { console.error("[radar] questions", (e as Error).message); run.pq = run.pq ?? []; }
     });
     run.spend = { run_paise: paise, total_paise: await spent30(user.id) };
     tally(run);
+    // the list is the product: it is done the moment discovery is. The optional questions (career facts employers for
+    // these titles keep asking) are worked out afterwards, capped at a minute, and never hold the list (10 Nov: a run sat
+    // on "questions" for seven minutes while a tester watched the scan screen).
+    run.pq = run.pq ?? [];
     run.status = "done"; run.finished = new Date().toISOString(); await save();
+    void Promise.race([preQuestions(user.id, resume.parsed, resume.id, targets), new Promise<null>((res) => setTimeout(() => res(null), 60_000))])
+      .then(async (q) => { if (!q || !q.questions.length) return; const cur = await kv.get<Run>(key); if (cur && cur.status === "done" && cur.started === run.started) { cur.pq = q.questions; await kv.set(key, cur); } })
+      .catch((e) => console.error("[radar] questions", (e as Error).message));
   } catch (e) {
     run.status = "error"; run.error = (e as Error).message; await save();
   } finally { running.delete(user.id); }
 }
+
+/** At boot: a run the old code left on "questions" (its list already discovered) is done. Also any run left mid-flight by a
+ *  restart is marked failed instead of spinning forever on the person's screen. */
+export async function unstickRuns(): Promise<{ finished: number; failed: number }> {
+  const { data } = await db.from("reader_control").select("key, value").like("key", "radar:run:%");
+  let finished = 0, failed = 0;
+  for (const r of data ?? []) {
+    const run = r.value as Run;
+    if (run.status === "questions" && run.items?.length >= 0) { run.pq = run.pq ?? []; tally(run); run.status = "done"; run.finished = run.finished ?? new Date().toISOString(); await kv.set(r.key, run); finished++; }
+    else if (isLiveStatus(run.status) && !running.has(r.key.slice("radar:run:".length))) { run.status = "error"; run.error = "The check was interrupted. Run it again — it costs you nothing."; await kv.set(r.key, run); failed++; }
+  }
+  return { finished, failed };
+}
+const isLiveStatus = (s: Run["status"]) => s === "targets" || s === "shortlist" || s === "picking" || s === "scoring";
 
 /** The morning re-run for one account: roles that went quiet leave the list (kept under `gone`), the openings that came in
  *  since the last run go through the same picker and fit engine, and the list is re-ranked. Only new sightings cost model
@@ -562,7 +580,7 @@ export async function runPanel(reason: string): Promise<PanelResult | null> {
             const txt = await readPostingText(it.url);
             if (!txt || txt.length < 200) live_check = "page unreadable today";
             else if (DEAD_PAGE.test(txt.slice(0, 3000))) live_check = "page says the job is closed";
-            else live_check = bandGate(years, txt) ?? titleGate(it.title, t.level, false, years, txt) ?? pedigreeGate(txt, blob) ?? languageGate(txt, blob) ?? cityGate(it.title) ?? "ok";
+            else live_check = screenGate(it.title, txt, { years, level: t.level, stretch: false, blob }) ?? "ok";
           } catch (e) { live_check = `unreachable: ${(e as Error).message.slice(0, 60)}`; }
           if (live_check !== "ok" && !/unreadable|unreachable/.test(live_check)) failures.push({ title: it.title, company: it.company, rule: live_check });
         }
@@ -682,7 +700,7 @@ async function preQuestions(userId: string, resume: ResumeProfile, resumeId: str
   const cached = await kv.get<{ questions: ProfileQ[]; from: number; at: string }>(key);
   if (cached && Date.now() - Date.parse(cached.at) < 24 * 3600e3 && cached.from >= 10) return cached;
   const pool = await livePool(); titleIdf(pool); const tw = t.titles.map(words).filter((w) => w.length);
-  const ids = pool.filter((s) => s.readable && titleScore(s.title ?? "", tw, t.level, true) >= TITLE_IN).map((s) => s.id).slice(0, 600);
+  const ids = pool.filter((s) => s.readable && titleScore(s.title ?? "", tw, t.level, true) >= TITLE_IN).map((s) => s.id).slice(0, 150);   // 150, not 600: the grouping is quadratic and runs on the main thread
   const groups: { requirement: string; n: number; weight: number }[] = [];
   let from = 0;
   for (let i = 0; i < ids.length; i += 100) {
@@ -761,8 +779,9 @@ radar.get("/test/result", async (c) => {
   const reveal = { by_title: run.by_title ?? 0, examined: run.examined ?? run.picked ?? 0, shots: shots.length, almost: almost.length, gap: gap.length, chance: chance.length,
     for_you: shots.length, adjacent: almost.length, stretch: gap.length,
     opened_today: chance.filter((i) => Date.parse(i.first_seen) >= since).length, within_reach: almost.length + gap.length, oldest_days: Math.round(oldest),
-    // the taste: the employer, the label and the line — the role itself hidden — the best three
-    taste: chance.slice(0, 3).map((i) => ({ company: i.company, location: i.location, label: i.label, why: i.why, band_text: i.band_text, first_seen: i.first_seen, posted_at: i.posted_at })) };
+    // the taste: the employer, the label and the line — the role itself hidden — the best three, three different employers
+    taste: ((): typeof chance => { const seen = new Set<string>(), out: typeof chance = []; for (const i of chance) { const k = i.company.toLowerCase(); if (seen.has(k)) continue; seen.add(k); out.push(i); if (out.length === 3) break; } return out.length === 3 ? out : chance.slice(0, 3); })()
+      .map((i) => ({ company: i.company, location: i.location, label: i.label, why: i.why, band_text: i.band_text, first_seen: i.first_seen, posted_at: i.posted_at })) };
   const my = (title: string) => titleScore(title, run.answers.titles.map(words), run.answers.level, true) >= 0.5;
   const mine = run.status === "done" ? await pulse(my).catch(() => null) : null;
   if (!isTester(u)) { delete (run as any).spend; delete (run as any).trail; }   // ours to see, not the customer's

@@ -64,7 +64,8 @@ serve({ fetch: app.fetch, port: env.port }, () => console.log(`notaghost-api on 
 // daily snapshot of every posting we know (signal 21); runs every 6h, re-checks what is due
 // WhatsApp nudges for people who said hello and never sent a link: what is due goes out every 5 minutes; templates are created once at boot
 import { runNudges, ensureTemplates, notifyRadarMorning } from "./routes/whatsapp.js";
-import { radarMorning, panelTick } from "./routes/radar.js";
+import { radarMorning, panelTick, unstickRuns } from "./routes/radar.js";
+unstickRuns().then((r) => (r.finished || r.failed) && console.log(`[radar] unstuck runs: ${r.finished} finished, ${r.failed} failed`)).catch((e) => console.error("[radar] unstick", e?.message ?? e));
 import { experienceTick } from "./reader/experience.js";
 setTimeout(() => experienceTick().then((r) => r && console.log("[experience] computed")).catch((e) => console.error("[experience]", e?.message ?? e)), 90e3);
 setInterval(() => experienceTick().then((r) => r && console.log("[experience] computed")).catch((e) => console.error("[experience]", e?.message ?? e)), 30 * 60e3);

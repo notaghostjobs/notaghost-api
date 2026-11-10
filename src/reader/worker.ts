@@ -5,7 +5,7 @@ import { companyKey } from "../engine/ghost/canon.js";
 import { db } from "../lib/db.js";
 import { resolveBatch } from "./resolve.js";
 import { workdayDiscover } from "./systems/ats.js";
-import { readDue, recordFeed } from "./read.js";
+import { readDue, recordFeed, employerName } from "./read.js";
 import { harvestNaukri } from "./harvest/naukri.js";
 import { harvestSectors } from "./harvest/sectors.js";
 import { byId } from "./systems/index.js";
@@ -278,6 +278,38 @@ async function setPriorities() {
       await db.from("employers").update({ read_at: null, read_error: "restored after a partial read; re-reading" }).eq("ats", source).like("ats_ref", like);
     }
     log("restore 9 Nov", `${restored} sightings back; Accenture and Wipro queued to read now`);
+  });
+  // 10 Nov: the Bengaluru rule got strict (a named other place is never Bengaluru). Re-mark every live row.
+  await onceOnly("recompute-blr-v1", async () => {
+    let flipped = 0, from = 0;
+    for (;;) {
+      const { data, error } = await db.from("sightings").select("id, location, blr").is("gone_at", null).order("id", { ascending: true }).range(from, from + 999);
+      if (error) { log("recompute blr", error.message); break; }
+      const rows = data ?? []; if (!rows.length) break;
+      const toFalse = rows.filter((r) => r.blr && !isBlr(r.location ?? "")).map((r) => r.id);
+      const toTrue = rows.filter((r) => !r.blr && isBlr(r.location ?? "")).map((r) => r.id);
+      for (let i = 0; i < toFalse.length; i += 200) await db.from("sightings").update({ blr: false }).in("id", toFalse.slice(i, i + 200));
+      for (let i = 0; i < toTrue.length; i += 200) await db.from("sightings").update({ blr: true }).in("id", toTrue.slice(i, i + 200));
+      flipped += toFalse.length + toTrue.length;
+      if (rows.length < 1000) break; from += 1000;
+    }
+    log("recompute blr", `${flipped} rows re-marked`);
+  });
+  // 10 Nov: a board's own name field was a tagline ("Myntra is India's leading…") or a page title ("Careers at Eurofins")
+  await onceOnly("fix-company-names-v1", async () => {
+    const { data: emps } = await db.from("employers").select("key, name");
+    const names = new Map((emps ?? []).map((e) => [e.key, e.name as string]));
+    const { data } = await db.from("sightings").select("employer_key, company_name").or("company_name.ilike.careers at %,company_name.ilike.% is %,company_name.ilike.% leading %,company_name.ilike.jobs at %").limit(5000);
+    const pairs = new Map<string, { key: string; bad: string }>();
+    for (const r of data ?? []) if (r.employer_key && r.company_name) pairs.set(`${r.employer_key}|${r.company_name}`, { key: r.employer_key, bad: r.company_name });
+    let fixed = 0;
+    for (const { key, bad } of pairs.values()) {
+      const good = employerName(bad, names.get(key) ?? bad);
+      if (good === bad) continue;
+      const { data: upd } = await db.from("sightings").update({ company_name: good }).eq("employer_key", key).eq("company_name", bad).select("id");
+      fixed += upd?.length ?? 0; log("fix company name", `${JSON.stringify(bad)} → ${good} (${upd?.length ?? 0})`);
+    }
+    log("fix company names", `${fixed} sightings renamed`);
   });
   await onceOnly("reresolve-none-full-v1", async () => {
     const { data, error } = await db.from("employers").update({ resolved_at: null, resolve_error: null }).eq("ats", "none").select("key");
