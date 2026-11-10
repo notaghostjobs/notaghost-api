@@ -6,11 +6,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { db, type User } from "../lib/db.js";
-import { requireUser } from "../lib/auth.js";
+import { requireUser, createSession } from "../lib/auth.js";
 import { isRadarTester as isTester } from "../lib/testers.js";
 import { json, MODEL } from "../engine/claude.js";
 import { type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { charge, withMeter } from "../engine/meter.js";
 import { screenGate, resumeBlob, yearsFromRoles, levelFromRoles, settleLevel } from "../radar/gates.js";
 import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict, cleanSame, sharesFunction } from "../radar/v2.js";
@@ -532,8 +532,10 @@ export async function radarMorning(notify: (userId: string, r: { new_shots: numb
   // testers and favours (radar:unlock) get the morning too, so their list moves like a customer's
   const { data: unlocks } = await db.from("reader_control").select("key").like("key", "radar:unlock:%");
   const users = [...new Set([...(plans ?? []).map((p: any) => p.user_id as string), ...(unlocks ?? []).map((r: any) => String(r.key).slice("radar:unlock:".length))])];
+  const { data: probe } = await db.from("users").select("id").eq("phone", PROBE_PHONE).maybeSingle();
   let n = 0;
   for (const userId of users) {
+    if (probe && userId === probe.id) continue;   // the flow probe's account is not a customer
     try {
       const r = await refreshRadar(userId);
       if (r) { await notify(userId, r); n++; }
@@ -601,14 +603,74 @@ export async function runPanel(reason: string): Promise<PanelResult | null> {
 }
 export async function panelLast(): Promise<(PanelResult & { reason?: string }) | null> { return kv.get<PanelResult & { reason?: string }>(PANEL_KEY); }
 /** After every deploy (a new commit) and once a night at 03:30 IST. Called every ten minutes from index.ts. */
-export async function panelTick(): Promise<void> {
+/** The flow probe (10 Nov): the panel checks lists; this checks the product the way a person meets it. A probe account
+ *  (phone 0000000000, a Radar tester by code) carries a copy of the panel's first résumé; the probe then does exactly what
+ *  the web does — POST /radar/test/start, GET /radar/test/result every four seconds until the status settles, unlock, read
+ *  the list — through the app's own request handler, and times it. A run that does not reach "done" inside six minutes,
+ *  a reveal without its three employers, or a list line without a title, a reason or an employer page is a failure.
+ *  (A run sat on an old "questions" status for seven minutes while a tester watched the scan; nothing had checked that.) */
+export const PROBE_PHONE = "0000000000";
+export type FlowProbe = { at: string; ok: boolean; ms: number; status: string; chance: number; taste: string[]; items: number; problems: string[] };
+export async function flowProbe(app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }): Promise<FlowProbe> {
+  const t0 = Date.now(); const problems: string[] = [];
+  const out = (status: string, chance = 0, taste: string[] = [], items = 0): FlowProbe => ({ at: new Date().toISOString(), ok: problems.length === 0, ms: Date.now() - t0, status, chance, taste, items, problems });
+  try {
+    const { data: u } = await db.from("users").upsert({ phone: PROBE_PHONE, name: "Radar probe", last_seen_at: new Date().toISOString() }, { onConflict: "phone" }).select("id").single();
+    if (!u) { problems.push("probe account could not be created"); return out("none"); }
+    // the résumé: the panel's most recent real one, copied under the probe account
+    const { data: rows } = await db.from("resumes").select("id, parsed, text").not("parsed", "is", null).order("created_at", { ascending: false }).limit(20);
+    const src = (rows ?? []).find((r: any) => r.parsed?.roles?.length && r.parsed?.name);
+    if (!src) { problems.push("no résumé to probe with"); return out("none"); }
+    await db.from("resumes").delete().eq("user_id", u.id);   // one probe résumé at a time
+    const { data: res, error: rerr } = await db.from("resumes").insert({ id: randomUUID(), user_id: u.id, storage_path: `probe/${src.id}`, filename: "probe.pdf", parsed: src.parsed, text: src.text ?? null, is_current: true }).select("id").single();
+    if (rerr || !res) { problems.push(`probe résumé: ${rerr?.message ?? "not written"}`); return out("none"); }
+    const token = await createSession(u.id);
+    const H = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const get = async <T,>(path: string, init: RequestInit = {}) => { const r = await app.request(path, { ...init, headers: { ...H, ...(init.headers as any ?? {}) } }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(`${path} → HTTP ${r.status} ${(j as any).error ?? ""}`); return j as T; };
+    await get("/radar/test/reset", { method: "POST", body: "{}" });
+    await get("/radar/test/targets");
+    const s = await get<{ ok: boolean }>("/radar/test/start", { method: "POST", body: "{}" });
+    if (!s.ok) problems.push("start did not return ok");
+    let r: any = { status: "shortlist" }; const started = Date.now();
+    while (Date.now() - started < 6 * 60e3) { await new Promise((res) => setTimeout(res, 4000)); r = await get("/radar/test/result"); if (r.status === "done" || r.status === "error") break; }
+    if (r.status !== "done") { problems.push(`status "${r.status}" after ${Math.round((Date.now() - started) / 1000)}s${r.error ? ` (${r.error})` : ""}`); return out(r.status); }
+    const rv = r.reveal ?? {}; const chance = Number(rv.chance ?? 0);
+    const taste: string[] = (rv.taste ?? []).map((t: any) => String(t.company ?? ""));
+    if (chance > 0) {
+      if (!taste.length) problems.push("reveal has no taste");
+      if (taste.some((c) => !c || c.length > 40 || /\b(is|are)\b/i.test(c) || /^careers? at/i.test(c))) problems.push(`taste employer reads wrong: ${taste.join(" | ")}`);
+      if (chance >= 3 && new Set(taste.map((c) => c.toLowerCase())).size < 3) problems.push(`taste repeats an employer: ${taste.join(" | ")}`);
+      if (r.unlocked) problems.push("locked run came back unlocked");
+      if ((r.items ?? []).some((i: any) => i.title || i.url || i.why)) problems.push("locked result leaks titles, links or reasons");
+    }
+    await get("/radar/test/unlock", { method: "POST", body: "{}" });
+    const full: any = await get("/radar/test/result");
+    if (!full.unlocked) problems.push("unlock did not open the list");
+    const items: any[] = (full.items ?? []).filter((i: any) => i.label);
+    if (items.length !== chance) problems.push(`reveal said ${chance} roles, the list has ${items.length}`);
+    for (const i of items) {
+      if (!i.title || !/^https?:\/\//.test(i.url ?? "") || !i.why || i.why.length < 8) problems.push(`line without title, page or reason: ${i.company} — ${i.title}`);
+      if (!i.company || i.company.length > 40 || /\b(is|are)\b/i.test(i.company)) problems.push(`employer reads wrong: ${i.company}`);
+    }
+    return out("done", chance, taste, items.length);
+  } catch (e) { problems.push(`probe error: ${(e as Error).message.slice(0, 160)}`); return out("error"); }
+}
+export const FLOW_KEY = "radar:flow:last";
+export async function flowLast(): Promise<FlowProbe | null> { return kv.get<FlowProbe>(FLOW_KEY); }
+
+export async function panelTick(app?: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }): Promise<void> {
   const last = await panelLast();
   const commit = (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || null;
   const ist = new Date(Date.now() + 5.5 * 3600e3);
   const nightly = ist.getUTCHours() === 3 && ist.getUTCMinutes() >= 30 && (!last || Date.now() - Date.parse(last.at) > 20 * 3600e3);
   const fresh = commit && (!last || last.commit !== commit);
-  if (fresh) await runPanel(`deploy ${commit}`);
-  else if (nightly) await runPanel("nightly");
+  if (!fresh && !nightly) return;
+  const res = await runPanel(fresh ? `deploy ${commit}` : "nightly");
+  if (!app) return;
+  const flow = await flowProbe(app);
+  await kv.set(FLOW_KEY, { ...flow, commit });
+  console.log(`[radar] flow probe ${flow.ok ? "PASS" : "FAIL"} in ${Math.round(flow.ms / 1000)}s: ${flow.status}, ${flow.chance} roles${flow.problems.length ? ` — ${flow.problems.join("; ")}` : ""}`);
+  if (res && !flow.ok) await kv.set(PANEL_KEY, { ...res, pass: false, failures: res.failures + flow.problems.length, flow });
 }
 
 /** Testers: wipe this account's Radar — run, matches, unlock, cached targets, remembered answers — to walk the flow from scratch. */

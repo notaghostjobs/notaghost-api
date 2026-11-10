@@ -10,5 +10,6 @@ export const isTester = (u: User) => allowed().has(last10(u.phone ?? ""));
 
 /** People we've asked to try Radar as a favour: a real OTP like anyone else, but the list opens without payment and the
  *  morning-check link is there. RADAR_TESTERS, comma-separated, last ten digits are enough. Founders and testers included. */
-const radarAllowed = () => new Set([...allowed(), ...(process.env.RADAR_TESTERS ?? "").split(",").map(last10).filter((p) => p.length === 10)]);
+const PROBE = ["0000000000"];   // the flow probe's account (routes/radar.ts PROBE_PHONE): walks the tester flow after every deploy
+const radarAllowed = () => new Set([...allowed(), ...PROBE, ...(process.env.RADAR_TESTERS ?? "").split(",").map(last10).filter((p) => p.length === 10)]);
 export const isRadarTester = (u: User) => radarAllowed().has(last10(u.phone ?? ""));

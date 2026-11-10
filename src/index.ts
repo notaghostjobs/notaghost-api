@@ -69,8 +69,8 @@ unstickRuns().then((r) => (r.finished || r.failed) && console.log(`[radar] unstu
 import { experienceTick } from "./reader/experience.js";
 setTimeout(() => experienceTick().then((r) => r && console.log("[experience] computed")).catch((e) => console.error("[experience]", e?.message ?? e)), 90e3);
 setInterval(() => experienceTick().then((r) => r && console.log("[experience] computed")).catch((e) => console.error("[experience]", e?.message ?? e)), 30 * 60e3);
-setTimeout(() => panelTick().catch((e) => console.error("[radar] panel", e?.message ?? e)), 3 * 60e3);
-setInterval(() => panelTick().catch((e) => console.error("[radar] panel", e?.message ?? e)), 10 * 60e3);
+setTimeout(() => panelTick(app).catch((e) => console.error("[radar] panel", e?.message ?? e)), 3 * 60e3);
+setInterval(() => panelTick(app).catch((e) => console.error("[radar] panel", e?.message ?? e)), 10 * 60e3);
 setInterval(() => radarMorning(notifyRadarMorning).then((n) => n && console.log(`[radar] morning refreshed ${n}`)).catch((e) => console.error("[radar] morning", e?.message ?? e)), 5 * 60e3);
 setInterval(() => runNudges().then((n) => n && console.log(`[whatsapp] nudges sent ${n}`)).catch((e) => console.error("[whatsapp] nudges", e?.message ?? e)), 5 * 60e3);
 ensureTemplates().then((r) => r.length && console.log("[whatsapp] templates", JSON.stringify(r.map((x: any) => ({ name: x.name, status: x.status ?? x.skipped }))))).catch((e) => console.error("[whatsapp] templates", e?.message ?? e));
