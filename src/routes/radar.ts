@@ -13,7 +13,7 @@ import { json, MODEL } from "../engine/claude.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
 import { assess } from "../engine/fit.js";
 import { charge, withMeter } from "../engine/meter.js";
-import { statedBand } from "../reader/experience.js";
+import { bandGate, titleGate, pedigreeGate, gateFromMissing, resumeBlob, GATE_CAP } from "../radar/gates.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
 
 export const radar = new Hono<{ Variables: { user: User } }>();
@@ -24,7 +24,7 @@ radar.use("*", requireUser);
 type Targets = { titles: string[]; level: "ic" | "lead" | "manager" | "head"; functions: string[]; strengths: string[]; years: number; one_line: string };
 type Answers = { titles: string[]; level: Targets["level"]; stretch: boolean; avoid: string[]; notes?: string };
 type Item = { sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string; new_at?: string; tri?: number;
-  now?: number; promised?: number; band?: string; said?: number; unsaid?: number; missing?: number; top_said?: string[]; top_unsaid?: string[]; top_missing?: string[]; error?: string };
+  now?: number; promised?: number; band?: string; gate?: string; said?: number; unsaid?: number; missing?: number; top_said?: string[]; top_unsaid?: string[]; top_missing?: string[]; error?: string };
 type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "questions" | "done" | "error"; started: string; finished?: string; answers: Answers; resume_id: string;
   pool: number; by_title: number; picked: number; scored: number; items: Item[]; error?: string; cost_calls: number;
   questions?: Gap[];            // (legacy) the missing must-haves that repeat across the picked roles
@@ -256,16 +256,18 @@ async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfi
   // band's floor is not a shot either. Read from the posting's text with the experience parser; free.
   const years = Number(resume.parsed.years_total ?? t.years ?? 0);
   let droppedBand = 0;
-  const bandOf = (text: string) => (years ? statedBand(text) : null);
   const trail: NonNullable<Run["trail"]> = [];
   const tws = [...new Set([...a.titles, ...(resume.parsed.roles ?? []).slice(0, 3).map((r) => (r.title ?? "").replace(/[|/,(].*$/, "").trim())])].map(words).filter((w) => w.length);
   // rank = the posting's shared vocabulary with the résumé, weighted by how well its title matches what we're searching for
   const all = cands.map((s) => { const text = descs.get(s.id) ?? ""; const ts = titleScore(s.title ?? "", tws, a.level, true); return { s, text, fit: textFit(rw, text) * (0.5 + ts) }; });
+  // The screen-out gates (src/radar/gates.ts): years band one year either side of what is stated, the title's rung
+  // against the level asked for, and pedigree or credential requirements the résumé does not answer. A recruiter
+  // decides these before reading for fit; so do we, and the reason is kept in the trail.
+  const blob = resumeBlob(resume.parsed);
   const ranked = all.filter((x) => {
     if (x.text.length < 200) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "no text" }); return false; }
-    const b = bandOf(x.text);
-    if (b && b.max !== null && years >= b.max + 4) { droppedBand++; trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: `band ${b.min}-${b.max}, you ${years}` }); return false; }
-    if (b && years + 2 <= b.min) { droppedBand++; trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: `band ${b.min}+, you ${years}` }); return false; }
+    const gate = bandGate(years, x.text) ?? titleGate(x.s.title ?? "", a.level, !!a.stretch, years, x.text) ?? pedigreeGate(x.text, blob);
+    if (gate) { droppedBand++; trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: gate }); return false; }
     return true;
   }).sort((x, y) => y.fit - x.fit);
   run.dropped_band = (run.dropped_band ?? 0) + droppedBand;
@@ -367,11 +369,18 @@ async function spent30(userId: string): Promise<number> {
 function summarise(it: Item, matches: Match[]) {
   const a = assess(matches);
   const said = matches.filter((m) => m.bucket === "said"), unsaid = matches.filter((m) => m.bucket === "have_not_said"), missing = matches.filter((m) => m.bucket === "missing");
-  Object.assign(it, { now: a.current, promised: a.promised, band: a.band, said: said.length, unsaid: unsaid.length, missing: missing.length,
-    top_said: said.filter((m) => m.kind === "must").slice(0, 3).map((m) => m.requirement), top_unsaid: unsaid.filter((m) => m.sayable).slice(0, 3).map((m) => m.requirement), top_missing: missing.filter((m) => m.kind === "must").slice(0, 3).map((m) => m.requirement) });
+  const missingMust = missing.filter((m) => m.kind === "must").map((m) => m.requirement);
+  // Sharpen says what is done and unsaid; it cannot add more than ~12 points of honest wording, and a missing must that
+  // is a credential, a pedigree or a years requirement is a gate: the role sits in "close the gap" with the gate named.
+  const gate = gateFromMissing(missingMust);
+  let now = a.current, promised = Math.min(a.promised, a.current + 12);
+  if (gate) { now = Math.min(now, GATE_CAP); promised = Math.min(promised, GATE_CAP); }
+  Object.assign(it, { now, promised, band: a.band, said: said.length, unsaid: unsaid.length, missing: missing.length, gate: gate ?? undefined,
+    top_said: said.filter((m) => m.kind === "must").slice(0, 3).map((m) => m.requirement), top_unsaid: unsaid.filter((m) => m.sayable).slice(0, 3).map((m) => m.requirement),
+    top_missing: gate ? [gate, ...missingMust.filter((m) => !gate.includes(m.slice(0, 80)))].slice(0, 3) : missingMust.slice(0, 3) });
 }
 function tally(run: Run) {
-  run.shots = run.items.filter((i) => (i.promised ?? 0) >= SHOT).length;
+  run.shots = run.items.filter((i) => (i.promised ?? 0) >= SHOT && (i.now ?? 0) >= 60).length;
   run.within_reach = run.items.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < SHOT).length;
   run.almost = run.items.filter((i) => (i.promised ?? 0) >= ALMOST && (i.promised ?? 0) < SHOT).length;
   run.gap = run.items.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < ALMOST).length;
@@ -476,14 +485,14 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     for (const tw of targetWords) {
       const mine = eligible.map((s) => ({ s, sc: titleScore(s.title ?? "", [tw], answers.level, answers.stretch) })).filter((x) => x.sc >= TITLE_IN).sort((a, b) => b.sc - a.sc || Date.parse(b.s.first_seen) - Date.parse(a.s.first_seen));
       const perEmp: Record<string, number> = {}; let n = 0;
-      for (const { s } of mine) { if (seenIds.has(s.id)) continue; const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 20) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; seenIds.add(s.id); longList.push(s); if (++n >= 60) break; }
+      for (const { s } of mine) { if (seenIds.has(s.id)) continue; const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 20) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; seenIds.add(s.id); longList.push(s); if (++n >= 100) break; }
     }
     run.by_title = longList.length; run.status = "picking"; run.dropped_band = 0; await save();
     if (!longList.length) { run.status = "done"; run.finished = new Date().toISOString(); await save(); return; }
     run.status = "scoring"; run.picked = 0; await save();
     const planSince = run.started;
     const { paise } = await charge(user.id, planSince, "radar:run", async () => {
-      const r = await stagedScore(user, resume, targets, answers, longList, { stage1Keep: 420, stage3Cap: 25, enough: 30, ceiling: 140, earlyQuestions: true, bank, run,
+      const r = await stagedScore(user, resume, targets, answers, longList, { stage1Keep: 600, stage3Cap: 40, enough: 40, ceiling: 240, earlyQuestions: true, bank, run,
         onChosen: async (items) => { run.items = items; run.picked = items.length; await save(); },
         onProgress: async (n) => { run.scored = n; await save(); } });
       run.picked = r.items.length; run.items = r.items; run.scored = r.items.length; run.examined = r.examined;
