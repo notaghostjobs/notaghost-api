@@ -80,6 +80,7 @@ const FRESH_BAND = /\b(fresher|freshers|new\s+grad(?:uate)?s?|recent\s+graduates
 export function titleBucket(title: string): Bucket | "unknown" {
   const t = (title ?? "").toLowerCase();
   if (/\b(intern|internship|trainee|graduate|fresher|apprentice|campus|entry)\b/.test(t)) return "fresher";
+  if (/\bchief of staff\b/.test(t)) return "unknown";   // a Chief of Staff is whatever the posting's years say, not a chief
   if (/\b(chief|ceo|cfo|cto|coo|president|vice president|vp|svp|evp|avp|director|head)\b/.test(t)) return "10+";
   if (/\b(principal|distinguished|fellow|staff|senior manager|sr\.? manager|general manager|gm|dgm|agm|architect|group manager)\b/.test(t)) return "8-10";
   if (/\b(assistant manager|associate manager|deputy manager|asst\.? manager)\b/.test(t)) return "4-6";   // India's first management rung, three to six years in

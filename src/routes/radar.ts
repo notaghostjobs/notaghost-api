@@ -13,7 +13,7 @@ import { type ResumeProfile, type PostingProfile, type Match } from "../engine/s
 import { createHash } from "node:crypto";
 import { charge, withMeter } from "../engine/meter.js";
 import { screenGate, resumeBlob, yearsFromRoles, levelFromRoles, settleLevel } from "../radar/gates.js";
-import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict, cleanSame } from "../radar/v2.js";
+import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict, cleanSame, sharesFunction } from "../radar/v2.js";
 import { readPostingText, DEAD_PAGE } from "../reader/enrich.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
 
@@ -267,6 +267,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
     const near = nearMiss(years, level, x.s.title ?? "", x.text);
     const label = labelOf(v.same, near);
     if (!label) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, why: v.why, dropped: `not your function` }); continue; }
+    if (v.same === "adjacent" && !sharesFunction(x.s.title ?? "", a.titles, t.functions)) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, why: v.why, dropped: `adjacent, but the title shares no word of your function` }); continue; }
     trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: items.length + 1, fit: 0, why: v.why, chosen: true });
     items.push({ sighting_id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", location: x.s.location ?? "", url: x.s.url, posted_at: x.s.posted_at, first_seen: x.s.first_seen, why: v.why, label, band_text: BAND_TEXT(x.text), near, ...(opt.mark ? { new_at: opt.mark } : {}) });
   }

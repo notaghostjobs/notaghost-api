@@ -46,7 +46,7 @@ export function titleGate(title: string, level: string, stretch: boolean, years:
   }
   if (r <= want - 3) return `the title is ${SEAT[titleBucket(title)] ?? "a junior"} seat for your level`;   // three rungs down, no band rescues it: a head is not shown an associate's seat
   if (r <= want - 2 || (r === want - 1 && !stretch && r <= 1)) {
-    if (b && years >= b.min && (b.max !== null ? years <= b.max + 1 : b.min >= 8)) return null;   // "Principal Associate, 1–6 years" for a five-year person; "Category Manager, 10+ years" is a senior seat by the posting's own word
+    if (b && years >= b.min && (b.max !== null ? years <= b.max : b.min >= 8)) return null;   // "Principal Associate, 1–6 years" for a five-year person; "Category Manager, 10+ years" is a senior seat by the posting's own word. The ceiling is the ceiling: "2–4 years" does not rescue an Associate seat for a five-year manager
     return `the title is ${SEAT[titleBucket(title)] ?? "a junior"} seat for your level`;
   }
   if (r >= want + 2) {

@@ -89,6 +89,8 @@ export function nearMiss(years: number, level: string, title: string, text: stri
   if (r !== undefined && r === want + 1 && !bandFits) return `${NAME[titleBucket(title)]} title, one rung above yours`;
   // a title with no level word and a floor far below the candidate ("Data Engineer, 3+ years" for a twelve-year lead) is a mid-level seat
   if (r === undefined && b && b.max === null && b.min >= 1 && years - b.min >= 7) return `asks ${b.min}+ years; you are at ${years}`;
+  // a senior person, a title with no level word and a posting that states no years: the seat's level is unknown, so it is not "for you"
+  if (r === undefined && want >= 4 && !fits(b, years) && !b) return `the posting states no level or years`;
   return null;
 }
 
@@ -96,6 +98,18 @@ export function labelOf(same: Same, near: string | null): Label | null {
   if (same === "no") return null;
   if (same === "yes") return near ? "adjacent" : "for_you";
   return near ? "stretch" : "adjacent";
+}
+
+/** A neighbouring craft must at least share a word of the candidate's function in its title: "Performance Marketing
+ *  Manager" next to a growth marketer, yes; "Manager - Finance" next to a category manager, no, whatever the model felt.
+ *  Level and place words do not count. Applies to "adjacent" verdicts only; a "yes" stands on the posting's requirements. */
+const TITLE_STOP = new Set(["manager", "management", "senior", "sr", "jr", "junior", "lead", "leader", "head", "director", "associate", "assistant", "analyst", "specialist", "executive", "officer", "consultant", "principal", "staff", "chief", "vice", "president", "vp", "avp", "general", "gm", "deputy", "business", "india", "bangalore", "bengaluru", "blr", "ii", "iii", "iv", "i", "of", "and", "the", "for", "to", "in", "a", "an", "at", "with", "role", "roles", "team", "group", "global", "regional", "national", "office", "ops", "mgr", "mgmt", "copy", "new", "exp", "years", "yrs", "yoe", "full", "time"]);
+const STEM = (w: string) => w.replace(/(ings?|ions?|ers?|ies|es|s|al|ic)$/, "");
+const words = (t: string) => (t ?? "").toLowerCase().replace(/&/g, " and ").split(/[^a-z]+/).filter((w) => w.length > 2 && !TITLE_STOP.has(w)).map(STEM).filter((w) => w.length > 2);
+export function sharesFunction(title: string, candTitles: string[], functions: string[]): boolean {
+  const mine = new Set([...candTitles, ...functions].flatMap(words));
+  if (!mine.size) return true;
+  return words(title).some((w) => mine.has(w));
 }
 
 export const BAND_TEXT = (text: string): string | null => { const b = statedBand(text); if (!b || (b.min === 0 && b.max === null)) return null; return b.max === null ? `${b.min}+ years` : `${b.min}–${b.max} years`; };
