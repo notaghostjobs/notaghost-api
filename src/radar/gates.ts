@@ -14,6 +14,7 @@ export function bandGate(years: number, text: string, title = ""): string | null
   if (!b) return null;
   if (b.max !== null && years > b.max + 1) return `asks ${b.min}–${b.max} years; you have ${years}`;
   if (years + 2 <= b.min) return `asks ${b.min}+ years; you have ${years}`;
+  if (years < 1 && b.min >= 2) return `asks ${b.min}+ years; you are starting out`;   // a floor of two is not a near-miss for a graduate
   return null;
 }
 

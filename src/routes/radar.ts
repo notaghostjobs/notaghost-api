@@ -13,7 +13,7 @@ import { type ResumeProfile, type PostingProfile, type Match } from "../engine/s
 import { createHash } from "node:crypto";
 import { charge, withMeter } from "../engine/meter.js";
 import { screenGate, resumeBlob, yearsFromRoles, levelFromRoles, settleLevel } from "../radar/gates.js";
-import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict } from "../radar/v2.js";
+import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict, cleanSame } from "../radar/v2.js";
 import { readPostingText, DEAD_PAGE } from "../reader/enrich.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
 
@@ -242,7 +242,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
     const slice = ask.slice(i, i + 100);
     const { data } = await db.from("reader_control").select("key, value").in("key", slice.map((x) => `radar:fn:${x.s.id}:${fnKey}`));
     const have = new Map((data ?? []).map((r: any) => [Number(String(r.key).split(":")[2]), r.value as Verdict]));
-    for (const x of slice) { const v = have.get(x.s.id); if (v) verdicts.set(x.s.id, v); else need.push(x); }
+    for (const x of slice) { const v = have.get(x.s.id); if (v) verdicts.set(x.s.id, { ...v, same: cleanSame(v.same, v.why) }); else need.push(x); }
   }
   const cand = { one_line: t.one_line, functions: t.functions, years, level };
   const batches: typeof need[] = []; for (let i = 0; i < need.length; i += 12) batches.push(need.slice(i, i + 12));

@@ -86,7 +86,7 @@ export function titleBucket(title: string): Bucket | "unknown" {
   if (/\b(lead|senior|sr\.?|principal|staff) associate\b|\bassociate (ii|iii|2|3)\b/.test(t)) return "4-6";   // "Lead Associate", "Principal Associate": an associate's seat with a prefix, not a lead's
   if (/\b(manager|lead|leader|supervisor)\b/.test(t)) return "6-8";
   if (/\b(senior|sr\.?|iii|expert|consultant)\b/.test(t)) return "4-6";
-  if (/\b(junior|jr\.?|associate|assistant|analyst|executive|coordinator|representative|specialist|planner|officer|ii|i)\b/.test(t)) return "2-4";
+  if (/\b(junior|jr\.?|associate|assistant|analyst|executive|coordinator|representative|specialist|planner|officer|intermediate|mid[- ]?level|ii|i)\b/.test(t)) return "2-4";
   return "unknown";
 }
 
