@@ -128,7 +128,7 @@ export function rewriteResume(resume: ResumeProfile, posting: PostingProfile, mo
 3e. TODAY is ${new Date().toISOString().slice(0, 10)}. A role or degree whose end date is before today is finished: a completed degree is stated as held ("MBA, Mannheim Business School"), never as "candidate", "pursuing" or "in progress"; an ended role is never described as current. Education entries keep their school, degree and dates exactly.
 4. Bullets: start with a verb, one line each, concrete, numbers kept exactly as the original had them.
 5. headline: the candidate's real current (or most recent) title, at most 6 words, no pipes or lists (e.g. "Director, FMCG and Grocery"). NEVER the posting's title. The summary (not the headline) is where you frame them for this role. summary: 2-3 lines for this posting, no adjectives like "passionate" or "results-driven".
-6. referral_note: ~60 words, first person, to someone at the company — names the role, gives one specific reason the candidate fits, asks for a referral. No flattery.
+6. referral_note: under 200 characters INCLUDING spaces (LinkedIn's connection-note limit), first person, to someone at the company — names the role, one specific reason the candidate fits, asks for a referral. No greeting line, no flattery, no sign-off.
 7. fit_line: one honest sentence to the candidate about their odds here (e.g. "Strong on the core stack; two of five must-haves are missing — apply, but expect questions on X").
 8. contact: if the résumé address is in a different country from the posting location, drop the street/area and keep only the country or nothing; note it in changes.
 9. changes: every meaningful edit with a one-line why, so the candidate can see exactly what moved.`,
@@ -419,7 +419,46 @@ export async function runSharpen(resume: ResumeProfile, postingText: string, onS
     console.error("[sharpen] FACT AUDIT FAILED — shot refused", foreign);
     throw Object.assign(new Error("We couldn’t verify every line of the result against your résumé, so we didn’t deliver it. Nothing was used — try again in a minute."), { status: 500, foreign });
   }
+  // the change log is written LAST, from the final document, and every line of it must quote that document (10 Nov: the
+  // first draft's log described edits the fix passes had since deleted, so the "what changed" page did not match the résumé)
+  t0 = t("Writing what changed");
+  rewrite = { ...rewrite, changes: await changesFromDiff(resume, rewrite), referral_note: fitNote(rewrite.referral_note) };
+  timing.changes = Date.now() - t0;
   return { posting, matches, after_matches, rewrite, verification, broken, needs_review: needs_review || !verification.ok || broken.length > 0, timing, first_pass };
+}
+
+const normText = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+/** What moved, read off BEFORE and AFTER by a reader who sees only those two — then kept only where its quote is really in
+ *  AFTER (a removal must quote what BEFORE had and AFTER lacks). The log can no longer say something the résumé does not show. */
+export async function changesFromDiff(before: ResumeProfile, after: Rewrite): Promise<{ what: string; why: string }[]> {
+  const doc = docOf(after);
+  const beforeDoc = { headline: before.headline, roles: before.roles, skills: before.skills, extra_sections: before.extra_sections };
+  try {
+    const r = await json<{ changes: { what: string; why: string; quote: string; kind: "added" | "moved" | "reworded" | "removed" }[] }>(
+      `You compare two versions of a résumé, BEFORE and AFTER, and list what changed — for the candidate, who will read the AFTER document and must be able to find every change you name. Rules: list only differences that are actually there; at most 8; one line each. For each: what (what moved, in plain words), why (one line, in terms of the posting the AFTER was written for, if obvious; else "to read faster"), quote (for added/moved/reworded: an exact phrase of 4+ words copied from AFTER where the change shows; for removed: the exact phrase from BEFORE that AFTER no longer has), kind. Never describe a change you cannot quote. If nothing meaningful changed, return an empty list.`,
+      `BEFORE:\n${JSON.stringify(beforeDoc)}\n\nAFTER:\n${JSON.stringify(doc)}\n\nReturn: {changes:[{what, why, quote, kind}]}`, 2500, FAST);
+    const hayAfter = normText(JSON.stringify(doc)), hayBefore = normText(JSON.stringify(beforeDoc));
+    const out: { what: string; why: string }[] = [];
+    for (const c of r.changes ?? []) {
+      const q = normText(String(c.quote ?? "")); if (q.split(" ").length < 3) continue;
+      const ok = c.kind === "removed" ? (hayBefore.includes(q) && !hayAfter.includes(q)) : hayAfter.includes(q);
+      if (ok) out.push({ what: String(c.what ?? "").slice(0, 200), why: String(c.why ?? "").slice(0, 200) });
+    }
+    return out;
+  } catch (e) { console.error("[sharpen] changes", (e as Error).message); return []; }
+}
+
+/** LinkedIn's connection note stops at 200 characters, and people copy this into exactly that box. Cut at a sentence end
+ *  under 200; if the first sentence alone is longer, cut at a word and close it. */
+export function fitNote(note: string, max = 200): string {
+  const n = (note ?? "").replace(/\s+/g, " ").trim();
+  if (n.length <= max) return n;
+  const sentences = n.match(/[^.!?]+[.!?]+(\s|$)/g) ?? [n];
+  let out = "";
+  for (const sErr of sentences) { if ((out + sErr).trim().length > max) break; out = (out + sErr); }
+  out = out.trim();
+  if (out.length >= 60) return out;
+  const cut = n.slice(0, max - 1); return cut.slice(0, cut.lastIndexOf(" ")).replace(/[,;:]$/, "") + ".";
 }
 
 
