@@ -577,7 +577,7 @@ radar.post("/test/reset", async (c) => {
   if (!isTester(u)) return c.json({ error: "Not available on this account." }, 403);
   if (running.has(u.id)) return c.json({ error: "A run is in progress; wait for it to finish." }, 409);
   for (const pat of [`radar:run:${u.id}`, `radar:unlock:${u.id}`, `told:${u.id}`]) await db.from("reader_control").delete().eq("key", pat);
-  for (const pat of [`radar:m:${u.id}:%`, `radar:targets:${u.id}:%`]) await db.from("reader_control").delete().like("key", pat);
+  for (const pat of [`radar:m:${u.id}:%`, `radar:targets:${u.id}:%`, `radar:targets:v3:${u.id}:%`]) await db.from("reader_control").delete().like("key", pat);
   // ?all=1: the résumé is set aside as well (not deleted — Sharpen's history keeps it), so the next visit uploads fresh
   if (c.req.query("all") === "1") await db.from("resumes").update({ is_current: false }).eq("user_id", u.id).eq("is_current", true);
   return c.json({ ok: true });
