@@ -1,19 +1,19 @@
-// Radar: from the résumé on file, the live Bengaluru openings this person has a real shot at — ranked, each with the fit
-// engine's number now and if sharpened. Flow: profile → what they're a fit for (one call) → title match over the live
-// sightings (₹0) → stage 1b: the posting's own text against the résumé's words (₹0) → stage 2: ten postings per call,
-// résumé pinned, a rough band each (~₹0.25 a role) → stage 3: the expert match + audit only for roles in reach (the same
-// engine as the preview; posting checklist cached per sighting, shared by every user) → stored per user, filled as it
-// lands. Every call is metered and charged to the account; ₹600 per 30 days is the cap (the economics rule, 7 Nov).
+// Radar (v2, 10 Nov): the live Bengaluru openings that are this person's function, level and years — discovered on facts.
+// Flow: profile → what they're a fit for (one call) → title match over the live sightings (₹0) → the screen-out gates on
+// the posting's own text (₹0) → one question to the model per posting, "same function: yes / adjacent / no" (twelve a
+// call, cached per posting) → three labels built from facts → the whole list re-verified by code before it is stored.
+// Nothing is scored, promised or ranked by a number. Every call is metered; ₹600 per 30 days is the cap (7 Nov).
 import { Hono } from "hono";
 import { z } from "zod";
 import { db, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
 import { isRadarTester as isTester } from "../lib/testers.js";
 import { json, MODEL } from "../engine/claude.js";
-import { parsePosting, matchAndGrade, type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
-import { assess } from "../engine/fit.js";
+import { type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
+import { createHash } from "node:crypto";
 import { charge, withMeter } from "../engine/meter.js";
-import { bandGate, titleGate, pedigreeGate, gateFromMissing, resumeBlob, GATE_CAP, yearsFromRoles, levelFromRoles } from "../radar/gates.js";
+import { bandGate, titleGate, pedigreeGate, resumeBlob, yearsFromRoles, levelFromRoles } from "../radar/gates.js";
+import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict } from "../radar/v2.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
 
 export const radar = new Hono<{ Variables: { user: User } }>();
@@ -23,13 +23,19 @@ radar.use("*", requireUser);
 
 type Targets = { titles: string[]; level: "ic" | "lead" | "manager" | "head"; functions: string[]; strengths: string[]; years: number; one_line: string };
 type Answers = { titles: string[]; level: Targets["level"]; stretch: boolean; avoid: string[]; notes?: string };
-type Item = { sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string; new_at?: string; tri?: number;
+type Item = { sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string; new_at?: string;
+  label?: Label;                // for_you · adjacent · stretch — built from facts (v2)
+  band_text?: string | null;    // the posting's own years line, e.g. "3–5 years"
+  near?: string | null;         // the one near-miss that made it adjacent/stretch, in words
+  // legacy (v1 scores) — no longer produced; kept so old runs still parse
   now?: number; promised?: number; band?: string; gate?: string; said?: number; unsaid?: number; missing?: number; top_said?: string[]; top_unsaid?: string[]; top_missing?: string[]; error?: string };
 type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "questions" | "done" | "error"; started: string; finished?: string; answers: Answers; resume_id: string;
   pool: number; by_title: number; picked: number; scored: number; items: Item[]; error?: string; cost_calls: number;
   questions?: Gap[];            // (legacy) the missing must-haves that repeat across the picked roles
   pq?: ProfileQ[];              // the Radar questions: career-level facts, asked once
-  shots?: number; within_reach?: number; almost?: number; gap?: number; threshold: number;
+  shots?: number; within_reach?: number; almost?: number; gap?: number; threshold: number;   // legacy names; v2 mirrors for_you/adjacent/stretch into them
+  for_you?: number; adjacent?: number; stretch?: number;
+  violations?: { sighting_id: number; title: string; rule: string; at: string }[];   // what verify() removed, and why
   refreshed?: string;           // the last morning re-run
   seen?: number[];              // sightings already put to the model (picked or passed over), so a morning never re-asks
   gone?: { sighting_id: number; title: string; company: string; gone_at: string; promised?: number }[];   // roles that went quiet after they were on the list
@@ -39,15 +45,7 @@ type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "question
   dropped_band?: number;        // roles whose years band ruled the person out before any model saw them
   trail?: { id: number; title: string; company: string; rank: number; fit: number; band?: number; why?: string; chosen?: boolean; dropped?: string }[];   // the audit trail of the last pass
   examined?: number };   // what this account has cost us, from the meter
-/** A real shot: sharpened ≥ 75 (decided 7 Nov). Under 50 is never shown. */
-const SHOT = 75, ALMOST = 60, REACH = 50;   // the three tiers (9 Nov): apply right now · almost there · let's close the gap
 
-const LEVEL_WORDS: Record<Targets["level"], RegExp> = {
-  ic: /\b(associate|analyst|executive|specialist|engineer|developer|designer|coordinator|consultant|officer|intern|trainee|junior|ii|iii)\b/i,
-  lead: /\b(senior|sr\.?|lead|principal|staff|manager|supervisor)\b/i,
-  manager: /\b(manager|head|lead|director|avp|dgm|agm|gm)\b/i,
-  head: /\b(head|director|vp|vice president|avp|svp|chief|president|general manager|gm)\b/i,
-};
 const norm = (t: string) => (t ?? "").toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 const STOP = new Set(["and", "the", "of", "for", "in", "to", "with", "a", "an", "at", "on", "or", "&", "ii", "iii", "i", "india", "bengaluru", "bangalore", "remote"]);
 const words = (t: string) => norm(t).split(" ").filter((w) => w && !STOP.has(w) && w.length > 1);
@@ -202,38 +200,8 @@ function titleScore(title: string, targets: string[][], level: Targets["level"],
 }
 const TITLE_IN = 0.35;   // a title enters the long list at or above this
 
-/** The posting checklist for a sighting — parsed once, shared by every candidate. */
-async function postingFor(sightingId: number): Promise<{ posting: PostingProfile; text: string } | null> {
-  const key = `radar:pp:${sightingId}`;
-  const cached = await kv.get<{ posting: PostingProfile }>(key);
-  const { data } = await db.from("sightings").select("description").eq("id", sightingId).maybeSingle();
-  const text = (data?.description as string) ?? "";
-  if (text.length < 200) return null;
-  if (cached?.posting) return { posting: cached.posting, text };
-  const posting = await parsePosting(text);
-  const thin = ((posting?.must_have?.length ?? 0) + (posting?.nice_to_have?.length ?? 0)) < 3;
-  if (thin) return null;
-  await kv.set(key, { posting, at: new Date().toISOString() });
-  return { posting, text };
-}
 
 
-/** ---------- the three stages (7 Nov, the economics rule: never pay full price to reject) ----------
- *  1. free: title words, then the posting's own text against the résumé's words — ranks hundreds, costs nothing.
- *  2. cheap: ten postings per call, résumé pinned once, a rough band each — decides who gets stage 3, never shown.
- *  3. expert: the match + audit (same as the preview) — only for roles stage 2 put in reach; everything shown went through it. */
-const RWORDS_STOP = new Set([...STOP, "experience", "work", "team", "role", "years", "year", "skills", "strong", "ability", "including", "across", "within", "using", "based", "related", "will", "must", "should", "have", "good", "well", "high", "new", "end", "key", "etc"]);
-const cwordsOf = (t: string) => norm(t).split(" ").filter((w) => w.length > 3 && !RWORDS_STOP.has(w)).map(stem);
-function resumeWords(p: ResumeProfile): Set<string> {
-  const parts: string[] = [p.headline ?? "", ...(p.skills ?? []).map((s: any) => (typeof s === "string" ? s : s?.name ?? "")), ...(p.roles ?? []).flatMap((r) => [r.title ?? "", ...(r.bullets ?? [])])];
-  return new Set(cwordsOf(parts.join(" ")));
-}
-/** Stage 1b: how much of the posting's own vocabulary the résumé already carries. 0..1. */
-function textFit(rw: Set<string>, description: string): number {
-  const dw = cwordsOf(description.slice(0, 6000)); if (dw.length < 30) return 0;
-  const uniq = [...new Set(dw)]; let hit = 0; for (const w of uniq) if (rw.has(w)) hit++;
-  return hit / Math.sqrt(uniq.length);
-}
 async function descriptionsFor(ids: number[]): Promise<Map<number, string>> {
   const out = new Map<number, string>();
   for (let i = 0; i < ids.length; i += 100) {
@@ -242,118 +210,79 @@ async function descriptionsFor(ids: number[]): Promise<Map<number, string>> {
   }
   return out;
 }
-/** Stage 2: a calibrated guess per posting from the posting's text, résumé pinned. ~₹0.25 a role. */
-async function triage(resume: ResumeProfile, t: Targets, a: Answers, batch: { s: Sighting; text: string }[]): Promise<Map<number, { band: number; why: string }>> {
-  const r = await json<{ bands: { id: number; band: number; why: string }[] }>(
-    `You are a fair Bengaluru recruiter doing a first screen. For EACH numbered posting, estimate the score (0-100) this candidate's CURRENT résumé would get from a fair screener reading it against the posting's requirements. Calibration — the score is the share of the posting's requirements the résumé evidences today, must-haves counting double: 75+ = nearly every must-have is evidenced on the résumé as written; 55-74 = most must-haves evidenced, a few named but not shown; 40-54 = the function fits but several must-haves are absent from the résumé; under 40 = different function, wrong level, or most must-haves absent. Be strict: a résumé that never mentions the posting's domain does not score above 40 however senior the person is. Judge function and level honestly, both ways: a category manager is not a software engineer; a 'head of' role is not for a 5-year IC; and a 2-5 year posting is not a shortlist for a 10-year leader — being far over the band is a mismatch, score it under 40. One short reason each (≤10 words).`,
-    `Candidate in one line: ${t.one_line}\nYears: ${t.years}. Level: ${a.level}${a.stretch ? " (open to one step up)" : ""}. Functions: ${t.functions.join("; ")}.\n\nPOSTINGS:\n${batch.map((b, i) => `#${i + 1} (id ${b.s.id}) ${b.s.title} — ${b.s.company_name ?? ""}\n${b.text.replace(/\s+/g, " ").slice(0, 2200)}`).join("\n\n")}\n\nReturn: {bands:[{id, band, why}]} — one entry per posting, by id.`,
-    1500, MODEL, undefined, `RÉSUMÉ PROFILE:\n${JSON.stringify(resume)}`
-  );
-  const out = new Map<number, { band: number; why: string }>();
-  for (const b of r.bands ?? []) { const id = Number(b.id); if (batch.some((x) => x.s.id === id)) out.set(id, { band: Math.max(0, Math.min(100, Number(b.band) || 0)), why: String(b.why ?? "").slice(0, 120) }); }
-  return out;
-}
-const TRIAGE_IN = 45;      // stage 3 only for bands at or above this (Sharpen lifts ~15-20; 75 is the bar)
-/** Stages 1b → 2 → 3 over a candidate set. Returns the scored items (stage 3) and the triaged-out ones (band only). */
-async function stagedScore(user: User, resume: { id: string; parsed: ResumeProfile }, t: Targets, a: Answers, cands: Sighting[], opt: { stage1Keep: number; stage3Cap: number; enough?: number; ceiling?: number; earlyQuestions?: boolean; bank: Awaited<ReturnType<typeof recallAnswers>>; onProgress?: (scored: number) => Promise<void> | void; onChosen?: (items: Item[]) => Promise<void> | void; mark?: string; run: Run }) {
+/** The discovery pass (v2). Gates and world exclusions on the posting text (₹0) → the function question, twelve postings a
+ *  call, cached per posting × function profile → labels from facts → verify(). Returns the verified items. */
+async function discover(user: User, resume: { id: string; parsed: ResumeProfile }, t: Targets, a: Answers, cands: Sighting[], opt: { cap: number; ceiling: number; run: Run; mark?: string; onProgress?: (n: number) => Promise<void> | void }) {
   const { run } = opt;
-  // 1b. free ranking on the posting's own words
-  const rw = resumeWords(resume.parsed);
   const descs = await descriptionsFor(cands.map((c) => c.id));
-  // the years gate (9 Nov): a posting's own band against the person's years, both ways. Four or more years over the band's
-  // top is a level mismatch a recruiter screens out ("2-5 years" is not for a ten-year BU head); two or more under the
-  // band's floor is not a shot either. Read from the posting's text with the experience parser; free.
   const years = Math.max(Number(resume.parsed.years_total ?? 0), Number(t.years ?? 0), yearsFromRoles(resume.parsed.roles) ?? 0);
-  let droppedBand = 0;
-  const trail: NonNullable<Run["trail"]> = [];
-  const tws = [...new Set([...a.titles, ...(resume.parsed.roles ?? []).slice(0, 3).map((r) => (r.title ?? "").replace(/[|/,(].*$/, "").trim())])].map(words).filter((w) => w.length);
-  // rank = the posting's shared vocabulary with the résumé, weighted by how well its title matches what we're searching for
-  const all = cands.map((s) => { const text = descs.get(s.id) ?? ""; const ts = titleScore(s.title ?? "", tws, a.level, true); return { s, text, fit: textFit(rw, text) * (0.5 + ts) }; });
-  // The screen-out gates (src/radar/gates.ts): years band one year either side of what is stated, the title's rung
-  // against the level asked for, and pedigree or credential requirements the résumé does not answer. A recruiter
-  // decides these before reading for fit; so do we, and the reason is kept in the trail.
+  const level = a.level, stretch = !!a.stretch;
   const blob = resumeBlob(resume.parsed);
-  const ranked = all.filter((x) => {
-    if (x.text.length < 200) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "no text" }); return false; }
-    const gate = bandGate(years, x.text) ?? titleGate(x.s.title ?? "", a.level, !!a.stretch, years, x.text) ?? pedigreeGate(x.text, blob);
-    if (gate) { droppedBand++; trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: gate }); return false; }
-    return true;
-  }).sort((x, y) => y.fit - x.fit);
-  run.dropped_band = (run.dropped_band ?? 0) + droppedBand;
-  const perEmp: Record<string, number> = {}; const kept: typeof ranked = [];
-  for (const x of ranked) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 30) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: x.fit, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; kept.push(x); if (kept.length >= opt.stage1Keep) break; }
-  kept.forEach((x, i) => trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: i + 1, fit: Math.round(x.fit * 100) / 100 }));
-  // 0. roles already fully checked for this résumé (a prior run, a prior morning) go straight through: no cheap pass, no dice.
-  //    Lists only grow, or lose roles that went quiet; they never forget a role (9 Nov).
-  const priorIds = new Set<number>();
-  for (let i = 0; i < kept.length; i += 100) {
-    const { data } = await db.from("reader_control").select("key, value").in("key", kept.slice(i, i + 100).map((x) => `radar:m:${user.id}:${x.s.id}`));
-    for (const r of data ?? []) if ((r.value as any)?.resume_id === resume.id && (r.value as any)?.matches?.length) priorIds.add(Number(String(r.key).split(":")[3]));
+  const trail: NonNullable<Run["trail"]> = [];
+  let dropped = 0;
+  // 1. the screen-out gates and the world exclusions — a recruiter's first ten seconds, in code
+  const passed: { s: Sighting; text: string }[] = [];
+  for (const s of cands) {
+    const text = descs.get(s.id) ?? "";
+    if (text.length < 200) { trail.push({ id: s.id, title: s.title, company: s.company_name ?? "", rank: -1, fit: 0, dropped: "no text" }); continue; }
+    const gate = bandGate(years, text) ?? titleGate(s.title ?? "", level, stretch, years, text) ?? pedigreeGate(text, blob) ?? worldExclusion(s.title ?? "", blob);
+    if (gate) { dropped++; trail.push({ id: s.id, title: s.title, company: s.company_name ?? "", rank: -1, fit: 0, dropped: gate }); continue; }
+    passed.push({ s, text });
   }
-  // 2. cheap bands, in batches of twenty down the free ranking: keep going while batches still find roles in reach,
-  //    stop after two empty batches in a row, or once thirty are in reach, or at the ceiling (140 on day one — seven batches; past that the profile, not the search, is the question). The spend follows the value.
-  const bands = new Map<number, { band: number; why: string }>();
-  const BATCH = 20, EMPTY_STOP = 2, ENOUGH = opt.enough ?? 30, CEIL = Math.min(kept.length, opt.ceiling ?? 200);
-  let at = 0, emptyRun = 0, inReachN = 0; const examined: typeof kept = [];
-  while (at < CEIL && emptyRun < EMPTY_STOP && inReachN < ENOUGH) {
-    const batch = kept.slice(at, Math.min(CEIL, at + BATCH)); at += batch.length; examined.push(...batch);
-    // bands already known for this résumé–posting pair are reused; prior fully-checked roles count as in reach without a call
-    let found = 0; const need: typeof batch = [];
-    for (const x of batch) {
-      if (priorIds.has(x.s.id)) { bands.set(x.s.id, { band: 100, why: "checked before" }); found++; inReachN++; continue; }
-      const cached = await kv.get<{ band: number; why: string; resume_id: string }>(`radar:tri:${x.s.id}:${resume.id}`);
-      if (cached) { bands.set(x.s.id, cached); if (cached.band >= TRIAGE_IN) { found++; inReachN++; } continue; }
-      need.push(x);
-    }
-    const halves = [need.slice(0, 10), need.slice(10)].filter((h) => h.length);
-    const got = await Promise.all(halves.map((h) => triage(resume.parsed, t, a, h).catch((e) => { console.error("[radar] triage", (e as Error).message); return new Map<number, { band: number; why: string }>(); })));
-    run.cost_calls += halves.length;
-    for (const m of got) for (const [id, v] of m) { bands.set(id, v); void kv.set(`radar:tri:${id}:${resume.id}`, { ...v, resume_id: resume.id }); if (v.band >= TRIAGE_IN) { found++; inReachN++; } }
-    emptyRun = found ? 0 : emptyRun + 1;
-    run.triaged = at; await opt.onProgress?.(0);
+  run.dropped_band = (run.dropped_band ?? 0) + dropped;
+  // newest first, at most twelve per employer before the question is asked, up to the ceiling
+  passed.sort((x, y) => Date.parse(y.s.first_seen) - Date.parse(x.s.first_seen));
+  const perEmp: Record<string, number> = {}; const ask: typeof passed = [];
+  for (const x of passed) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 12) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; ask.push(x); if (ask.length >= opt.ceiling) break; }
+  // 2. the one question, cached per posting × function profile
+  const fnKey = createHash("sha1").update(`${t.functions.join("|")}|${level}|${t.one_line}`).digest("hex").slice(0, 10);
+  const verdicts = new Map<number, Verdict>(); const need: typeof ask = [];
+  for (let i = 0; i < ask.length; i += 100) {
+    const slice = ask.slice(i, i + 100);
+    const { data } = await db.from("reader_control").select("key, value").in("key", slice.map((x) => `radar:fn:${x.s.id}:${fnKey}`));
+    const have = new Map((data ?? []).map((r: any) => [Number(String(r.key).split(":")[2]), r.value as Verdict]));
+    for (const x of slice) { const v = have.get(x.s.id); if (v) verdicts.set(x.s.id, v); else need.push(x); }
   }
-  const kept2 = examined;
-  for (const tr of trail) { const b = bands.get(tr.id); if (b) { tr.band = b.band; tr.why = b.why; } }
-  // 3. the expert check on the ones in reach, best first, capped; at most 4 per employer
-  // prior roles anywhere in the free ranking (even past where the batches stopped) are in reach by right
-  for (const x of kept) if (priorIds.has(x.s.id) && !bands.has(x.s.id)) bands.set(x.s.id, { band: 100, why: "checked before" });
-  const inReachAll = kept.filter((x) => (bands.get(x.s.id)?.band ?? 0) >= TRIAGE_IN).sort((x, y) => (bands.get(y.s.id)!.band - bands.get(x.s.id)!.band));
-  const inReach = inReachAll;
-  const per3: Record<string, number> = {}; const chosen: typeof kept = [];
-  // at most six per employer through the full check: Amazon alone is a quarter of the city, and for some profiles Amazon is the market
-  for (const x of inReach) { const prior = priorIds.has(x.s.id); const k = x.s.company_name ?? "?"; if (!prior && (per3[k] ?? 0) >= 6) continue; if (!prior) per3[k] = (per3[k] ?? 0) + 1; chosen.push(x); if (!prior && chosen.filter((c) => !priorIds.has(c.s.id)).length >= opt.stage3Cap) break; }
-  for (const x of chosen) { const tr = trail.find((t) => t.id === x.s.id); if (tr) tr.chosen = true; }
-  run.trail = trail.sort((a, b) => (a.rank < 0 ? 1e6 : a.rank) - (b.rank < 0 ? 1e6 : b.rank));
-  const items: Item[] = chosen.map(({ s }) => ({ sighting_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "", url: s.url, posted_at: s.posted_at, first_seen: s.first_seen, why: bands.get(s.id)?.why ?? "", tri: bands.get(s.id)?.band, ...(opt.mark ? { new_at: opt.mark } : {}) }));
-  if (opt.onChosen) await opt.onChosen(items);
-  let i = 0, done = 0;
-  const worker = async () => {
-    while (i < items.length) {
-      const it = items[i++];
+  const cand = { one_line: t.one_line, functions: t.functions, years, level };
+  const batches: typeof need[] = []; for (let i = 0; i < need.length; i += 12) batches.push(need.slice(i, i + 12));
+  let bi = 0, doneB = 0;
+  const workerFn = async () => {
+    while (bi < batches.length) {
+      const b = batches[bi++];
       try {
-        const mk = `radar:m:${user.id}:${it.sighting_id}`;
-        const prior = await kv.get<{ matches: Match[]; resume_id?: string }>(mk);
-        let matches: Match[];
-        if (prior?.matches?.length && prior.resume_id === resume.id) { matches = prior.matches; }   // same résumé, same posting: the number holds
-        else {
-          const pp = await postingFor(it.sighting_id);
-          if (!pp) { it.error = "unreadable"; continue; }
-          matches = (await matchAndGrade(resume.parsed, pp.posting)).matches; run.cost_calls += 2;
-        }
-        matches = applyRemembered(matches, opt.bank).matches;
-        await kv.set(mk, { matches, resume_id: resume.id });
-        summarise(it, matches);
-      } catch (e) { it.error = (e as Error).message.slice(0, 120); }
-      done++;
-      if (opt.earlyQuestions && !run.pq?.length && done >= 4 && !(run as any)._qTried) { (run as any)._qTried = true; try { run.pq = await profileQuestions(resume.parsed, await askable(user.id, items.filter((x) => typeof x.now === "number"))); run.cost_calls++; await opt.onProgress?.(done); } catch (e) { console.error("[radar] pq", (e as Error).message); } }
-      if (opt.onProgress && done % 3 === 0) await opt.onProgress(done);
+        const m = await functionCheck(cand, b.map((x) => ({ id: x.s.id, title: x.s.title ?? "", company: x.s.company_name ?? "", text: x.text })));
+        run.cost_calls++;
+        for (const [id, v] of m) { verdicts.set(id, v); void kv.set(`radar:fn:${id}:${fnKey}`, v); }
+      } catch (e) { console.error("[radar] function check", (e as Error).message); }
+      doneB++; await opt.onProgress?.(doneB * 12);
     }
   };
-  await Promise.all(Array.from({ length: 6 }, worker));
-  const passedOver = kept2.filter((x) => !chosen.includes(x)).map(({ s }) => ({ id: s.id, band: bands.get(s.id)?.band ?? 0 }));
-  // the ones the batches never reached stay unseen, so a later morning may still meet them
-  run.seen = [...kept2.map((x) => x.s.id), ...(run.seen ?? []).filter((id) => !kept.some((x) => x.s.id === id))].slice(0, 4000);
-  return { items, passedOver, kept: kept.length, examined: kept2.length, inReach: inReach.length };
+  await Promise.all(Array.from({ length: 3 }, workerFn));
+  // 3. labels from facts
+  const items: Item[] = [];
+  for (const x of ask) {
+    const v = verdicts.get(x.s.id);
+    if (!v) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "unanswered" }); continue; }
+    const near = nearMiss(years, level, x.s.title ?? "", x.text);
+    const label = labelOf(v.same, near);
+    if (!label) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, why: v.why, dropped: `not your function` }); continue; }
+    trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: items.length + 1, fit: 0, why: v.why, chosen: true });
+    items.push({ sighting_id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", location: x.s.location ?? "", url: x.s.url, posted_at: x.s.posted_at, first_seen: x.s.first_seen, why: v.why, label, band_text: BAND_TEXT(x.text), near, ...(opt.mark ? { new_at: opt.mark } : {}) });
+  }
+  // 4. the contract, checked by code
+  const { ok, violations } = verify(items as any, resume.parsed, years, level, stretch, (id) => descs.get(id));
+  const at = new Date().toISOString();
+  run.violations = [...violations.map((v) => ({ ...v, at })), ...(run.violations ?? [])].slice(0, 50);
+  const okIds = new Set(ok.map((o) => o.sighting_id));
+  // 5. order: for you first, newest first within a label; at most eight per employer; the cap
+  const rank: Record<Label, number> = { for_you: 0, adjacent: 1, stretch: 2 };
+  const per8: Record<string, number> = {}; const final: Item[] = [];
+  for (const it of items.filter((i) => okIds.has(i.sighting_id)).sort((x, y) => rank[x.label!] - rank[y.label!] || Date.parse(y.first_seen) - Date.parse(x.first_seen))) {
+    const k = it.company || "?"; if ((per8[k] ?? 0) >= 8) continue; per8[k] = (per8[k] ?? 0) + 1; final.push(it); if (final.length >= opt.cap) break;
+  }
+  run.trail = trail;
+  run.seen = [...ask.map((x) => x.s.id), ...(run.seen ?? []).filter((id) => !cands.some((c) => c.id === id))].slice(0, 4000);
+  return { items: final, examined: ask.length, kept: passed.length };
 }
 /** Sharpen asks: did Radar already score this résumé against this posting? Then that match is the match (same engine), and
  *  the Sharpen that follows pays only for the rewrite. Matched on the posting URL Radar handed out. */
@@ -362,7 +291,7 @@ export async function radarMatchesFor(userId: string, resumeId: string, url: str
   const run = await kv.get<Run>(runKey(userId));
   if (!run || run.resume_id !== resumeId) return null;
   const want = norm(url.replace(/[?#].*$/, ""));
-  const it = run.items.find((i) => typeof i.now === "number" && norm((i.url ?? "").replace(/[?#].*$/, "")) === want);
+  const it = run.items.find((i) => norm((i.url ?? "").replace(/[?#].*$/, "")) === want);
   if (!it) return null;
   const m = await kv.get<{ matches: Match[] }>(`radar:m:${userId}:${it.sighting_id}`);
   return m?.matches?.length ? m.matches : null;
@@ -375,24 +304,12 @@ async function spent30(userId: string): Promise<number> {
   return p;
 }
 
-function summarise(it: Item, matches: Match[]) {
-  const a = assess(matches);
-  const said = matches.filter((m) => m.bucket === "said"), unsaid = matches.filter((m) => m.bucket === "have_not_said"), missing = matches.filter((m) => m.bucket === "missing");
-  const missingMust = missing.filter((m) => m.kind === "must").map((m) => m.requirement);
-  // Sharpen says what is done and unsaid; it cannot add more than ~12 points of honest wording, and a missing must that
-  // is a credential, a pedigree or a years requirement is a gate: the role sits in "close the gap" with the gate named.
-  const gate = gateFromMissing(missingMust);
-  let now = a.current, promised = Math.min(a.promised, a.current + 12);
-  if (gate) { now = Math.min(now, GATE_CAP); promised = Math.min(promised, GATE_CAP); }
-  Object.assign(it, { now, promised, band: a.band, said: said.length, unsaid: unsaid.length, missing: missing.length, gate: gate ?? undefined,
-    top_said: said.filter((m) => m.kind === "must").slice(0, 3).map((m) => m.requirement), top_unsaid: unsaid.filter((m) => m.sayable).slice(0, 3).map((m) => m.requirement),
-    top_missing: gate ? [gate, ...missingMust.filter((m) => !gate.includes(m.slice(0, 80)))].slice(0, 3) : missingMust.slice(0, 3) });
-}
 function tally(run: Run) {
-  run.shots = run.items.filter((i) => (i.promised ?? 0) >= SHOT && (i.now ?? 0) >= 60).length;
-  run.within_reach = run.items.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < SHOT).length;
-  run.almost = run.items.filter((i) => (i.promised ?? 0) >= ALMOST && (i.promised ?? 0) < SHOT).length;
-  run.gap = run.items.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < ALMOST).length;
+  run.for_you = run.items.filter((i) => i.label === "for_you").length;
+  run.adjacent = run.items.filter((i) => i.label === "adjacent").length;
+  run.stretch = run.items.filter((i) => i.label === "stretch").length;
+  // legacy mirrors, so older screens and reports keep a number to show
+  run.shots = run.for_you; run.almost = run.adjacent; run.gap = run.stretch; run.within_reach = run.adjacent + run.stretch;
 }
 /** A Radar question (9 Nov): a career-level fact about the person — a tool, years in a function, the scale they ran, a
  *  domain, a credential — never one job at one company, never a soft skill, never something the résumé already states.
@@ -414,59 +331,9 @@ async function profileQuestions(resume: ResumeProfile, reqs: { requirement: stri
   );
   return (r.questions ?? []).filter((q) => q.ask && Array.isArray(q.covers) && q.covers.length && Array.isArray(q.answers) && q.answers.length === 3).slice(0, 6).map((q, i) => ({ ...q, id: q.id || `q${i + 1}`, answers: q.answers.slice(0, 3) as [string, string, string] }));
 }
-/** The requirements worth asking about across a set of scored roles: missing, or done but unproven, must-haves first. */
-async function askable(userId: string, items: Item[]): Promise<{ requirement: string; n: number }[]> {
-  const groups: { requirement: string; n: number; weight: number }[] = [];
-  for (const it of items) {
-    if (typeof it.now !== "number") continue;
-    const m = await kv.get<{ matches: Match[] }>(`radar:m:${userId}:${it.sighting_id}`); if (!m) continue;
-    for (const x of m.matches) {
-      const ask = !x.told && (x.bucket === "missing" || (x.bucket === "have_not_said" && !x.sayable));
-      if (!ask) continue;
-      const g = groups.find((g) => sameRequirement(g.requirement, x.requirement));
-      const w = (x.kind === "must" ? 2 : 1) + (x.bucket === "missing" ? 1 : 0);
-      if (g) { g.n++; g.weight += w; } else groups.push({ requirement: x.requirement, n: 1, weight: w });
-    }
-  }
-  return groups.sort((a, b) => b.weight - a.weight || b.n - a.n).map((g) => ({ requirement: g.requirement, n: g.n }));
-}
-
-/** The missing must-haves that come up again and again across the picked roles — the ten most common, with the three
- *  honest ways of having done each (the same cards as the Sharpen questionnaire). One answer lifts every role that asked. */
-async function commonQuestions(userId: string, items: Item[]): Promise<Gap[]> {
-  const groups: { requirement: string; kind: "must" | "nice"; n: number; weight: number }[] = [];
-  for (const it of items) {
-    if (typeof it.now !== "number") continue;
-    const m = await kv.get<{ matches: Match[] }>(`radar:m:${userId}:${it.sighting_id}`); if (!m) continue;
-    for (const x of m.matches) {
-      // what to ask: a must-have the résumé lacks, or one the person has plainly done but the résumé can't prove
-      // (for a strong profile almost nothing is missing and everything is unproven — those are the questions that lift)
-      const ask = !x.told && (x.bucket === "missing" || (x.bucket === "have_not_said" && !x.sayable && x.kind === "must"));
-      if (!ask) continue;
-      const g = groups.find((g) => sameRequirement(g.requirement, x.requirement));
-      const w = (x.kind === "must" ? 2 : 1) + (x.bucket === "missing" ? 1 : 0);
-      if (g) { g.n++; g.weight += w; } else groups.push({ requirement: x.requirement, kind: x.kind, n: 1, weight: w });
-    }
-  }
-  const top = groups.sort((a, b) => b.weight - a.weight || b.n - a.n).slice(0, 8);
-  if (!top.length) return [];
-  const asMatches: Match[] = top.map((g) => ({ requirement: g.requirement, kind: g.kind, bucket: "missing", evidence: "", suggestion: `Asked by ${g.n} of the roles on your list.` }));
-  const filled = await fillOptions(asMatches);
-  return gapsOf(filled).map((gap, i) => ({ ...gap, why: top[i].n > 1 ? `Asked by ${top[i].n} of the roles on your list.` : `Asked by a role on your list — the résumé doesn’t show it yet.` }));
-}
 /** Re-score every item whose matches carry this requirement, after an answer or a withdrawal. */
-async function rescore(userId: string, run: Run, requirement: string, apply: (m: Match[]) => Match[]) {
-  for (const it of run.items) {
-    if (typeof it.now !== "number") continue;
-    const key = `radar:m:${userId}:${it.sighting_id}`;
-    const m = await kv.get<{ matches: Match[] }>(key); if (!m) continue;
-    const hit = m.matches.find((x) => sameRequirement(x.requirement, requirement) && (x.bucket === "missing" || x.told));
-    if (!hit) continue;
-    const next = apply(m.matches.map((x) => (x === hit ? { ...x, requirement: hit.requirement } : x)));
-    await kv.set(key, { matches: next });
-    summarise(it, next);
-  }
-  run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
+async function rescore(_userId: string, run: Run, _requirement: string, _apply: (m: Match[]) => Match[]) {
+  // v2 lists carry no per-role scores; an answer is remembered on the account and used by Sharpen. Nothing to re-rank.
   tally(run);
 }
 
@@ -475,8 +342,7 @@ const running = new Set<string>();
 
 async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile }, targets: Targets, answers: Answers) {
   const key = runKey(user.id);
-  const run: Run = { status: "shortlist", started: new Date().toISOString(), answers, resume_id: resume.id, pool: 0, by_title: 0, picked: 0, scored: 0, items: [], cost_calls: 0, threshold: SHOT };
-  const bank = await recallAnswers(user.id).catch(() => []);
+  const run: Run = { status: "shortlist", started: new Date().toISOString(), answers, resume_id: resume.id, pool: 0, by_title: 0, picked: 0, scored: 0, items: [], cost_calls: 0, threshold: 0 };
   const save = () => kv.set(key, run);
   try {
     await save();
@@ -501,23 +367,11 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     run.status = "scoring"; run.picked = 0; await save();
     const planSince = run.started;
     const { paise } = await charge(user.id, planSince, "radar:run", async () => {
-      const r = await stagedScore(user, resume, targets, answers, longList, { stage1Keep: 600, stage3Cap: 40, enough: 40, ceiling: 240, earlyQuestions: true, bank, run,
-        onChosen: async (items) => { run.items = items; run.picked = items.length; await save(); },
-        onProgress: async (n) => { run.scored = n; await save(); } });
+      const r = await discover(user, resume, targets, answers, longList, { cap: 40, ceiling: 240, run, onProgress: async (n) => { run.scored = n; await save(); } });
       run.picked = r.items.length; run.items = r.items; run.scored = r.items.length; run.examined = r.examined;
-      // answers given on the questions screen while this ran: applied now to every role that asks
-      try {
-        const bank2 = await recallAnswers(user.id);
-        if (bank2.length) for (const it of run.items) {
-          if (typeof it.now !== "number") continue;
-          const mk = `radar:m:${user.id}:${it.sighting_id}`; const m = await kv.get<{ matches: Match[] }>(mk); if (!m) continue;
-          const re = applyRemembered(m.matches, bank2); if (re.n) { await kv.set(mk, { matches: re.matches }); summarise(it, re.matches); }
-        }
-      } catch (e) { console.error("[radar] bank", (e as Error).message); }
-      // the questions: missing must-haves that repeat across the picked roles, asked once, applied everywhere
-      run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
       run.status = "questions"; await save();
-      try { if (!run.pq?.length) { run.pq = await profileQuestions(resume.parsed, await askable(user.id, run.items)); run.cost_calls++; } } catch (e) { console.error("[radar] questions", (e as Error).message); run.pq = run.pq ?? []; }
+      // the questions screen: career-level facts the market keeps asking for these titles (from the posting checklists on file)
+      try { if (!run.pq?.length) { run.pq = (await preQuestions(user.id, resume.parsed, resume.id, targets)).questions; } } catch (e) { console.error("[radar] questions", (e as Error).message); run.pq = run.pq ?? []; }
     });
     run.spend = { run_paise: paise, total_paise: await spent30(user.id) };
     tally(run);
@@ -554,7 +408,7 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
     const liveIds = new Set(pool.map((s) => s.id));
     // 1. roles that went quiet leave the list
     const gone = run.items.filter((i) => !liveIds.has(i.sighting_id));
-    run.gone = [...gone.map((i) => ({ sighting_id: i.sighting_id, title: i.title, company: i.company, gone_at: now, promised: i.promised })), ...(run.gone ?? [])].slice(0, 60);
+    run.gone = [...gone.map((i) => ({ sighting_id: i.sighting_id, title: i.title, company: i.company, gone_at: now })), ...(run.gone ?? [])].slice(0, 60);
     run.items = run.items.filter((i) => liveIds.has(i.sighting_id));
     // 2. what came in since the last run (two hours of slack for the reader's own timing), never seen by the picker before
     const since = Date.parse(run.refreshed ?? run.finished ?? run.started) - 2 * 3600e3;
@@ -572,27 +426,32 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
     for (const { s } of scored) { const k = s.employer_key ?? s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 12) continue; perEmp[k] = (perEmp[k] ?? 0) + 1; longList.push(s); if (longList.length >= 240) break; }
     let added: Item[] = []; let morningPaise = 0;
     const total = await spent30(userId); const capped = total >= CAP_PAISE;
-    if (longList.length) {
+    if (longList.length && !capped) {
       const tkey = `radar:targets:${userId}:${resume.id}`;
       let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(resume.parsed); await kv.set(tkey, t); }
-      const bank = await recallAnswers(userId).catch(() => []);
-      // the morning budget: batches of twenty through the cheap pass (stops at the first two empty, ceiling forty), at most two
-      // through the expert check (≈ ₹5 a day, ₹16 worst);
-      // an account past ₹600 in its 30 days gets the free and cheap stages only
-      const { result, paise } = await charge(userId, run.started, "radar:morning", () => stagedScore(urow as User, resume, t!, run.answers, longList, { stage1Keep: 60, stage3Cap: capped ? 0 : 2, enough: 4, ceiling: 40, bank, run, mark: now }));
+      // the morning: only what came in since the last run goes through the gates and the question (≈ ₹1–3 a day)
+      const { result, paise } = await charge(userId, run.started, "radar:morning", () => discover(urow as User, resume, t!, run.answers, longList, { cap: 12, ceiling: 60, run, mark: now }));
       morningPaise = paise;
       added = result.items;
       run.items.push(...added);
     }
+    // the whole list, re-verified every morning: a role whose page or band no longer fits leaves with the reason logged
+    {
+      const descs = await descriptionsFor(run.items.map((i) => i.sighting_id));
+      const years = Math.max(Number(resume.parsed.years_total ?? 0), yearsFromRoles(resume.parsed.roles) ?? 0);
+      const { ok, violations } = verify(run.items.filter((i) => i.label) as any, resume.parsed, years, run.answers.level, !!run.answers.stretch, (id) => descs.get(id));
+      if (violations.length) { const okIds = new Set(ok.map((o) => o.sighting_id)); run.items = run.items.filter((i) => !i.label || okIds.has(i.sighting_id)); run.violations = [...violations.map((v) => ({ ...v, at: now })), ...(run.violations ?? [])].slice(0, 50); }
+    }
     run.spend = { run_paise: morningPaise, total_paise: total + morningPaise, capped };
     // 3. re-rank, retally; yesterday's "new" badges fall away
     for (const it of run.items) if (it.new_at && it.new_at !== now && Date.now() - Date.parse(it.new_at) > 36 * 3600e3) delete it.new_at;
-    run.items.sort((x, y) => (y.promised ?? -1) - (x.promised ?? -1) || (y.now ?? -1) - (x.now ?? -1));
+    const rank: Record<string, number> = { for_you: 0, adjacent: 1, stretch: 2 };
+    run.items.sort((x, y) => (rank[x.label ?? "stretch"] - rank[y.label ?? "stretch"]) || Date.parse(y.first_seen) - Date.parse(x.first_seen));
     tally(run);
-    const new_shots = added.filter((i) => (i.promised ?? 0) >= REACH).length;   // new in any tier (9 Nov: the list is three tiers now)
+    const new_shots = added.length;
     run.refreshed = now; run.today = { new: new_shots, gone: gone.length, at: now };
     await kv.set(key, run);
-    return { new_shots, new_scored: added.filter((i) => typeof i.now === "number").length, gone: gone.length, shots: run.shots ?? 0 };
+    return { new_shots, new_scored: added.length, gone: gone.length, shots: run.items.filter((i) => i.label).length };   // "N new for you, M on your list"
   } finally { running.delete(userId); }
 }
 
@@ -779,17 +638,18 @@ radar.get("/test/result", async (c) => {
   const run = await kv.get<Run>(runKey(u.id));
   if (!run) return c.json({ status: "none" });
   const unlocked = (await hasRadar(u.id)) || !!(await kv.get(`radar:unlock:${u.id}`));
-  const scored = run.items.filter((i) => typeof i.now === "number");
-  const shots = scored.filter((i) => (i.promised ?? 0) >= SHOT);
-  const almost = scored.filter((i) => (i.promised ?? 0) >= ALMOST && (i.promised ?? 0) < SHOT);
-  const gap = scored.filter((i) => (i.promised ?? 0) >= REACH && (i.promised ?? 0) < ALMOST);
+  const labelled = run.items.filter((i) => i.label);
+  const shots = labelled.filter((i) => i.label === "for_you");
+  const almost = labelled.filter((i) => i.label === "adjacent");
+  const gap = labelled.filter((i) => i.label === "stretch");
   const chance = [...shots, ...almost, ...gap];
   const since = Date.now() - 86400e3;
   const oldest = chance.reduce((m, i) => Math.max(m, (Date.now() - Date.parse(i.first_seen)) / 86400e3), 0);
   const reveal = { by_title: run.by_title ?? 0, examined: run.examined ?? run.picked ?? 0, shots: shots.length, almost: almost.length, gap: gap.length, chance: chance.length,
+    for_you: shots.length, adjacent: almost.length, stretch: gap.length,
     opened_today: chance.filter((i) => Date.parse(i.first_seen) >= since).length, within_reach: almost.length + gap.length, oldest_days: Math.round(oldest),
-    // the taste: the employer and the two numbers, the role hidden — the best three across the tiers
-    taste: chance.slice(0, 3).map((i) => ({ company: i.company, location: i.location, now: i.now, promised: i.promised, first_seen: i.first_seen, posted_at: i.posted_at })) };
+    // the taste: the employer, the label and the line — the role itself hidden — the best three
+    taste: chance.slice(0, 3).map((i) => ({ company: i.company, location: i.location, label: i.label, why: i.why, band_text: i.band_text, first_seen: i.first_seen, posted_at: i.posted_at })) };
   const my = (title: string) => titleScore(title, run.answers.titles.map(words), run.answers.level, true) >= 0.5;
   const mine = run.status === "done" ? await pulse(my).catch(() => null) : null;
   if (!isTester(u)) { delete (run as any).spend; delete (run as any).trail; }   // ours to see, not the customer's
@@ -797,7 +657,7 @@ radar.get("/test/result", async (c) => {
   const tester = isTester(u);   // the web shows its tester-only buttons to testers alone
   if (unlocked) return c.json({ ...run, unlocked: true, reveal, pulse: mine, tester });
   // locked: counts and the taste, no titles, no links, no facts
-  return c.json({ ...run, unlocked: false, reveal, pulse: mine, tester, items: run.items.map((i) => ({ sighting_id: i.sighting_id, company: i.company, now: i.now, promised: i.promised, first_seen: i.first_seen, error: i.error })), questions: [] });
+  return c.json({ ...run, unlocked: false, reveal, pulse: mine, tester, items: run.items.map((i) => ({ sighting_id: i.sighting_id, company: i.company, label: i.label, first_seen: i.first_seen })), questions: [] });
 });
 
 /** One answer, applied to every role on the list that asked for it; remembered on the account like any questionnaire answer. */

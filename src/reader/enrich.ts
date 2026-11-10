@@ -138,3 +138,16 @@ export async function enrichDue(limit = 300, concurrency = 6) {
   await Promise.all(Array.from({ length: concurrency }, worker));
   return stats;
 }
+
+/** The posting's text by whatever door the host offers — Workday/Oracle JSON, Phenom's inline object, JSON-LD, or the
+ *  page itself — with no database and no browser. For checks and panels outside the worker. */
+export async function readPostingText(url: string): Promise<string> {
+  const wd = (await workdayDetail(url.replace(/\/apply\/?$/, ""))) ?? (await oracleDetail(url));
+  if (wd) return wd.ok ? wd.text.slice(0, 20000) : "";
+  const r = await getText(url, { timeoutMs: 20000, gapMs: 600 });
+  if (!r.ok) return "";
+  const ld = jsonLd(r.text);
+  let text = (ld?.description && ld.description.length > 300 ? ld.description : htmlToText(r.text)).slice(0, 20000);
+  if (text.length < 200 || /phApp\.ddo/.test(r.text)) { const ph = await phenomDetail(url, r.text); if (ph) text = ph.text.slice(0, 20000); }
+  return text;
+}
