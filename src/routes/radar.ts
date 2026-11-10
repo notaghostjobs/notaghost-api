@@ -401,7 +401,7 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
   const resume = await currentResume(userId);
   if (!resume) return null;
   if (resume.id !== run.resume_id) {
-    const tkey = `radar:targets:${userId}:${resume.id}`;
+    const tkey = `radar:targets:v3:${userId}:${resume.id}`;
     let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(resume.parsed); await kv.set(tkey, t); }
     running.add(userId);
     await runRadar(urow as User, resume, t, run.answers);
@@ -434,7 +434,7 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
     let added: Item[] = []; let morningPaise = 0;
     const total = await spent30(userId); const capped = total >= CAP_PAISE;
     if (longList.length && !capped) {
-      const tkey = `radar:targets:${userId}:${resume.id}`;
+      const tkey = `radar:targets:v3:${userId}:${resume.id}`;
       let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(resume.parsed); await kv.set(tkey, t); }
       // the morning: only what came in since the last run goes through the gates and the question (≈ ₹1–3 a day)
       const { result, paise } = await charge(userId, run.started, "radar:morning", () => discover(urow as User, resume, t!, run.answers, longList, { cap: 12, ceiling: 60, run, mark: now }));
@@ -523,7 +523,7 @@ export async function runPanel(reason: string): Promise<PanelResult | null> {
     const pool = await livePool(); titleIdf(pool);
     const out: PanelResult = { at: new Date().toISOString(), commit, pass: true, cost_calls: 0, resumes: [], failures: 0 };
     for (const r of byPerson.values()) {
-      const tkey = `radar:targets:panel:${r.id}`;
+      const tkey = `radar:targets:panel:v3:${r.id}`;
       let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(r.parsed); await kv.set(tkey, t); out.cost_calls++; }
       const a: Answers = { titles: t.titles, level: t.level, stretch: false, avoid: (r.parsed.roles ?? []).filter((x) => /present|current|now/i.test(x.end ?? "")).map((x) => (x.company ?? "").split(/[·,(]/)[0].trim()).filter(Boolean) };
       const run: Run = { status: "scoring", started: new Date().toISOString(), answers: a, resume_id: r.id, pool: pool.length, by_title: 0, picked: 0, scored: 0, items: [], cost_calls: 0, threshold: 0 };
@@ -614,7 +614,7 @@ radar.get("/test/targets", async (c) => {
   const u = c.get("user");
   const resume = await currentResume(u.id);
   if (!resume) return c.json({ error: "no_resume" }, 404);
-  const key = `radar:targets:${u.id}:${resume.id}`;
+  const key = `radar:targets:v3:${u.id}:${resume.id}`;
   let t = await kv.get<Targets>(key);
   if (!t) { t = await withMeter({ tag: "radar:targets", user: u.id }, () => deriveTargets(resume.parsed)); await kv.set(key, t); }
   // live count and came-in-today per title, from the pool (₹0)
@@ -635,7 +635,7 @@ radar.post("/test/start", async (c) => {
   const resume = await currentResume(u.id);
   if (!resume) return c.json({ error: "Upload a résumé first." }, 400);
   if (running.has(u.id)) return c.json({ ok: true, already: true });
-  const tkey = `radar:targets:${u.id}:${resume.id}`;
+  const tkey = `radar:targets:v3:${u.id}:${resume.id}`;
   let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(resume.parsed); await kv.set(tkey, t); }
   // no questionnaire (held, 7 Nov): the résumé alone decides. Answers are accepted when given; otherwise they come from the profile.
   const raw = await c.req.json().catch(() => ({}));
@@ -686,7 +686,7 @@ radar.get("/test/prequestions", async (c) => {
   const u = c.get("user");
   const resume = await currentResume(u.id);
   if (!resume) return c.json({ error: "no_resume" }, 404);
-  const tkey = `radar:targets:${u.id}:${resume.id}`;
+  const tkey = `radar:targets:v3:${u.id}:${resume.id}`;
   let t = await kv.get<Targets>(tkey); if (!t) { t = await withMeter({ tag: "radar:targets", user: u.id }, () => deriveTargets(resume.parsed)); await kv.set(tkey, t); }
   const runNow = await kv.get<Run>(runKey(u.id));
   let questions: ProfileQ[] = runNow?.pq ?? []; let from = -1;
