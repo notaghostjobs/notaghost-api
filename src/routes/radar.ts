@@ -226,7 +226,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   for (const s of cands) {
     const text = descs.get(s.id) ?? "";
     if (text.length < 200) { trail.push({ id: s.id, title: s.title, company: s.company_name ?? "", rank: -1, fit: 0, dropped: "no text" }); continue; }
-    const gate = screenGate(s.title ?? "", text, { years, level, stretch, blob }) ?? worldExclusion(s.title ?? "", blob);
+    const gate = screenGate(s.title ?? "", text, { years, level, stretch, blob, company: s.company_name }) ?? worldExclusion(s.title ?? "", blob);
     if (gate) { dropped++; trail.push({ id: s.id, title: s.title, company: s.company_name ?? "", rank: -1, fit: 0, dropped: gate }); continue; }
     passed.push({ s, text });
   }
@@ -264,7 +264,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   for (const x of ask) {
     const v = verdicts.get(x.s.id);
     if (!v) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "unanswered" }); continue; }
-    const near = nearMiss(years, level, x.s.title ?? "", x.text);
+    const near = nearMiss(years, level, x.s.title ?? "", x.text, x.s.company_name);
     const label = labelOf(v.same, near);
     if (!label) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, why: v.why, dropped: `not your function` }); continue; }
     if (v.same === "adjacent" && !sharesFunction(x.s.title ?? "", a.titles, t.functions)) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, why: v.why, dropped: `adjacent, but the title shares no word of your function` }); continue; }
@@ -294,7 +294,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
       let txt = ""; try { txt = await readPostingText(it.url); } catch { /* unreachable today: the stored copy stands */ }
       if (txt && txt.length >= 200) {
         if (DEAD_PAGE.test(txt.slice(0, 3000))) { trail.push({ id: it.sighting_id, title: it.title, company: it.company, rank: -1, fit: 0, dropped: "page says the job is closed" }); void db.from("sightings").update({ gone_at: new Date().toISOString(), enrich_error: "page says the job is closed" }).eq("id", it.sighting_id).is("gone_at", null); continue; }
-        const gate = screenGate(it.title, txt, { years, level, stretch, blob });
+        const gate = screenGate(it.title, txt, { years, level, stretch, blob, company: it.company });
         if (gate) { trail.push({ id: it.sighting_id, title: it.title, company: it.company, rank: -1, fit: 0, dropped: `live page: ${gate}` }); run.violations = [{ sighting_id: it.sighting_id, title: it.title, rule: `live page: ${gate}`, at }, ...(run.violations ?? [])].slice(0, 50); }
         if (txt.length > (descs.get(it.sighting_id)?.length ?? 0) || gate) void db.from("sightings").update({ description: txt.slice(0, 20000), enriched_at: new Date().toISOString() }).eq("id", it.sighting_id);
         if (gate) continue;
@@ -583,7 +583,7 @@ export async function runPanel(reason: string): Promise<PanelResult | null> {
             const txt = await readPostingText(it.url);
             if (!txt || txt.length < 200) live_check = "page unreadable today";
             else if (DEAD_PAGE.test(txt.slice(0, 3000))) live_check = "page says the job is closed";
-            else live_check = screenGate(it.title, txt, { years, level: t.level, stretch: false, blob }) ?? "ok";
+            else live_check = screenGate(it.title, txt, { years, level: t.level, stretch: false, blob, company: it.company }) ?? "ok";
           } catch (e) { live_check = `unreachable: ${(e as Error).message.slice(0, 60)}`; }
           if (live_check !== "ok" && !/unreadable|unreachable/.test(live_check)) failures.push({ title: it.title, company: it.company, rule: live_check });
         }
@@ -609,14 +609,14 @@ export async function panelLast(): Promise<(PanelResult & { reason?: string }) |
  *  the list — through the app's own request handler, and times it. A run that does not reach "done" inside six minutes,
  *  a reveal without its three employers, or a list line without a title, a reason or an employer page is a failure.
  *  (A run sat on an old "questions" status for seven minutes while a tester watched the scan; nothing had checked that.) */
-export const PROBE_PHONE = "0000000000";
+export const PROBE_PHONE = "910000000000";   // stored like every other number (country code + ten digits); testers.ts matches the last ten
 export type FlowProbe = { at: string; ok: boolean; ms: number; status: string; chance: number; taste: string[]; items: number; problems: string[] };
 export async function flowProbe(app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }): Promise<FlowProbe> {
   const t0 = Date.now(); const problems: string[] = [];
   const out = (status: string, chance = 0, taste: string[] = [], items = 0): FlowProbe => ({ at: new Date().toISOString(), ok: problems.length === 0, ms: Date.now() - t0, status, chance, taste, items, problems });
   try {
-    const { data: u } = await db.from("users").upsert({ phone: PROBE_PHONE, name: "Radar probe", last_seen_at: new Date().toISOString() }, { onConflict: "phone" }).select("id").single();
-    if (!u) { problems.push("probe account could not be created"); return out("none"); }
+    const { data: u, error: uerr } = await db.from("users").upsert({ phone: PROBE_PHONE, last_seen_at: new Date().toISOString() }, { onConflict: "phone" }).select("id").single();
+    if (!u) { problems.push(`probe account could not be created: ${uerr?.message ?? "no row"}`); return out("none"); }
     // the résumé: the panel's most recent real one, copied under the probe account
     const { data: rows } = await db.from("resumes").select("id, parsed, text").not("parsed", "is", null).order("created_at", { ascending: false }).limit(20);
     const src = (rows ?? []).find((r: any) => r.parsed?.roles?.length && r.parsed?.name);

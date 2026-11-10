@@ -6,7 +6,7 @@ import { docLink, docToken, receiptToken } from "./doc.js";
 import { Hono } from "hono";
 import { stampUser, srcOfUser, logEvent, untagMessage } from "../lib/src.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { env } from "../lib/env.js";
+import { env, receiptItem } from "../lib/env.js";
 import { db, activePlan } from "../lib/db.js";
 import { createSession } from "../lib/auth.js";
 import { gate, refund, type Caller } from "../lib/quota.js";
@@ -336,7 +336,7 @@ export async function notifyReceipt(userId: string, p: { id: string; receipt_no:
     const { data: u } = await db.from("users").select("phone").eq("id", userId).maybeSingle();
     const to = String(u?.phone ?? "").replace(/\D/g, ""); if (!to) return;
     const rupees = (n: number) => (n / 100).toLocaleString("en-IN");
-    const item = `Sharpen, ${p.shots} shots, valid ${p.days} days` + (p.list_paise && p.list_paise > p.amount_paise ? ` (launch offer, ~₹${rupees(p.list_paise)}~)` : "");
+    const item = receiptItem(p.product, p.shots, p.days) + (p.list_paise && p.list_paise > p.amount_paise ? ` (launch offer, ~₹${rupees(p.list_paise)}~)` : "");
     const date = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
     await graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name: "ghosted_receipt", language: { code: "en" }, components: [
       { type: "body", parameters: [{ type: "text", text: p.receipt_no }, { type: "text", text: item }, { type: "text", text: rupees(p.amount_paise) }, { type: "text", text: date }] },

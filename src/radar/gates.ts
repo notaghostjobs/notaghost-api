@@ -30,13 +30,24 @@ export function wantRung(level: string, years: number): number {
   if (level === "ic" || level === "lead") return Math.min(4, byYears);   // an individual contributor's rung is their years, topping out at principal/staff
   return Math.min(byLevel, byYears + 1);   // a manager title with four years is rung 2, not 3
 }
+/** Large employers title a rung lower than the market: a Category Manager at Amazon (L6) or a Manager at Microsoft is a
+ *  senior-manager seat in years and scope; a startup's "Head" is often that same seat. So a title at one of these reads
+ *  one rung up, and the line says so. The list is explicit and short on purpose — a fact we state, not a guess per posting. */
+export const LADDER = /\b(amazon|aws|microsoft|google|alphabet|youtube|flipkart|walmart|apple|meta|facebook|uber|target|lowe'?s|salesforce|adobe|oracle|cisco|intel|qualcomm|nvidia|samsung|goldman sachs|jp ?morgan|morgan stanley|visa|mastercard|american express|amex|paypal|stripe|linkedin|netflix|airbnb|atlassian|ibm|accenture|deloitte|pwc|ey|kpmg|mckinsey|bcg|bain|infosys|wipro|tcs|tata consultancy|hcl|cognizant|capgemini|dell|hp\b|hewlett|sap\b|siemens|bosch|philips|ge\b|general electric|honeywell|shell|unilever|hindustan unilever|hul\b|p&g|procter|nestl|itc\b|reckitt|pepsico|coca-cola|mondelez|loreal|l'oreal)\b/i;
+export const onLadder = (company: string | null | undefined) => LADDER.test(company ?? "");
+/** The title's rung for this employer: the bucket, one up at a ladder employer (not for freshers, not past head). */
+export function titleRung(title: string, company?: string | null): number {
+  const r = RUNG[titleBucket(title)] ?? -1;
+  if (r >= 1 && r <= 4 && onLadder(company)) return r + 1;
+  return r;
+}
 const SEAT: Record<string, string> = { fresher: "an entry-level", "2-4": "an associate-level", "4-6": "a senior-associate", "6-8": "a manager-level", "8-10": "a senior-manager", "10+": "a head-level" };
 /** A title two rungs or more away from the candidate's — in either direction — is a seat a recruiter would not shortlist
  *  them for: a VP is not shown a specialist's seat, a six-month graduate is not shown a Senior Staff Engineer's. One rung
  *  down is allowed with stretch (and always for rung ≥ 2); one rung up is a near-miss, not a gate. The posting's own band,
  *  when it fits the candidate, overrides the title's word ("Principal Associate, 1–6 years"). */
-export function titleGate(title: string, level: string, stretch: boolean, years: number, text: string): string | null {
-  const r = RUNG[titleBucket(title)] ?? -1, want = wantRung(level, years);
+export function titleGate(title: string, level: string, stretch: boolean, years: number, text: string, company?: string | null): string | null {
+  const r = titleRung(title, company), want = wantRung(level, years);
   const b = realBand(statedBand(text));
   if (r < 0) {
     // no level word in the title and a floor seven or more years under a senior candidate ("Pricing Advisor, 2+ years" for a
@@ -58,8 +69,8 @@ export function titleGate(title: string, level: string, stretch: boolean, years:
 }
 /** The whole screen, in the order a recruiter runs it: years, title rung, pedigree, language, city. One function so the
  *  discovery pass, the live re-check, the stored-list verify and the panel can never drift apart. */
-export function screenGate(title: string, text: string, c: { years: number; level: string; stretch: boolean; blob: string }): string | null {
-  return bandGate(c.years, text, title) ?? titleGate(title, c.level, c.stretch, c.years, text) ?? pedigreeGate(text, c.blob) ?? languageGate(text, c.blob) ?? cityGate(title);
+export function screenGate(title: string, text: string, c: { years: number; level: string; stretch: boolean; blob: string; company?: string | null }): string | null {
+  return bandGate(c.years, text, title) ?? titleGate(title, c.level, c.stretch, c.years, text, c.company) ?? pedigreeGate(text, c.blob) ?? languageGate(text, c.blob) ?? cityGate(title);
 }
 /** A band worth acting on: "0+ years" is a parser's shrug, not a requirement. */
 export function realBand(b: { min: number; max: number | null } | null): { min: number; max: number | null } | null {

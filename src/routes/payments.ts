@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import Razorpay from "razorpay";
 import { db, currentResume, type User } from "../lib/db.js";
-import { env, PRICES } from "../lib/env.js";
+import { env, PRICES, receiptItem } from "../lib/env.js";
 import { requireUser } from "../lib/auth.js";
 import { notifyReceipt } from "./whatsapp.js";
 import { readReceiptToken } from "./doc.js";
@@ -122,9 +122,9 @@ payments.get("/receipt/:tok", async (c) => {
   if (!p || p.status !== "paid") return c.json({ error: "Receipt not found." }, 404);
   const { data: u } = await db.from("users").select("phone").eq("id", p.user_id).maybeSingle();
   const ph = String(u?.phone ?? "").replace(/\D/g, "");
-  const price = PRICES[p.product as "sharpen" | "build"] as any;
+  const price = PRICES[p.product as "sharpen" | "build" | "radar"] as any;
   return c.json({ receipt_no: p.receipt_no, paid_at: p.paid_at, amount_paise: p.amount_paise, list_paise: price?.list_paise ?? null,
-    item: `Sharpen, ${price?.shots ?? 10} shots, valid ${price?.days ?? 10} days`, payment_ref: p.razorpay_payment_id, phone: ph ? `+${ph.slice(0, 2)} ••••• ${ph.slice(-4)}` : null });
+    item: receiptItem(p.product, price?.shots ?? 10, price?.days ?? 10), payment_ref: p.razorpay_payment_id, phone: ph ? `+${ph.slice(0, 2)} ••••• ${ph.slice(-4)}` : null });
 });
 
 payments.get("/", requireUser, async (c) => {

@@ -35,3 +35,11 @@ export const PRICES = {
   build: { paise: 99900, shots: 10, days: 10 },
   radar: { paise: 249900, shots: 10, days: 30 },   // Radar: the list for 30 days, refreshed daily, 10 Sharpens inside
 } as const;
+
+/** The line on a receipt, in the product's own words. Radar is "Radar · 30 days, 10 Sharpens included"; Sharpen is
+ *  "Sharpen · 10 résumés, valid N days". Never "shots" — that is our word, not the customer's. */
+export function receiptItem(product: string, shots: number, days: number): string {
+  if (product === "radar") return `Radar · ${days} days, ${shots} Sharpens included`;
+  if (product === "build") return `Build · ${shots} ${shots === 1 ? "résumé" : "résumés"}, valid ${days} days`;
+  return `Sharpen · ${shots} ${shots === 1 ? "résumé" : "résumés"}, valid ${days} days`;
+}

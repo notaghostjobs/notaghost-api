@@ -6,7 +6,7 @@ import { json, MODEL } from "../engine/claude.js";
 import type { ResumeProfile } from "../engine/sharpen.js";
 import { statedBand, titleBucket } from "../reader/experience.js";
 import { isBlr } from "../reader/blr.js";
-import { screenGate, resumeBlob, wantRung, bandFits as fits } from "./gates.js";
+import { screenGate, resumeBlob, wantRung, bandFits as fits, titleRung } from "./gates.js";
 
 export type Label = "for_you" | "adjacent" | "stretch";
 export type Same = "yes" | "adjacent" | "no";
@@ -78,15 +78,19 @@ export function worldExclusion(title: string, resumeText: string): string | null
 }
 
 /** Near-misses that do not screen out but do decide the label: a year short of the floor, or a title one rung away. */
-export function nearMiss(years: number, level: string, title: string, text: string): string | null {
+export function nearMiss(years: number, level: string, title: string, text: string, company?: string | null): string | null {
   const b = statedBand(text);
   if (b && years < b.min && years + 2 > b.min) return `asks ${b.min}+ years; you have ${years}`;
   const RUNG: Record<string, number> = { fresher: 0, "2-4": 1, "4-6": 2, "6-8": 3, "8-10": 4, "10+": 5 };
   const NAME: Record<string, string> = { fresher: "an entry-level", "2-4": "an associate-level", "4-6": "a senior-associate", "6-8": "a manager-level", "8-10": "a senior-manager", "10+": "a head-level" };
-  const r = RUNG[titleBucket(title)], want = wantRung(level, years);
+  const r0 = RUNG[titleBucket(title)], r = r0 === undefined ? undefined : titleRung(title, company), want = wantRung(level, years);
   const bandFits = fits(b, years);
-  if (r !== undefined && r === want - 1 && !bandFits) return `${NAME[titleBucket(title)]} title, one rung below yours`;
-  if (r !== undefined && r === want + 1 && !bandFits) return `${NAME[titleBucket(title)]} title, one rung above yours`;
+  const emp = (company ?? "").split(/[·,(]/)[0].trim();
+  const BY_RUNG = ["an entry-level", "an associate-level", "a senior-associate", "a manager-level", "a senior-manager", "a head-level"];
+  const shifted = r !== undefined && r0 !== undefined && r !== r0;
+  const seat = shifted ? `${NAME[titleBucket(title)]} title at ${emp} — ${BY_RUNG[r!]} seat there` : `${NAME[titleBucket(title)]} title`;
+  if (r !== undefined && r === want - 1 && !bandFits) return `${seat}, one rung below yours`;
+  if (r !== undefined && r === want + 1 && !bandFits) return `${seat}, one rung above yours`;
   // a title with no level word and a floor far below the candidate ("Data Engineer, 3+ years" for a twelve-year lead) is a mid-level seat
   if (r === undefined && b && b.max === null && b.min >= 1 && years - b.min >= 7) return `asks ${b.min}+ years; you are at ${years}`;
   // a senior person, a title with no level word and a posting that states no years: the seat's level is unknown, so it is not "for you"
@@ -124,7 +128,7 @@ export function verify(items: Checkable[], resume: ResumeProfile, years: number,
     const text = it.text ?? textOf(it.sighting_id) ?? "";
     const fail = (rule: string) => violations.push({ sighting_id: it.sighting_id, title: it.title, rule });
     if (!text || text.length < 200) { fail("no posting text on file"); continue; }
-    const gate = screenGate(it.title, text, { years, level, stretch, blob });
+    const gate = screenGate(it.title, text, { years, level, stretch, blob, company: (it as any).company });
     if (gate) { fail(gate); continue; }
     if (!isBlr(it.location ?? "") && !/bengaluru|bangalore/i.test(text.slice(0, 400))) { fail("location is not Bengaluru"); continue; }
     if ((Date.now() - Date.parse(it.first_seen)) / 86400e3 > 45) { fail("first seen more than 45 days ago"); continue; }
