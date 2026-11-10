@@ -84,7 +84,7 @@ export function titleBucket(title: string): Bucket | "unknown" {
   if (/\b(principal|distinguished|fellow|staff|senior manager|sr\.? manager|general manager|gm|dgm|agm|architect|group manager)\b/.test(t)) return "8-10";
   if (/\b(manager|lead|leader|supervisor)\b/.test(t)) return "6-8";
   if (/\b(senior|sr\.?|iii|expert|consultant)\b/.test(t)) return "4-6";
-  if (/\b(junior|jr\.?|associate|assistant|analyst|executive|coordinator|representative|ii|i)\b/.test(t)) return "2-4";
+  if (/\b(junior|jr\.?|associate|assistant|analyst|executive|coordinator|representative|specialist|planner|officer|ii|i)\b/.test(t)) return "2-4";
   return "unknown";
 }
 

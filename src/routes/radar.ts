@@ -12,7 +12,7 @@ import { json, MODEL } from "../engine/claude.js";
 import { type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
 import { createHash } from "node:crypto";
 import { charge, withMeter } from "../engine/meter.js";
-import { bandGate, titleGate, pedigreeGate, resumeBlob, yearsFromRoles, levelFromRoles } from "../radar/gates.js";
+import { bandGate, titleGate, pedigreeGate, languageGate, cityGate, resumeBlob, yearsFromRoles, levelFromRoles, settleLevel } from "../radar/gates.js";
 import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict } from "../radar/v2.js";
 import { readPostingText, DEAD_PAGE } from "../reader/enrich.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
@@ -89,9 +89,9 @@ async function deriveTargets(p: ResumeProfile): Promise<Targets> {
   const t = await deriveTargetsModel(p);
   // the dates and the latest title decide years and level, not the model: "Sep 2014 → Present" is twelve years, and a
   // Director is not a manager whatever the headline says
-  const y = yearsFromRoles(p.roles), lv = levelFromRoles(p.roles);
+  const y = yearsFromRoles(p.roles);
   if (y !== null) t.years = Math.max(y, Number(p.years_total ?? 0));
-  if (lv) t.level = lv;
+  t.level = settleLevel(levelFromRoles(p.roles, t.years), t.level, t.years);
   return t;
 }
 async function deriveTargetsModel(p: ResumeProfile): Promise<Targets> {
@@ -226,7 +226,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   for (const s of cands) {
     const text = descs.get(s.id) ?? "";
     if (text.length < 200) { trail.push({ id: s.id, title: s.title, company: s.company_name ?? "", rank: -1, fit: 0, dropped: "no text" }); continue; }
-    const gate = bandGate(years, text) ?? titleGate(s.title ?? "", level, stretch, years, text) ?? pedigreeGate(text, blob) ?? worldExclusion(s.title ?? "", blob);
+    const gate = bandGate(years, text) ?? titleGate(s.title ?? "", level, stretch, years, text) ?? pedigreeGate(text, blob) ?? languageGate(text, blob) ?? cityGate(s.title ?? "") ?? worldExclusion(s.title ?? "", blob);
     if (gate) { dropped++; trail.push({ id: s.id, title: s.title, company: s.company_name ?? "", rank: -1, fit: 0, dropped: gate }); continue; }
     passed.push({ s, text });
   }
@@ -277,9 +277,12 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   const okIds = new Set(ok.map((o) => o.sighting_id));
   // 5. order: for you first, newest first within a label; at most eight per employer; the cap
   const rank: Record<Label, number> = { for_you: 0, adjacent: 1, stretch: 2 };
-  const per8: Record<string, number> = {}; const final: Item[] = [];
+  const perEmpFinal: Record<string, number> = {}; const seenTitle = new Set<string>(); const final: Item[] = [];
   for (const it of items.filter((i) => okIds.has(i.sighting_id)).sort((x, y) => rank[x.label!] - rank[y.label!] || Date.parse(y.first_seen) - Date.parse(x.first_seen))) {
-    const k = it.company || "?"; if ((per8[k] ?? 0) >= 8) continue; per8[k] = (per8[k] ?? 0) + 1; final.push(it); if (final.length >= opt.cap) break;
+    const k = it.company || "?"; const tk = `${k}|${norm(it.title)}`;
+    if (seenTitle.has(tk)) continue;                      // the same title twice at one employer is one line, not two
+    if ((perEmpFinal[k] ?? 0) >= 4) continue;             // no employer is more than four lines of anyone's list
+    seenTitle.add(tk); perEmpFinal[k] = (perEmpFinal[k] ?? 0) + 1; final.push(it); if (final.length >= opt.cap) break;
   }
   run.trail = trail;
   run.seen = [...ask.map((x) => x.s.id), ...(run.seen ?? []).filter((id) => !cands.some((c) => c.id === id))].slice(0, 4000);
@@ -538,7 +541,7 @@ export async function runPanel(reason: string): Promise<PanelResult | null> {
             const txt = await readPostingText(it.url);
             if (!txt || txt.length < 200) live_check = "page unreadable today";
             else if (DEAD_PAGE.test(txt.slice(0, 3000))) live_check = "page says the job is closed";
-            else live_check = bandGate(years, txt) ?? titleGate(it.title, t.level, false, years, txt) ?? pedigreeGate(txt, blob) ?? "ok";
+            else live_check = bandGate(years, txt) ?? titleGate(it.title, t.level, false, years, txt) ?? pedigreeGate(txt, blob) ?? languageGate(txt, blob) ?? cityGate(it.title) ?? "ok";
           } catch (e) { live_check = `unreachable: ${(e as Error).message.slice(0, 60)}`; }
           if (live_check !== "ok" && !/unreadable|unreachable/.test(live_check)) failures.push({ title: it.title, company: it.company, rule: live_check });
         }

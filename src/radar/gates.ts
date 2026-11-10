@@ -18,18 +18,53 @@ export function bandGate(years: number, text: string): string | null {
 /** The title's rung vs the candidate's level. A manager who did not ask to stretch is not shown associate, analyst or
  *  executive roles; a senior person is not shown a manager's seat unless the posting's own band says otherwise. */
 const RUNG: Record<string, number> = { fresher: 0, "2-4": 1, "4-6": 2, "6-8": 3, "8-10": 4, "10+": 5, unknown: -1 };
-const LEVEL_RUNG: Record<string, number> = { ic: 2, manager: 3, senior: 4, head: 5 };
+const LEVEL_RUNG: Record<string, number> = { ic: 2, lead: 2, manager: 3, senior: 4, head: 5 };
+/** The rung a candidate sits on: their level, but never above what their years can carry, and for an individual
+ *  contributor simply their years (a six-month intern is rung 0 whatever "ic" says). */
+export function wantRung(level: string, years: number): number {
+  const byYears = years < 2 ? 0 : years < 4 ? 1 : years < 6 ? 2 : years < 8 ? 3 : years < 10 ? 4 : 5;
+  const byLevel = LEVEL_RUNG[level] ?? 2;
+  if (level === "ic" || level === "lead") return Math.min(4, byYears);   // an individual contributor's rung is their years, topping out at principal/staff
+  return Math.min(byLevel, byYears + 1);   // a manager title with four years is rung 2, not 3
+}
+const SEAT: Record<string, string> = { fresher: "an entry-level", "2-4": "an associate-level", "4-6": "a senior-associate", "6-8": "a manager-level", "8-10": "a senior-manager", "10+": "a head-level" };
+/** A title two rungs or more away from the candidate's — in either direction — is a seat a recruiter would not shortlist
+ *  them for: a VP is not shown a specialist's seat, a six-month graduate is not shown a Senior Staff Engineer's. One rung
+ *  down is allowed with stretch (and always for rung ≥ 2); one rung up is a near-miss, not a gate. The posting's own band,
+ *  when it fits the candidate, overrides the title's word ("Principal Associate, 1–6 years"). */
 export function titleGate(title: string, level: string, stretch: boolean, years: number, text: string): string | null {
-  const r = RUNG[titleBucket(title)] ?? -1, want = LEVEL_RUNG[level] ?? -1;
-  if (r < 0 || want < 0) return null;
+  const r = RUNG[titleBucket(title)] ?? -1, want = wantRung(level, years);
+  if (r < 0) return null;
+  const b = statedBand(text);
+  const bandFits = !!(b && years >= b.min - 1 && (b.max === null || years <= b.max + 1));
   if (r <= want - 2 || (r === want - 1 && !stretch && r <= 1)) {
-    // the title says junior; only a stated band that fits the candidate rescues it ("Principal Associate, 1-6 years")
-    const b = statedBand(text);
     if (b && b.max !== null && years <= b.max + 1 && years >= b.min) return null;
-    const name: Record<string, string> = { fresher: "an entry-level", "2-4": "an associate-level", "4-6": "a senior-associate", "6-8": "a manager-level", "8-10": "a senior-manager", "10+": "a head-level" };
-    return `the title is ${name[titleBucket(title)] ?? "a junior"} seat for your level`;
+    return `the title is ${SEAT[titleBucket(title)] ?? "a junior"} seat for your level`;
+  }
+  if (r >= want + 2) {
+    if (bandFits && b!.min <= years) return null;   // the posting itself says someone with these years is welcome
+    return `the title is ${SEAT[titleBucket(title)] ?? "a senior"} seat; you are at ${years} years`;
   }
   return null;
+}
+
+/** A language the posting requires that the résumé does not carry is a gate, not a gap. */
+const LANG = /\b(japanese|german|french|mandarin|chinese|korean|spanish|arabic|portuguese|italian|russian|dutch|vietnamese|thai|bahasa)\b[\s-]*(speaking|speaker|language|proficien|fluen|bilingual|native|n[1-3]\b|jlpt)/i;
+export function languageGate(text: string, resumeBlob: string): string | null {
+  const m = (text ?? "").slice(0, 12000).match(LANG);
+  if (!m) return null;
+  const lang = m[1].toLowerCase();
+  if (new RegExp(`\\b${lang}\\b`, "i").test(resumeBlob)) return null;
+  return `requires ${lang[0].toUpperCase()}${lang.slice(1)}`;
+}
+
+/** A title that names another city — and not Bengaluru — is not a Bengaluru role, whatever the location field says. */
+const OTHER_CITY = /\b(gurugram|gurgaon|mumbai|pune|hyderabad|chennai|new delhi|delhi|noida|kolkata|ahmedabad|kochi|cochin|jaipur|chandigarh|indore|coimbatore|thiruvananthapuram|trivandrum|lucknow|bhubaneswar|vizag|visakhapatnam|nagpur|surat|mysuru|mysore|mangalore|hubli|singapore|dubai|london)\b/i;
+export function cityGate(title: string): string | null {
+  const t = title ?? "";
+  if (/bengaluru|bangalore|blr\b/i.test(t)) return null;
+  const m = t.match(OTHER_CITY);
+  return m ? `the title names ${m[1]}` : null;
 }
 
 /** Pedigree and credential requirements are gates, not gaps: Sharpen cannot supply McKinsey, an IIM or a CA.
@@ -91,11 +126,24 @@ export function yearsFromRoles(roles: { start?: string | null; end?: string | nu
 
 /** The level a recruiter reads off the latest employed title (a founder line is skipped: it says nothing about the seat
  *  they would be hired into). */
-export function levelFromRoles(roles: { title?: string | null }[] | undefined): "ic" | "lead" | "manager" | "head" | null {
-  const t = (roles ?? []).map((r) => (r.title ?? "").toLowerCase()).find((x) => x && !/\b(founder|co-?founder|owner|proprietor|self[- ]employed|freelanc)/.test(x));
+export function levelFromRoles(roles: { title?: string | null; start?: string | null; end?: string | null }[] | undefined, years = 0): "ic" | "lead" | "manager" | "head" | null {
+  const titles = (roles ?? []).map((r) => (r.title ?? "").toLowerCase().replace(/\b(office of the|reporting to( the)?|to the|to)\s+(ceo|cto|coo|cfo|cpo|founder|co-?founder|md|chairman|president|vp)\b.*$/, "").trim());
+  const t = titles.find((x) => x && !/^(founder|co-?founder|owner|proprietor|self[- ]employed|freelanc)/.test(x));
   if (!t) return null;
+  if (/\bchief of staff\b/.test(t)) return years >= 10 ? "head" : "manager";
   if (/\b(chief|ceo|cfo|coo|cto|president|vice president|vp|svp|evp|avp|director|head|bu head|general manager|gm|dgm)\b/.test(t)) return "head";
   if (/\b(senior manager|sr\.? manager|manager|group manager|program manager|product manager)\b/.test(t)) return "manager";
   if (/\b(lead|principal|staff|architect|supervisor)\b/.test(t)) return "lead";
   return "ic";
+}
+/** The level we act on: the latest title's, held down by the years ("head" needs eight, "manager" four), and never below
+ *  what a model read from the whole profile when the title was silent. */
+export function settleLevel(fromRoles: string | null, fromModel: string | null, years: number): "ic" | "lead" | "manager" | "head" {
+  const order = ["ic", "lead", "manager", "head"]; const idx = (l: string | null) => Math.max(0, order.indexOf(l ?? "ic"));
+  let l = Math.max(idx(fromRoles), fromRoles ? 0 : idx(fromModel));
+  if (fromRoles === "ic" && fromModel && idx(fromModel) > 0 && years >= 4) l = Math.max(l, Math.min(idx(fromModel), 2));
+  if (l === 3 && years < 8) l = 2;
+  if (l === 2 && years < 4) l = 1;
+  if (l === 1 && years < 2) l = 0;
+  return order[l] as "ic" | "lead" | "manager" | "head";
 }

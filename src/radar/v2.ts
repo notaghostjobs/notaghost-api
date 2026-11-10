@@ -6,7 +6,7 @@ import { json, MODEL } from "../engine/claude.js";
 import type { ResumeProfile } from "../engine/sharpen.js";
 import { statedBand, titleBucket } from "../reader/experience.js";
 import { isBlr } from "../reader/blr.js";
-import { bandGate, titleGate, pedigreeGate, resumeBlob } from "./gates.js";
+import { bandGate, titleGate, pedigreeGate, languageGate, cityGate, resumeBlob, wantRung } from "./gates.js";
 
 export type Label = "for_you" | "adjacent" | "stretch";
 export type Same = "yes" | "adjacent" | "no";
@@ -77,9 +77,11 @@ export function nearMiss(years: number, level: string, title: string, text: stri
   const b = statedBand(text);
   if (b && years < b.min && years + 2 > b.min) return `asks ${b.min}+ years; you have ${years}`;
   const RUNG: Record<string, number> = { fresher: 0, "2-4": 1, "4-6": 2, "6-8": 3, "8-10": 4, "10+": 5 };
-  const LV: Record<string, number> = { ic: 2, lead: 2, manager: 3, head: 5 };
-  const r = RUNG[titleBucket(title)], want = LV[level];
-  if (r !== undefined && want !== undefined && r === want - 1 && !(b && b.max !== null && years <= b.max + 1 && years >= b.min)) return `a ${titleBucket(title)} title, one rung below yours`;
+  const NAME: Record<string, string> = { fresher: "an entry-level", "2-4": "an associate-level", "4-6": "a senior-associate", "6-8": "a manager-level", "8-10": "a senior-manager", "10+": "a head-level" };
+  const r = RUNG[titleBucket(title)], want = wantRung(level, years);
+  const bandFits = !!(b && years >= b.min - 1 && (b.max === null || years <= b.max + 1));
+  if (r !== undefined && r === want - 1 && !bandFits) return `${NAME[titleBucket(title)]} title, one rung below yours`;
+  if (r !== undefined && r === want + 1 && !bandFits) return `${NAME[titleBucket(title)]} title, one rung above yours`;
   return null;
 }
 
@@ -89,7 +91,7 @@ export function labelOf(same: Same, near: string | null): Label | null {
   return near ? "stretch" : "adjacent";
 }
 
-export const BAND_TEXT = (text: string): string | null => { const b = statedBand(text); return b ? (b.max === null ? `${b.min}+ years` : `${b.min}–${b.max} years`) : null; };
+export const BAND_TEXT = (text: string): string | null => { const b = statedBand(text); if (!b || (b.min === 0 && b.max === null)) return null; return b.max === null ? `${b.min}+ years` : `${b.min}–${b.max} years`; };
 
 /** The list's contract, checked by code before anything is stored, shown or sent. Each item is re-tested against its
  *  posting text and the candidate; a failure removes the item and says why. No human reads the list; this does. */
@@ -101,7 +103,7 @@ export function verify(items: Checkable[], resume: ResumeProfile, years: number,
     const text = it.text ?? textOf(it.sighting_id) ?? "";
     const fail = (rule: string) => violations.push({ sighting_id: it.sighting_id, title: it.title, rule });
     if (!text || text.length < 200) { fail("no posting text on file"); continue; }
-    const gate = bandGate(years, text) ?? titleGate(it.title, level, stretch, years, text) ?? pedigreeGate(text, blob);
+    const gate = bandGate(years, text) ?? titleGate(it.title, level, stretch, years, text) ?? pedigreeGate(text, blob) ?? languageGate(text, blob) ?? cityGate(it.title);
     if (gate) { fail(gate); continue; }
     if (!isBlr(it.location ?? "") && !/bengaluru|bangalore/i.test(text.slice(0, 400))) { fail("location is not Bengaluru"); continue; }
     if ((Date.now() - Date.parse(it.first_seen)) / 86400e3 > 45) { fail("first seen more than 45 days ago"); continue; }
