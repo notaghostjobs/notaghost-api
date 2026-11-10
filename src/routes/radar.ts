@@ -507,8 +507,8 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
       if (violations.length) { const okIds = new Set(ok.map((o) => o.sighting_id)); run.items = run.items.filter((i) => !i.label || okIds.has(i.sighting_id)); run.violations = [...violations.map((v) => ({ ...v, at: now })), ...(run.violations ?? [])].slice(0, 50); }
     }
     run.spend = { run_paise: morningPaise, total_paise: total + morningPaise, capped };
-    // 3. re-rank, retally; yesterday's "new" badges fall away
-    for (const it of run.items) if (it.new_at && it.new_at !== now && Date.now() - Date.parse(it.new_at) > 36 * 3600e3) delete it.new_at;
+    // 3. re-rank, retally. new_at stays on an item for good: it is the morning the role entered this list, and the web
+    // decides what is "new" by comparing it with the person's last look (radar:seen), not by a badge that expires.
     const rank: Record<string, number> = { for_you: 0, adjacent: 1, stretch: 2 };
     run.items.sort((x, y) => (rank[x.label ?? "stretch"] - rank[y.label ?? "stretch"]) || Date.parse(y.first_seen) - Date.parse(x.first_seen));
     tally(run);
@@ -678,7 +678,7 @@ radar.post("/test/reset", async (c) => {
   const u = c.get("user");
   if (!isTester(u)) return c.json({ error: "Not available on this account." }, 403);
   if (running.has(u.id)) return c.json({ error: "A run is in progress; wait for it to finish." }, 409);
-  for (const pat of [`radar:run:${u.id}`, `radar:unlock:${u.id}`, `told:${u.id}`]) await db.from("reader_control").delete().eq("key", pat);
+  for (const pat of [`radar:run:${u.id}`, `radar:unlock:${u.id}`, `told:${u.id}`, `radar:seen:${u.id}`]) await db.from("reader_control").delete().eq("key", pat);
   for (const pat of [`radar:m:${u.id}:%`, `radar:targets:${u.id}:%`, `radar:targets:v3:${u.id}:%`]) await db.from("reader_control").delete().like("key", pat);
   // ?all=1: the résumé is set aside as well (not deleted — Sharpen's history keeps it), so the next visit uploads fresh
   if (c.req.query("all") === "1") await db.from("resumes").update({ is_current: false }).eq("user_id", u.id).eq("is_current", true);
@@ -850,7 +850,19 @@ radar.get("/test/result", async (c) => {
   if (!isTester(u)) { delete (run as any).spend; delete (run as any).trail; }   // ours to see, not the customer's
   delete (run as any)._qTried;
   const tester = isTester(u);   // the web shows its tester-only buttons to testers alone
-  if (unlocked) return c.json({ ...run, unlocked: true, reveal, pulse: mine, tester });
+  if (unlocked) {
+    // "since you last looked": the first look sees the whole list; a later look (six or more hours on) sees what entered
+    // the list after the previous look, first. Within one sitting the marker does not move, so a refresh changes nothing.
+    let since: string | null = null;
+    if (run.status === "done") {
+      const seenKey = `radar:seen:${u.id}`; const seen = await kv.get<{ at: string; since: string | null }>(seenKey); const nowIso = new Date().toISOString();
+      if (!seen) { await kv.set(seenKey, { at: nowIso, since: null }); }
+      else if (Date.now() - Date.parse(seen.at) > 6 * 3600e3) { since = seen.at; await kv.set(seenKey, { at: nowIso, since }); }
+      else { since = seen.since ?? null; await kv.set(seenKey, { at: nowIso, since }); }
+    }
+    const listed = run.finished ?? run.started;
+    return c.json({ ...run, items: run.items.map((i) => ({ ...i, added_at: i.new_at ?? listed })), unlocked: true, reveal, pulse: mine, tester, since });
+  }
   // locked: counts and the taste, no titles, no links, no facts
   return c.json({ ...run, unlocked: false, reveal, pulse: mine, tester, items: run.items.map((i) => ({ sighting_id: i.sighting_id, company: i.company, label: i.label, first_seen: i.first_seen })), questions: [] });
 });
