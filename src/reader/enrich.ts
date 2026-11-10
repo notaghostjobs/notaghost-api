@@ -10,6 +10,8 @@ import { renderText } from "./systems/page.js";
 const RENDER_HOSTS = /^(careers\.ibm\.com|apply\.deloitte\.com|usijobs\.deloitte\.com)$/i;
 let rendersThisBatch = 0;
 export const RENDERS_PER_BATCH = 25;
+/** What a page says when the job behind it is gone. Seen on the page, the role is marked gone on the spot (10 Nov). */
+export const DEAD_PAGE = /no longer (accepting applications|available|open|active|exists)|this (job|position|posting|role|requisition) (has been|is|was) (closed|filled|removed|expired|cancelled)|job (has )?expired|position has been filled|couldn['’]t load job details|the job may have been removed|job not found|posting (is )?closed/i;
 export const resetRenderBudget = () => { rendersThisBatch = 0; };
 
 const iso = (v: unknown): string | null => { if (!v) return null; const d = new Date(String(v)); return isNaN(d.getTime()) ? null : d.toISOString(); };
@@ -104,6 +106,10 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
       rendersThisBatch++;
       try { const t = await renderText(s.url); if (t.length >= 200) text = t.slice(0, 20000); } catch (e) { await fail(`render: ${(e as Error).message.slice(0, 120)}`); return false; }
     }
+  }
+  if (DEAD_PAGE.test(text.slice(0, 3000))) {
+    await db.from("sightings").update({ gone_at: new Date().toISOString(), enriched_at: new Date().toISOString(), enrich_error: "page says the job is closed" }).eq("id", s.id).is("gone_at", null);
+    return false;
   }
   if (text.length < 200) { await fail("page has no readable text (likely rendered by script)"); return false; }
   const p = pick(text);

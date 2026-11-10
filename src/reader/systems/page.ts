@@ -98,9 +98,18 @@ export function harvestLinks(url: string): Promise<{ jobs: FeedJob[]; html: stri
         if (l.t.length < 6 || l.t.length > 90 || seen.has(l.h)) continue;
         if (!/\/(job|jobs|career|careers|position|positions|opening|openings|requisition|vacanc|opportunit)[a-z]*\/[^/]+/i.test(l.h) && !/[?&](job|jobid|req|requisition|id|gh_jid)=/i.test(l.h)) continue;
         if (/^(view all|see all|all jobs|careers|jobs|apply now|apply|learn more|read more|search|home)$/i.test(l.t)) continue;
-        // the card's text is the best location we have without opening the job; keep the Bengaluru-bearing phrase if there is one
-        const m = l.c.match(/[^.;|·]{0,40}(Bengaluru|Bangalore|Karnataka)[^.;|·]{0,40}/i);
-        seen.add(l.h); jobs.push({ id: l.h, title: l.t, location: m ? m[0].trim() : "", url: l.h, posted_at: null, updated_at: null, posted_text: null });
+        // Some boards print the city and type into the link text itself ("Frontend Developer GurgaonFull-Time"): split it.
+        let title = l.t, location = "";
+        const sfx = title.match(/^(.{4,}?)\s*(Bengaluru|Bangalore|Gurgaon|Gurugram|Mumbai|Pune|Hyderabad|Chennai|Delhi|New Delhi|Noida|Kolkata|Ahmedabad|Jaipur|Kochi|Indore|Remote|Singapore|Dubai|Tokyo, Japan|London)\s*(Full[- ]?Time|Part[- ]?Time|Contract|Internship|Remote)?\s*$/i);
+        if (sfx) { title = sfx[1].trim(); location = sfx[2]; }
+        else {
+          // the card's text is the best location we have without opening the job — but only the phrase next to this title,
+          // never one from a neighbouring job in the same container (10 Nov: a board's whole list was one "card")
+          const at = l.c.indexOf(l.t); const near = at >= 0 ? l.c.slice(Math.max(0, at - 120), at + l.t.length + 120) : (l.c.length <= 300 ? l.c : "");
+          const m = near.match(/[^.;|·]{0,40}(Bengaluru|Bangalore|Karnataka)[^.;|·]{0,40}/i);
+          location = m ? m[0].trim() : "";
+        }
+        seen.add(l.h); jobs.push({ id: l.h, title, location, url: l.h, posted_at: null, updated_at: null, posted_text: null });
       }
       return { jobs: jobs.slice(0, 500), html };
     } finally { await ctx.close().catch(() => {}); }

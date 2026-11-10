@@ -46,18 +46,35 @@ export function statedYears(text: string): number | null {
 /** The years band a posting asks for — {min, max} with max null when it says "5+" — or null when it never says.
  *  Same anchoring and boilerplate rules as statedYears. */
 export function statedBand(text: string): { min: number; max: number | null } | null {
-  const t = (text ?? "").slice(0, 12000);
+  // stored descriptions may still carry numeric entities ("15&#43; years"); read them as the characters they are
+  const t = (text ?? "").slice(0, 12000).replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)));
   if (!t) return null;
-  const boiler = (i: number) => BOILER.test(t.slice(i, i + 90));
-  const cands: { i: number; min: number; max: number | null }[] = [];
-  const take = (re: RegExp, anchored: boolean) => { const m = t.match(re); if (!m || m.index === undefined || boiler(m.index)) return; const a = Number(m[1]), b = m[2] ? Number(m[2]) : null; if (a > 18) return; cands.push({ i: m.index - (anchored ? 1e6 : 0), min: b !== null ? Math.min(a, b) : a, max: b !== null ? Math.max(a, b) : null }); };
-  take(OFEXP, true); take(EXP_FIRST, true); take(IN_FIELD, true);
-  { const m = t.match(MIN); if (m && m.index !== undefined && !boiler(m.index) && Number(m[1]) <= 18) cands.push({ i: m.index - 1e6, min: Number(m[1]), max: null }); }
-  take(RANGE, false); take(PLUS, false);
-  if (!cands.length) return FRESH.test(t) ? { min: 0, max: 1 } : null;
-  cands.sort((a, b) => a.i - b.i);
-  return { min: cands[0].min, max: cands[0].max };
+  const boiler = (i: number) => BOILER.test(t.slice(i, i + 90).split(/[.\n]/)[0]);   // the statement's own sentence, not the one after it
+  // A posting often states two numbers: the total ("12+ years of experience") and a part of it ("at least 3 years in a
+  // leadership role", "5 years managing teams"). The band is the total. Each candidate is tagged from its context.
+  const SUB = /^[^.\n]{0,70}?\b(in\s+(a\s+|an\s+)?(senior|leadership|management|managerial|people[- ]management|similar|lead|supervisory|executive)\b|leading\b|managing\s+(teams|people|managers|a team)|as\s+(an?\s+)?(analyst|manager|lead|head|director)|of\s+which|including)/i;
+  const PRE_SUB = /\b(at\s+least|including|of\s+which|with|and)\s*$/i;
+  const TOTAL = /^[^.\n]{0,40}?\b(overall|total|of\s+(relevant\s+|professional\s+|work(?:ing)?\s+|prior\s+|industry\s+)?experience)\b/i;
+  const PRE_TOTAL = /\b(overall|total|typically|minimum|at least)\s*,?\s*$/i;
+  type C = { i: number; min: number; max: number | null; total: boolean; sub: boolean; bare: boolean };
+  const cands: C[] = [];
+  const take = (re: RegExp, bare: boolean) => {
+    for (const m of t.matchAll(new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g"))) {
+      const i = m.index ?? 0; if (boiler(i)) continue;
+      const a = Number(m[1]), b = m[2] ? Number(m[2]) : null; if (a > 30 || (b !== null && b < a)) continue;
+      const after = t.slice(i + m[0].length, i + m[0].length + 90), before = t.slice(Math.max(0, i - 40), i);
+      cands.push({ i, min: a, max: b, total: TOTAL.test(after) || PRE_TOTAL.test(before), sub: SUB.test(after) || PRE_SUB.test(before), bare });
+    }
+  };
+  take(OFEXP, false); take(EXP_FIRST, false); take(IN_FIELD, false); take(RANGE, true); take(PLUS, true);
+  for (const m of t.matchAll(new RegExp(MIN.source, "gi"))) { const i = m.index ?? 0; if (boiler(i) || Number(m[1]) > 30) continue; const after = t.slice(i + m[0].length, i + m[0].length + 90); cands.push({ i, min: Number(m[1]), max: null, total: TOTAL.test(after), sub: SUB.test(after), bare: false }); }
+  if (!cands.length) return FRESH_BAND.test(t) ? { min: 0, max: 1 } : null;
+  const pick = (list: C[]) => list.sort((x, y) => x.i - y.i)[0];
+  const chosen = pick(cands.filter((c) => c.total && !c.sub)) ?? pick(cands.filter((c) => !c.sub && !c.bare)) ?? pick(cands.filter((c) => !c.sub)) ?? pick(cands);
+  return { min: chosen.min, max: chosen.max };
 }
+/** Only the plain words for an entry-level posting decide a 0–1 band; a company's "internship programme" paragraph does not. */
+const FRESH_BAND = /\b(fresher|freshers|new\s+grad(?:uate)?s?|recent\s+graduates?|entry[- ]level|0\s*(?:-|–|to)\s*[12]\s*(?:years?|yrs?))\b/i;
 
 /** When the posting states nothing: the title's level word, as a rough guess, reported apart from the stated ones. */
 export function titleBucket(title: string): Bucket | "unknown" {

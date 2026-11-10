@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import { charge, withMeter } from "../engine/meter.js";
 import { bandGate, titleGate, pedigreeGate, resumeBlob, yearsFromRoles, levelFromRoles } from "../radar/gates.js";
 import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict } from "../radar/v2.js";
+import { readPostingText, DEAD_PAGE } from "../reader/enrich.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
 
 export const radar = new Hono<{ Variables: { user: User } }>();
@@ -407,7 +408,7 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
     const pool = await livePool(); titleIdf(pool);
     const liveIds = new Set(pool.map((s) => s.id));
     // 1. roles that went quiet leave the list
-    const gone = run.items.filter((i) => !liveIds.has(i.sighting_id));
+    const gone: Item[] = run.items.filter((i) => !liveIds.has(i.sighting_id));
     run.gone = [...gone.map((i) => ({ sighting_id: i.sighting_id, title: i.title, company: i.company, gone_at: now })), ...(run.gone ?? [])].slice(0, 60);
     run.items = run.items.filter((i) => liveIds.has(i.sighting_id));
     // 2. what came in since the last run (two hours of slack for the reader's own timing), never seen by the picker before
@@ -434,6 +435,23 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
       morningPaise = paise;
       added = result.items;
       run.items.push(...added);
+    }
+    // every role still on the list is opened on the employer's page this morning; a page that says the job is closed
+    // takes the role off the list (and marks the sighting gone) before the message goes out — no feed lag, no human
+    {
+      const dead: Item[] = [];
+      let n = 0;
+      for (const it of run.items) {
+        if (n++ >= 40) break;
+        try { const txt = await readPostingText(it.url); if (txt && DEAD_PAGE.test(txt.slice(0, 3000))) dead.push(it); } catch { /* unreachable today: keep it, the feed decides */ }
+      }
+      if (dead.length) {
+        const ids = dead.map((d) => d.sighting_id);
+        await db.from("sightings").update({ gone_at: now, enrich_error: "page says the job is closed" }).in("id", ids).is("gone_at", null);
+        run.gone = [...dead.map((i) => ({ sighting_id: i.sighting_id, title: i.title, company: i.company, gone_at: now })), ...(run.gone ?? [])].slice(0, 60);
+        run.items = run.items.filter((i) => !ids.includes(i.sighting_id));
+        gone.push(...dead);
+      }
     }
     // the whole list, re-verified every morning: a role whose page or band no longer fits leaves with the reason logged
     {
