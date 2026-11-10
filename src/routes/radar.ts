@@ -234,7 +234,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   // newest first, at most twelve per employer before the question is asked, up to the ceiling
   passed.sort((x, y) => Date.parse(y.s.first_seen) - Date.parse(x.s.first_seen));
   const perEmp: Record<string, number> = {}; const ask: typeof passed = [];
-  for (const x of passed) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 12) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; ask.push(x); if (ask.length >= opt.ceiling) break; }
+  for (const x of passed) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 16) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; ask.push(x); if (ask.length >= opt.ceiling) break; }
   // 2. the one question, cached per posting × function profile
   const fnKey = createHash("sha1").update(`v3|${t.functions.join("|")}|${level}|${t.one_line}`).digest("hex").slice(0, 10);   // v3: the question's wording changed on 10 Nov
   const verdicts = new Map<number, Verdict>(); const need: typeof ask = [];
@@ -282,7 +282,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   for (const it of items.filter((i) => okIds.has(i.sighting_id)).sort((x, y) => rank[x.label!] - rank[y.label!] || Date.parse(y.first_seen) - Date.parse(x.first_seen))) {
     const k = it.company || "?"; const tk = `${k}|${norm(it.title)}`;
     if (seenTitle.has(tk)) continue;                      // the same title twice at one employer is one line, not two
-    if ((perEmpFinal[k] ?? 0) >= 4) continue;             // no employer is more than four lines of anyone's list
+    if ((perEmpFinal[k] ?? 0) >= (it.label === "for_you" ? 10 : 4)) continue;   // "for you" is the product: up to ten lines from one employer (Amazon has fifteen category seats open); adjacent and stretch stop at four
     seenTitle.add(tk); perEmpFinal[k] = (perEmpFinal[k] ?? 0) + 1; final.push(it); if (final.length >= opt.cap) break;
   }
   // 6. the employer's live page, for every line that will be shown: a page that says the job is closed, or whose live text
@@ -609,7 +609,7 @@ export async function panelLast(): Promise<(PanelResult & { reason?: string }) |
  *  the list — through the app's own request handler, and times it. A run that does not reach "done" inside six minutes,
  *  a reveal without its three employers, or a list line without a title, a reason or an employer page is a failure.
  *  (A run sat on an old "questions" status for seven minutes while a tester watched the scan; nothing had checked that.) */
-export const PROBE_PHONE = "910000000000";   // stored like every other number (country code + ten digits); testers.ts matches the last ten
+export const PROBE_PHONE = "+910000000000";   // stored like every other number (country code + ten digits); testers.ts matches the last ten
 export type FlowProbe = { at: string; ok: boolean; ms: number; status: string; chance: number; taste: string[]; items: number; problems: string[] };
 export async function flowProbe(app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }): Promise<FlowProbe> {
   const t0 = Date.now(); const problems: string[] = [];
