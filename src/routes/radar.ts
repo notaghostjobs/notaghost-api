@@ -711,13 +711,16 @@ radarPublic.get("/pulse", async (c) => {
  *  name is one that is hiring. Up to 24, newest first; one per company so a big feed does not fill it. */
 radarPublic.get("/latest", async (c) => {
   const pool = await livePool();
-  const seen = new Set<string>(); const out: { title: string; company: string; location: string; first_seen: string }[] = [];
+  const seen = new Set<string>(); const out: { id: number; title: string; company: string; location: string; first_seen: string; band: string | null }[] = [];
   for (const s of pool.slice().sort((a, b) => Date.parse(b.first_seen) - Date.parse(a.first_seen))) {
     const k = s.employer_key ?? s.company_name ?? ""; if (!s.title || !s.company_name || seen.has(k)) continue;
-    seen.add(k); out.push({ title: s.title, company: s.company_name, location: (s.location ?? "").split(",")[0], first_seen: s.first_seen });
+    seen.add(k); out.push({ id: s.id, title: s.title, company: s.company_name, location: (s.location ?? "").split(",")[0], first_seen: s.first_seen, band: null });
     if (out.length >= 24) break;
   }
-  return c.json({ roles: out, as_of: new Date().toISOString() });
+  // the years the posting itself asks for, from its own text — the one fact a landing card can carry honestly
+  const { data: texts } = await db.from("sightings").select("id, description").in("id", out.map((o) => o.id));
+  for (const t of texts ?? []) { const o = out.find((x) => x.id === t.id); if (o && t.description) o.band = BAND_TEXT(String(t.description)); }
+  return c.json({ roles: out.map(({ id: _id, ...r }) => r), as_of: new Date().toISOString() });
 });
 
 /** The questionnaire's pre-fill: what the résumé says they're a fit for. */
