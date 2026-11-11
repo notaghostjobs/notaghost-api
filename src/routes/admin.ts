@@ -1,4 +1,5 @@
 import { panelLast, flowLast } from "./radar.js";
+import { sharpenFlowLast } from "../probe/sharpen.js";
 import { Hono } from "hono";
 import { experienceSplit } from "../reader/experience.js";
 import { meterDays } from "../engine/meter.js";
@@ -117,10 +118,10 @@ on.get("/reader/stats", async (c) => {
 // Roles marked gone since a time, grouped by employer and system — the read-only answer to "where did the count go?"
 // The Radar panel: the last run of the live pipeline on the stored résumés, checked against employers' live pages. Read-only.
 on.get("/radar/panel", async (c) => {
-  const last = await panelLast(); const flow = await flowLast();
+  const last = await panelLast(); const flow = await flowLast(); const sharpen_flow = await sharpenFlowLast();
   if (!last) return c.json({ status: "not run yet" });
   const brief = c.req.query("full") !== "1";
-  return c.json(brief ? { ...last, flow, resumes: last.resumes.map((r) => ({ ...r, items: r.items.map((i) => ({ label: i.label, title: i.title, company: i.company, why: i.why, band_text: i.band_text, near: i.near, live_check: i.live_check })) })) } : { ...last, flow });
+  return c.json(brief ? { ...last, flow, sharpen_flow, resumes: last.resumes.map((r) => ({ ...r, items: r.items.map((i) => ({ label: i.label, title: i.title, company: i.company, why: i.why, band_text: i.band_text, near: i.near, live_check: i.live_check })) })) } : { ...last, flow, sharpen_flow });
 });
 
 on.get("/reader/gone", async (c) => {

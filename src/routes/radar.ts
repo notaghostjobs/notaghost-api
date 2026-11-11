@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { db, type User } from "../lib/db.js";
 import { requireUser, createSession } from "../lib/auth.js";
+import { sharpenProbe, SHARPEN_FLOW_KEY } from "../probe/sharpen.js";
 import { isRadarTester as isTester } from "../lib/testers.js";
 import { json, MODEL } from "../engine/claude.js";
 import { type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
@@ -625,7 +626,7 @@ export async function flowProbe(app: { request: (input: string, init?: RequestIn
     const { data: res, error: rerr } = await db.from("resumes").insert({ id: randomUUID(), user_id: u.id, storage_path: `probe/${src.id}`, filename: "probe.pdf", parsed: src.parsed, text: src.text ?? null, is_current: true }).select("id").single();
     if (rerr || !res) { problems.push(`probe résumé: ${rerr?.message ?? "not written"}`); return out("none"); }
     const token = await createSession(u.id);
-    const H = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const H = { authorization: `Bearer ${token}`, "content-type": "application/json", "x-ghosted-src-first": "probe", "x-ghosted-src-last": "probe" };
     const get = async <T,>(path: string, init: RequestInit = {}) => { const r = await app.request(path, { ...init, headers: { ...H, ...(init.headers as any ?? {}) } }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(`${path} → HTTP ${r.status} ${(j as any).error ?? ""}`); return j as T; };
     await get("/radar/test/reset", { method: "POST", body: "{}" });
     await get("/radar/test/targets");
@@ -662,7 +663,11 @@ export async function panelTick(app?: { request: (input: string, init?: RequestI
   const last = await panelLast();
   const commit = (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || null;
   const ist = new Date(Date.now() + 5.5 * 3600e3);
-  const nightly = ist.getUTCHours() === 3 && ist.getUTCMinutes() >= 30 && (!last || Date.now() - Date.parse(last.at) > 20 * 3600e3);
+  // nightly = after 03:30 IST and no run yet on today's IST date (11 Nov: a deploy-time run the evening before made the
+  // old "20 hours since" rule skip the night)
+  const todayIst = ist.toISOString().slice(0, 10);
+  const lastIst = last ? new Date(Date.parse(last.at) + 5.5 * 3600e3).toISOString().slice(0, 10) : "";
+  const nightly = (ist.getUTCHours() > 3 || (ist.getUTCHours() === 3 && ist.getUTCMinutes() >= 30)) && lastIst !== todayIst;
   const fresh = commit && (!last || last.commit !== commit);
   if (!fresh && !nightly) return;
   const res = await runPanel(fresh ? `deploy ${commit}` : "nightly");
@@ -670,7 +675,11 @@ export async function panelTick(app?: { request: (input: string, init?: RequestI
   const flow = await flowProbe(app);
   await kv.set(FLOW_KEY, { ...flow, commit });
   console.log(`[radar] flow probe ${flow.ok ? "PASS" : "FAIL"} in ${Math.round(flow.ms / 1000)}s: ${flow.status}, ${flow.chance} roles${flow.problems.length ? ` — ${flow.problems.join("; ")}` : ""}`);
-  if (res && !flow.ok) await kv.set(PANEL_KEY, { ...res, pass: false, failures: res.failures + flow.problems.length, flow });
+  // Sharpen walks the same way, on the same account, against the first line of the list the probe just built
+  const sp = await sharpenProbe(app);
+  await kv.set(SHARPEN_FLOW_KEY, { ...sp, commit });
+  console.log(`[sharpen] flow probe ${sp.ok ? "PASS" : "FAIL"} in ${Math.round(sp.ms / 1000)}s: ${sp.status}, ${sp.posting}${sp.problems.length ? ` — ${sp.problems.join("; ")}` : ""}`);
+  if (res && (!flow.ok || !sp.ok)) await kv.set(PANEL_KEY, { ...res, pass: false, failures: res.failures + flow.problems.length + sp.problems.length, flow });
 }
 
 /** Testers: wipe this account's Radar — run, matches, unlock, cached targets, remembered answers — to walk the flow from scratch. */
