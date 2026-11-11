@@ -176,6 +176,10 @@ export const workday: System = {
         if (sliceBy) { let n = 0; for (const id of sliceBy.ids) { await page({ [fac.param]: fac.ids, [sliceBy.param]: [id] }); n++; } diag.push(`sliced by ${sliceBy.param} (${n} values) → ${jobs.length}`); }
         else diag.push("capped at 2000, no facet to slice by");
       }
+      // the board told us how many there are; if we hold clearly fewer, the read is true but incomplete, whatever the HTTP
+      // codes said (10 Nov: the facets came back empty under load, nothing sliced, 2,000 of 8,250 read with no error, and
+      // 6,298 Accenture roles were marked gone)
+      if (total > 0 && jobs.length < total * 0.9) { partial = true; diag.push(`incomplete: ${jobs.length} of ${total}`); }
     }
     if (!fac || jobs.length === 0) {
       // 3. fallback: text search, both spellings (also when the facet query was refused)

@@ -279,6 +279,13 @@ async function setPriorities() {
     }
     log("restore 9 Nov", `${restored} sightings back; Accenture and Wipro queued to read now`);
   });
+  // 11 Nov 01:15 IST: Accenture's Workday read came back exactly 2,000 (the cap) with no HTTP error and no facets to slice by;
+  // three such reads and the hold rule let 6,298 roles go. Restored; the read is now flagged partial when short of the board's total.
+  await onceOnly("restore-10nov-accenture-v1", async () => {
+    const { data } = await db.from("sightings").update({ gone_at: null }).eq("source", "workday").like("source_id", "accenture/%").gte("gone_at", "2026-11-10T19:40:00Z").lte("gone_at", "2026-11-10T19:50:00Z").select("id");
+    await db.from("employers").update({ read_at: null, read_error: "restored after a capped read; re-reading" }).eq("ats", "workday").like("ats_ref", "accenture/%");
+    log("restore 10 Nov", `${data?.length ?? 0} Accenture sightings back; queued to read now`);
+  });
   // 10 Nov: the Bengaluru rule got strict (a named other place is never Bengaluru). Re-mark every live row.
   await onceOnly("recompute-blr-v1", async () => {
     let flipped = 0, from = 0;
