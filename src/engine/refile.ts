@@ -70,6 +70,16 @@ export function sanitizeProfile(profile: ResumeProfile): { profile: ResumeProfil
   const log: string[] = [];
   const next: ResumeProfile = JSON.parse(JSON.stringify(profile));
   const edu = (next.education ?? []).flatMap((e) => [e.school, e.degree]).map((x) => norm(x || "")).filter((x) => x.length > 6);
+  // the résumé's own objective / profile summary is the summary, not an extra block: the document writes one profile, so a
+  // second copy of the old one would follow it (seen 13 Nov: "JOB OBJECTIVE" and a ten-line "PROFILE SUMMARY" on page 2)
+  const summaryLike = /\b(objective|summary|profile|about\s*me|overview|synopsis)\b/i;
+  const folded = (next.extra_sections ?? []).filter((x) => summaryLike.test(x.title || ""));
+  if (folded.length) {
+    const prose = folded.flatMap((x) => x.items ?? []).map((i) => String(i).replace(/[\ue000-\uf8ff\ufffd]/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean).join(" ");
+    if (prose) (next as any).summary = [(next as any).summary, prose].filter(Boolean).join(" ");
+    next.extra_sections = (next.extra_sections ?? []).filter((x) => !summaryLike.test(x.title || ""));
+    log.push(`folded into summary: ${folded.map((x) => x.title).join(", ")}`);
+  }
   for (const r of next.roles ?? []) {
     const seen = new Set<string>();   // within the role: two roles may genuinely carry the same line (seen on a real résumé)
     const keep: string[] = [];

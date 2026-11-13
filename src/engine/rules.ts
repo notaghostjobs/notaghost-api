@@ -35,7 +35,8 @@ export function checkRules(r: Rewrite, orig: ResumeProfile, posting: PostingProf
       const verbatim = origSet.has(norm(b));   // the candidate's own line, as written: never flagged for length or wording
       if (!verbatim && words(b) > 34) bad.push(`R8 bullet too long (${words(b)} words): "${b.slice(0, 50)}…"`);
       if (!verbatim && !/^[A-Z][a-z]+/.test(b.trim())) bad.push(`R8 bullet doesn't start with a verb: "${b.slice(0, 40)}…"`);
-      for (const prev of all) if (overlap(norm(b), norm(prev)) >= 0.7) { bad.push(`R8 repeated bullet: "${b.slice(0, 50)}…"`); break; }
+      // a repeat is the model's doing unless the candidate wrote the same line under two roles themselves (seen 13 Nov)
+      if (!verbatim) for (const prev of all) if (overlap(norm(b), norm(prev)) >= 0.7) { bad.push(`R8 repeated bullet: "${b.slice(0, 50)}…"`); break; }
       all.push(b);
     });
   });
@@ -78,7 +79,8 @@ export function tidy(r: Rewrite): Rewrite {
     headline: cap(clean(r.headline), 8),
     summary: clean(r.summary),
     skills: (r.skills ?? []).map((x: unknown) => typeof x === "string" ? x : (x as { name?: string })?.name ?? String(x)).filter(Boolean).slice(0, 14),
-    relevant: (r.relevant ?? []).map((x: unknown) => typeof x === "string" ? x : String((x as any)?.text ?? (x as any)?.line ?? x)).slice(0, 4).map(clean),
+    // a relevant line reads as a résumé line, never as a note about the document ("…listed under Ninjacart roles")
+    relevant: (r.relevant ?? []).map((x: unknown) => typeof x === "string" ? x : String((x as any)?.text ?? (x as any)?.line ?? x)).filter((x) => !/\b(listed|detailed|described|covered|shown)\s+(under|below|above|in the)\b|\bsee\s+(the\s+)?(roles?|sections?|below|above)\b/i.test(x)).slice(0, 4).map(clean),
     roles: r.roles.map((ro) => ({ ...ro, bullets: ro.bullets.map((b: unknown) => clean(typeof b === "string" ? b : String((b as any)?.text ?? b))) })),
     education: (r.education ?? []).map((e: any) => typeof e === "string" ? { school: e, degree: "", year: undefined } : e),
     extra_sections: (r.extra_sections ?? []).map((x: any) => ({ title: String(x?.title ?? ""), items: (x?.items ?? []).map((i: unknown) => typeof i === "string" ? i : String((i as any)?.text ?? i)) })),
