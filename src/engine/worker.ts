@@ -67,17 +67,22 @@ export async function runShot(shotId: string) {
 async function runShotInner(shotId: string, shot: any) {
   await db.from("shots").update({ status: "running" }).eq("id", shotId);
   try {
-    const { data: res } = await db.from("resumes").select("parsed, text").eq("id", shot.resume_id).single();
+    const { data: res } = await db.from("resumes").select("parsed, text, storage_path, filename").eq("id", shot.resume_id).single();
     if (!res?.parsed) throw new Error("Résumé not parsed yet.");
     let profile = res.parsed as ResumeProfile;
-    // profiles parsed before 6 Nov were never checked against their text; check now, and keep the corrected parse
-    // refiled === 2 is the 13 Nov check (roles read in the text's own order); older parses are checked again on their next shot
+    // refiled === 2 is the 13 Nov check (the page read in reading order, roles in the page's order); older parses are checked
+    // again on their next shot — against the file read afresh, since the text on record may be in stream order
     if (res.text && (profile as any).refiled !== 2 && !(profile as any).read_from_page) {
+      let text: string = res.text;
+      try {
+        const file = await db.storage.from("resumes").download(res.storage_path);
+        if (!file.error) { const again = await extractText(Buffer.from(await file.data.arrayBuffer()), res.filename ?? "resume.pdf"); if (again.text.length > 200) text = again.text; }
+      } catch { /* the text on record it is */ }
       const tidy = sanitizeProfile(profile); if (tidy.log.length) console.error("[shot] SANITIZED", shot.resume_id, tidy.log);
-      const refiled = refileBullets(tidy.profile, res.text);
+      const refiled = refileBullets(tidy.profile, text);
       profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 2 } as ResumeProfile;
       if (refiled.log.length) console.error("[shot] REFILED", shot.resume_id, refiled.log);
-      await db.from("resumes").update({ parsed: profile }).eq("id", shot.resume_id).then(() => {}, () => {});
+      await db.from("resumes").update({ parsed: profile, text }).eq("id", shot.resume_id).then(() => {}, () => {});
     }
 
     // posting: fetch or pasted; cache by url hash
