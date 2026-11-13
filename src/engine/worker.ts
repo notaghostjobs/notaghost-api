@@ -64,26 +64,33 @@ export async function runShot(shotId: string) {
   if (plan?.product === "radar") { await charge(shot.user_id, plan.created_at ?? new Date().toISOString(), "sharpen:radar", () => runShotInner(shotId, shot)); return; }
   await withMeter({ tag: `sharpen:${shot.product ?? "sharpen"}`, user: shot.user_id }, () => runShotInner(shotId, shot));
 }
+/** The résumé's parse as every reader must see it. A parse made before the 13 Nov check (marker 4) is checked once against
+ *  the file read afresh — the text on record may be in stream order — and the corrected parse is kept. The prewarm and the
+ *  shot both go through here, so a draft is never written from a parse the shot will no longer use. */
+export async function checkedProfile(resumeId: string, tag = "shot"): Promise<ResumeProfile | null> {
+  const { data: res } = await db.from("resumes").select("parsed, text, storage_path, filename").eq("id", resumeId).single();
+  if (!res?.parsed) return null;
+  let profile = res.parsed as ResumeProfile;
+  if (res.text && (profile as any).refiled !== 4 && !(profile as any).read_from_page) {
+    let text: string = res.text;
+    try {
+      const file = await db.storage.from("resumes").download(res.storage_path);
+      if (!file.error) { const again = await extractText(Buffer.from(await file.data.arrayBuffer()), res.filename ?? "resume.pdf"); if (again.text.length > 200) text = again.text; }
+    } catch { /* the text on record it is */ }
+    const tidy = sanitizeProfile(profile); if (tidy.log.length) console.error(`[${tag}] SANITIZED`, resumeId, tidy.log);
+    const refiled = refileBullets(tidy.profile, text);
+    profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 4 } as ResumeProfile;
+    if (refiled.log.length) console.error(`[${tag}] REFILED`, resumeId, refiled.log);
+    await db.from("resumes").update({ parsed: profile, text }).eq("id", resumeId).then(() => {}, () => {});
+  }
+  return profile;
+}
+
 async function runShotInner(shotId: string, shot: any) {
   await db.from("shots").update({ status: "running" }).eq("id", shotId);
   try {
-    const { data: res } = await db.from("resumes").select("parsed, text, storage_path, filename").eq("id", shot.resume_id).single();
-    if (!res?.parsed) throw new Error("Résumé not parsed yet.");
-    let profile = res.parsed as ResumeProfile;
-    // refiled === 4 is the 13 Nov check (the page read in reading order, roles in the page's order); older parses are checked
-    // again on their next shot — against the file read afresh, since the text on record may be in stream order
-    if (res.text && (profile as any).refiled !== 4 && !(profile as any).read_from_page) {
-      let text: string = res.text;
-      try {
-        const file = await db.storage.from("resumes").download(res.storage_path);
-        if (!file.error) { const again = await extractText(Buffer.from(await file.data.arrayBuffer()), res.filename ?? "resume.pdf"); if (again.text.length > 200) text = again.text; }
-      } catch { /* the text on record it is */ }
-      const tidy = sanitizeProfile(profile); if (tidy.log.length) console.error("[shot] SANITIZED", shot.resume_id, tidy.log);
-      const refiled = refileBullets(tidy.profile, text);
-      profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 4 } as ResumeProfile;
-      if (refiled.log.length) console.error("[shot] REFILED", shot.resume_id, refiled.log);
-      await db.from("resumes").update({ parsed: profile, text }).eq("id", shot.resume_id).then(() => {}, () => {});
-    }
+    const profile = await checkedProfile(shot.resume_id);
+    if (!profile) throw new Error("Résumé not parsed yet.");
 
     // posting: fetch or pasted; cache by url hash
     const input = shot.input as { posting_url?: string; posting_text?: string; preview_id?: string; fresh?: boolean };
@@ -124,7 +131,7 @@ async function runShotInner(shotId: string, shot: any) {
     // rewrite may state it (verbatim, as the vetted line), the verifier and the number rule accept it, and nothing else changes
     const told = pre ? addedFacts(pre.matches) : [];
     const source: ResumeProfile = told.length ? { ...profile, candidate_added_facts: told } : profile;
-    const out = await runSharpen(source, postingText, undefined, pre, undefined, pre && input.preview_id ? takeDraft(draftKey(input.preview_id, pre.matches)) : null);
+    const out = await runSharpen(source, postingText, undefined, pre, undefined, pre && input.preview_id ? takeDraft(draftKey(input.preview_id, pre.matches, profile)) : null);
     if (postingId) await db.from("postings").update({ company: out.posting.company, title: out.posting.title, parsed: out.posting }).eq("id", postingId);
 
     const pdf = await resumePdf(out.rewrite, profile);

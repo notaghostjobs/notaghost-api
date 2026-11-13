@@ -5,7 +5,8 @@ import type { Rewrite, Match } from "./sharpen.js";
  *  time someone opens checkout — so it is started then, while Razorpay is open, and the shot picks it up if nothing changed. */
 const drafts = new Map<string, { at: number; p: Promise<Rewrite> }>();
 const TTL = 20 * 60e3;
-export const draftKey = (previewId: string, matches: Match[]) => previewId + ":" + createHash("sha256").update(JSON.stringify(matches)).digest("hex").slice(0, 16);
+/** A draft is good only for the exact parse and answers it was written from: the key carries both. */
+export const draftKey = (previewId: string, matches: Match[], profile?: unknown) => previewId + ":" + createHash("sha256").update(JSON.stringify(matches)).digest("hex").slice(0, 16) + (profile ? ":" + createHash("sha256").update(JSON.stringify((profile as any).roles ?? profile)).digest("hex").slice(0, 12) : "");
 export function prewarm(key: string, make: () => Promise<Rewrite>) {
   const now = Date.now();
   for (const [k, v] of drafts) if (now - v.at > TTL) drafts.delete(k);

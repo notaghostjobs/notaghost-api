@@ -2,6 +2,7 @@ import { asUrl } from "../engine/ghost/canon.js";
 import { docLink } from "./doc.js";
 import { Hono } from "hono";
 import { prewarm, draftKey } from "../engine/prewarm.js";
+import { checkedProfile } from "../engine/worker.js";
 import { rewriteResume, type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
 import { MODEL } from "../engine/claude.js";
 import { addedFacts } from "../engine/told.js";
@@ -98,12 +99,12 @@ shots.post("/prewarm", async (c) => {
   if (!pid) return c.json({ ok: false });
   const { data: pv } = await db.from("previews").select("resume_id, posting, matches").eq("id", pid).eq("user_id", u.id).maybeSingle();
   if (!pv?.posting || !pv?.matches) return c.json({ ok: false });
-  const { data: res } = await db.from("resumes").select("parsed").eq("id", pv.resume_id).maybeSingle();
-  if (!res?.parsed) return c.json({ ok: false });
+  const parsed = await checkedProfile(pv.resume_id, "prewarm");   // the same checked parse the shot will use
+  if (!parsed) return c.json({ ok: false });
   const matches = pv.matches as Match[];
   const told = addedFacts(matches);
-  const source: ResumeProfile = told.length ? { ...(res.parsed as ResumeProfile), candidate_added_facts: told } : (res.parsed as ResumeProfile);
-  const started = prewarm(draftKey(pid, matches), () => rewriteResume(source, pv.posting as PostingProfile, MODEL, matches));
+  const source: ResumeProfile = told.length ? { ...parsed, candidate_added_facts: told } : parsed;
+  const started = prewarm(draftKey(pid, matches, parsed), () => rewriteResume(source, pv.posting as PostingProfile, MODEL, matches));
   return c.json({ ok: true, started });
 });
 
