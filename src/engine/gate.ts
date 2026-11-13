@@ -122,3 +122,91 @@ export function repairForGate(rw0: Rewrite, orig: ResumeProfile, problems: { cla
   }
   return { rewrite: rw, log, unsettled };
 }
+
+// ---------- the evidence record: where every line of the document comes from ----------
+export type EvidenceLine = {
+  role: string;                 // "Company · Title", or "Profile" for the relevant block
+  line: string;                 // as it stands in the document
+  kind: "yours" | "reworded" | "added" | "told" | "new";
+  original?: string;            // reworded: the candidate's own line it was written from · added: the quoted evidence it rests on
+  requirement?: string;         // added / told: the posting requirement it answers
+};
+type MatchLite = { requirement: string; kind?: string; bucket?: string; evidence?: string; line?: string; told?: boolean };
+
+/** One entry per line of the finished document, built without a model: the candidate's own line (unchanged), their line
+ *  reworded (with the original beside it), a line added for a requirement (with the evidence it rests on), a line they told
+ *  us — or "new": a line with none of these behind it, which the caller treats as unsupported. */
+export function evidenceRecord(rw: Rewrite, orig: ResumeProfile, matches: MatchLite[] = []): EvidenceLine[] {
+  const out: EvidenceLine[] = [];
+  const told = matches.filter((m) => m.told && m.line);
+  const added = matches.filter((m) => !m.told && m.bucket === "have_not_said" && (m.line ?? "").trim());
+  const classify = (line: string, own: string[]): Omit<EvidenceLine, "role" | "line"> => {
+    const t = told.find((m) => covered(line, m.line!) >= 0.75 || covered(m.line!, line) >= 0.75);
+    if (t) return { kind: "told", requirement: t.requirement, original: t.evidence || undefined };
+    const same = own.find((ob) => norm(ob) === norm(line));
+    if (same) return { kind: "yours" };
+    const a = added.find((m) => covered(line, m.line!) >= 0.7 || covered(m.line!, line) >= 0.7);
+    const best = own.map((ob) => ({ ob, c: Math.max(covered(line, ob), covered(ob, line)) })).sort((x, y) => y.c - x.c)[0];
+    if (best && best.c >= 0.6) return { kind: "reworded", original: best.ob, requirement: a?.requirement };
+    if (a) return { kind: "added", requirement: a.requirement, original: a.evidence || undefined };
+    // one of their lines unpacked into two: the role's own lines, taken together, carry it
+    if (best && covered(line, own.join(" ")) >= 0.75) return { kind: "reworded", original: best.ob };
+    return { kind: "new" };
+  };
+  for (const r of rw.roles ?? []) {
+    const own = ((orig.roles ?? []).find((o) => roleKey(o) === roleKey(r)) ?? (orig.roles ?? []).find((o) => norm(o.company) === norm(r.company) && norm(o.start) === norm(r.start)))?.bullets ?? [];
+    for (const b of r.bullets) out.push({ role: `${r.company} · ${r.title}`, line: b, ...classify(b, own) });
+  }
+  const everything = (orig.roles ?? []).flatMap((o) => o.bullets ?? []);
+  for (const x of rw.relevant ?? []) out.push({ role: "Profile", line: x, ...classify(x, everything) });
+  return out;
+}
+
+// ---------- order within a role: what the posting asks for first ----------
+/** The lines of each role, the posting's must-haves first, then its nice-to-haves, then the rest — each group in the order
+ *  the candidate (or the rewrite) had them. Nothing is added, removed, reworded or moved between roles. */
+export function orderByRelevance(rw: Rewrite, matches: MatchLite[] = []): { rewrite: Rewrite; moved: number } {
+  const next: Rewrite = JSON.parse(JSON.stringify(rw)); let moved = 0;
+  const weight = (b: string) => {
+    let w = 0;
+    for (const m of matches) {
+      if (m.bucket === "missing" && !m.told) continue;
+      const hit = ((m.line ?? "").trim() && (covered(b, m.line!) >= 0.7 || covered(m.line!, b) >= 0.7)) || ((m.evidence ?? "").trim().length > 12 && covered(m.evidence!, b) >= 0.7);
+      if (hit) w = Math.max(w, m.kind === "must" ? 2 : 1);
+    }
+    return w;
+  };
+  for (const r of next.roles ?? []) {
+    const ranked = r.bullets.map((b, i) => ({ b, i, w: weight(b) })).sort((x, y) => (y.w - x.w) || (x.i - y.i));
+    if (ranked.some((x, i) => x.i !== i)) moved++;
+    r.bullets = ranked.map((x) => x.b);
+  }
+  return { rewrite: next, moved };
+}
+
+// ---------- the finished PDF, read back ----------
+/** The PDF as a reader's software will see it, against the document it was made from: every heading, role and line present,
+ *  roles in order, nothing a font could not draw, a sane page count. `text` is the PDF's own text, re-extracted. */
+export function pdfCheck(text: string, pages: number, rw: Rewrite, name: string): string[] {
+  const bad: string[] = [];
+  const fold = (t: string) => norm(String(t ?? "").normalize("NFKD"));
+  const hay = " " + fold(text) + " ";
+  const hayWords = new Set(hay.split(" "));
+  const present = (line: string) => { const w = fold(line).split(" ").filter((x) => x.length >= 4 || /\d/.test(x)); if (!w.length) return true; return w.filter((x) => hayWords.has(x)).length / w.length >= 0.9; };
+  if (!text || text.length < 200) return ["the PDF has no readable text"];
+  if (/[-�]/.test(text)) bad.push("a character no font can draw is in the PDF");
+  if (pages < 1 || pages > 3) bad.push(`page count ${pages}`);
+  if (name && !present(name)) bad.push("the name is not readable in the PDF");
+  let at = 0;
+  for (const r of rw.roles ?? []) {
+    const key = " " + fold(r.title).split(" ").slice(0, 5).join(" ") + " ";
+    const i = hay.indexOf(key, at);
+    if (i < 0) { bad.push(hay.includes(key) ? `role out of order in the PDF: ${r.title} · ${r.company}` : `role heading missing from the PDF: ${r.title} · ${r.company}`); }
+    else at = i + 1;
+    if (!present(r.company)) bad.push(`employer missing from the PDF: ${r.company}`);
+    for (const b of r.bullets) if (!present(b)) bad.push(`line not readable in the PDF (${r.company}): ${b.slice(0, 60)}`);
+  }
+  if (rw.summary && !present(rw.summary)) bad.push("the profile is not fully readable in the PDF");
+  for (const s of rw.skills ?? []) if (!present(s)) { bad.push(`skill not readable in the PDF: ${s}`); break; }
+  return bad;
+}

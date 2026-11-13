@@ -6,14 +6,32 @@ import { reachable } from "./fit.js";
 import type { Match, ResumeProfile } from "./sharpen.js";
 import { db } from "../lib/db.js";
 
-export type Gap = { requirement: string; kind: "must" | "nice"; weight: number; why: string; options: string[]; told?: { text: string; line: string; remembered?: boolean } };
+export type Gap = { requirement: string; kind: "must" | "nice"; weight: number; why: string; options: string[]; told?: { text: string; line: string; remembered?: boolean };
+  /** set when this is not a missing requirement but an ambiguous one: the résumé shows the candidate near the work, the posting asks who owned it */
+  ownership?: { evidence: string } };
+
+const OWNS = /\b(own(?:s|ed|ership)?|lead(?:s|ing)?|led|head(?:s|ed|ing)?|manag(?:e|es|ed|ing)|driv(?:e|es|ing)|drove|accountable|responsible for|run(?:s|ning)?|ran|direct(?:s|ed|ing)?|build(?:s|ing)?|built|set(?:s|ting)? (?:the )?strategy)\b/i;
+const NEAR = /\b(collaborat\w*|support\w*|assist\w*|work(?:ed|ing)? (?:closely )?with|partner\w*|contribut\w*|help\w*|participat\w*|coordinat\w*|liais\w*|involved in|exposure to|part of)\b/i;
+
+/** The ownership question, asked only where it matters and is unclear (decided 13 Nov): a MUST-HAVE that asks for ownership,
+ *  where the only evidence shows the candidate working with or supporting the work. At most two per posting; never for a
+ *  requirement that is missing (that is the ordinary question) or one already answered. */
+export function flagOwnership(matches: Match[]): Match[] {
+  let n = 0;
+  return matches.map((m) => {
+    if (n >= 2 || m.kind !== "must" || m.told || m.bucket === "missing" || (m as any).ownership_asked) return m;
+    const ev = (m.evidence ?? "").trim();
+    if (ev.length < 15 || !OWNS.test(m.requirement) || !NEAR.test(ev) || /^\W*(own|led|lead|manag|head|drove|driv|ran|run|direct|built|build|set)\w*\b/i.test(ev)) return m;   // evidence that opens with an ownership verb is not ambiguous
+    n++; return { ...m, ownership_asked: true } as Match;
+  });
+}
 
 const flip = (ms: Match[], req: string): Match[] => ms.map((m) => (m.requirement === req ? { ...m, bucket: "have_not_said" as const, sayable: true, told: true, line: m.line || "x" } : m));
 
 /** The missing requirements as questions, must-haves first, at most five. weight = what the promise gains if this one is answered. */
 export function gapsOf(matches: Match[]): Gap[] {
   const base = reachable(matches, true);
-  const pool = matches.filter((m) => m.bucket === "missing" || m.told);
+  const pool = matches.filter((m) => m.bucket === "missing" || m.told || (m as any).ownership_asked);
   pool.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "must" ? -1 : 1));
   // every missing requirement is asked, musts first — nothing is decided for the person by leaving one out
   return pool.map((m) => ({
@@ -22,6 +40,7 @@ export function gapsOf(matches: Match[]): Gap[] {
     why: m.suggestion || "",
     options: m.options ?? [],
     ...(m.told ? { told: { text: m.evidence, line: m.line ?? "", ...(m.remembered ? { remembered: true } : {}) } } : {}),
+    ...((m as any).ownership_asked && !m.told ? { ownership: { evidence: m.evidence } } : {}),
   }));
 }
 
@@ -30,7 +49,7 @@ const nums = (s: string) => new Set((s.match(/\d[\d,.]*%?/g) ?? []).map((x) => x
 /** For each missing requirement, three honest ways a person could have done that thing — short clauses, no employer, no
  *  number, each a complete "what" the candidate can tap. Generated once per preview and kept on the match. */
 export async function fillOptions(matches: Match[]): Promise<Match[]> {
-  const need = matches.filter((m) => m.bucket === "missing" && !(m.options && m.options.length));
+  const need = matches.filter((m) => (m.bucket === "missing" || (m as any).ownership_asked) && !(m.options && m.options.length));
   if (!need.length) return matches;
   const r = await json<{ items: { id: number; options: string[] }[] }>(
     `For EACH numbered job requirement, write THREE short résumé clauses describing three different, realistic ways a candidate might genuinely have done it. Rules: each starts with a past-tense verb, 6–12 words, states the requirement's core activity in plain words, names NO employer, NO number and NO outcome (the candidate adds those). The three must differ in kind of involvement (e.g. owned it / partnered on it / built it), not in wording. Plain, specific, screener-readable. Answer every id.`,
@@ -72,11 +91,17 @@ export async function shapeFree(requirement: string, text: string): Promise<stri
 
 /** Writes an accepted answer into the match list: the missing item becomes a sayable, told line. */
 export function acceptInto(matches: Match[], requirement: string, text: string, line: string): Match[] {
-  return matches.map((m) => (m.requirement === requirement ? { ...m, bucket: "have_not_said" as const, evidence: text.trim(), evidence_kind: "line" as const, line, sayable: true, told: true, remembered: false, vet_reason: "told · vetted answer" } : m));
+  // an ownership answer replaces what the résumé showed; what it showed is kept, so taking the answer back puts it back
+  return matches.map((m) => (m.requirement === requirement ? { ...m, ...((m as any).ownership_asked && !m.told ? { was: { bucket: m.bucket, evidence: m.evidence, evidence_kind: m.evidence_kind, line: m.line, sayable: m.sayable, vet_reason: m.vet_reason } } : {}), bucket: "have_not_said" as const, evidence: text.trim(), evidence_kind: "line" as const, line, sayable: true, told: true, remembered: false, vet_reason: "told · vetted answer" } : m));
 }
 /** Takes an answer back out: the item is missing again. */
 export function withdrawFrom(matches: Match[], requirement: string): Match[] {
-  return matches.map((m) => (m.requirement === requirement && m.told ? { ...m, bucket: "missing" as const, evidence: "", line: undefined, sayable: false, told: false, remembered: false, vet_reason: undefined } : m));
+  return matches.map((m) => {
+    if (!(m.requirement === requirement && m.told)) return m;
+    const was = (m as any).was;
+    if (was) { const { was: _w, ...rest } = m as any; return { ...rest, ...was, told: false, remembered: false } as Match; }
+    return { ...m, bucket: "missing" as const, evidence: "", line: undefined, sayable: false, told: false, remembered: false, vet_reason: undefined };
+  });
 }
 /** The facts the candidate added, as the auditors must see them: part of the original. */
 export function addedFacts(matches: Match[]): { requirement: string; fact: string }[] {

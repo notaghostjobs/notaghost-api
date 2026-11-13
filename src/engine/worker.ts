@@ -4,7 +4,8 @@ import { db } from "../lib/db.js";
 import { extractText, fetchPosting } from "./extract.js";
 import { parseResume, runSharpen, type ResumeProfile, type PostingProfile, type Match } from "./sharpen.js";
 import { sanitizeProfile } from "./refile.js";
-import { deliveryGate, repairForGate } from "./gate.js";
+import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck } from "./gate.js";
+import { readingOrder, pdfPages } from "./pdftext.js";
 import { resumePdf } from "./pdf.js";
 import { createHash } from "node:crypto";
 import { fit, target } from "../engine/fit.js";
@@ -51,9 +52,10 @@ export async function processResume(resumeId: string) {
     if (refiled.log.length) { parsed = refiled.profile; console.error("[resume] REFILED", resumeId, refiled.log); }
     // lines that met after the refile (a cut-off copy and its full line) are tidied once more
     // whether the parse could be checked against the page at all (headers found, text in reading order): on record with the parse
-    (parsed as any).parse_check = { verified: !refiled.log.some((l) => /skipped/.test(l)), notes: refiled.log.filter((l) => /skipped/.test(l)) };
+    (parsed as any).parse_check = await verifyParse(parsed, refiled.log, text, pages, isPdf ? buf : null);
+    if (!(parsed as any).parse_check.verified) console.error("[resume] PARSE UNVERIFIED", resumeId, (parsed as any).parse_check);
     const tidy2 = sanitizeProfile(parsed); if (tidy2.log.length) { parsed = tidy2.profile; console.error("[resume] SANITIZED", resumeId, tidy2.log); }
-    (parsed as any).refiled = 5;
+    (parsed as any).refiled = 6;
   }
   await db.from("resumes").update({ text, parsed }).eq("id", resumeId);
   return parsed;
@@ -101,22 +103,48 @@ export function withLinks(profile: ResumeProfile, links: string[]): ResumeProfil
   return { ...profile, contact: { ...(profile.contact ?? {}), links: out } };
 }
 
-/** The résumé's parse as every reader must see it. A parse made before the 13 Nov check (marker 5) is checked once against
+/** Whether a parse's role-by-role attribution can be stood behind — and the fallback when the first check cannot say.
+ *  First: the deterministic check against the page's text (refile). If that could not run (headers not found, text not in
+ *  reading order), the page is read a second time, independently and from the page alone, and the two readings are compared
+ *  line by line: the same lines under the same roles means the attribution is not an accident of one reading. If they
+ *  disagree, the parse is unverified — and nothing is sold on it (the preview stops and asks for a simpler file). */
+export async function verifyParse(parsed: ResumeProfile, refileLog: string[], text: string, pages: number, buf: Buffer | null): Promise<{ verified: boolean; by: string; notes: string[] }> {
+  const skipped = refileLog.filter((l) => /skipped/.test(l));
+  if (!skipped.length) return { verified: true, by: "page text", notes: [] };
+  if (!(parsed.roles ?? []).some((r) => (r.bullets ?? []).length)) return { verified: true, by: "no lines to attribute", notes: skipped };
+  try {
+    const second = sanitizeProfile(await parseResume(buf ? "" : text, pages, buf ?? undefined)).profile;
+    const n = (t: string) => String(t ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+    const key = (r: { company: string; start: string }) => n(r.company) + "|" + n(r.start).replace(/\D/g, "").slice(-2);
+    const where = new Map<string, string>();
+    for (const r of second.roles ?? []) for (const b of r.bullets ?? []) where.set(n(b).split(" ").slice(0, 8).join(" "), key(r));
+    let total = 0, same = 0, seen = 0;
+    for (const r of parsed.roles ?? []) for (const b of r.bullets ?? []) { total++; const w = where.get(n(b).split(" ").slice(0, 8).join(" ")); if (w) { seen++; if (w === key(r)) same++; } }
+    const agree = total ? same / total : 0;
+    const notes = [...skipped, `second reading: ${same} of ${total} lines under the same role (${seen} found)`];
+    return { verified: (second.roles ?? []).length === (parsed.roles ?? []).length && agree >= 0.95, by: "second reading", notes };
+  } catch (e) { return { verified: false, by: "second reading failed", notes: [...skipped, e instanceof Error ? e.message : String(e)] }; }
+}
+
+/** The résumé's parse as every reader must see it. A parse made before the 13 Nov check (marker 6) is checked once against
  *  the file read afresh — the text on record may be in stream order — and the corrected parse is kept. The prewarm and the
  *  shot both go through here, so a draft is never written from a parse the shot will no longer use. */
 export async function checkedProfile(resumeId: string, tag = "shot"): Promise<ResumeProfile | null> {
   const { data: res } = await db.from("resumes").select("parsed, text, storage_path, filename").eq("id", resumeId).single();
   if (!res?.parsed) return null;
   let profile = res.parsed as ResumeProfile;
-  if (res.text && (profile as any).refiled !== 5 && !(profile as any).read_from_page) {
-    let text: string = res.text;
+  if (res.text && (profile as any).refiled !== 6 && !(profile as any).read_from_page) {
+    let text: string = res.text; let buf: Buffer | null = null; let pages = Number((profile as any).pages) || 1;
     try {
       const file = await db.storage.from("resumes").download(res.storage_path);
-      if (!file.error) { const again = await extractText(Buffer.from(await file.data.arrayBuffer()), res.filename ?? "resume.pdf"); if (again.text.length > 200) text = again.text; profile = withLinks(profile, again.links ?? []); }
-    } catch { /* the text on record it is */ }
+      if (!file.error) { buf = Buffer.from(await file.data.arrayBuffer()); const again = await extractText(buf, res.filename ?? "resume.pdf"); if (again.text.length > 200) text = again.text; pages = again.pages || pages; profile = withLinks(profile, again.links ?? []); }
+    } catch { buf = null; /* the text on record it is */ }
     const tidy = sanitizeProfile(profile); if (tidy.log.length) console.error(`[${tag}] SANITIZED`, resumeId, tidy.log);
     const refiled = refileBullets(tidy.profile, text);
-    profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 5, parse_check: { verified: !refiled.log.some((l) => /skipped/.test(l)), notes: refiled.log.filter((l) => /skipped/.test(l)) } } as ResumeProfile;
+    const isPdf = !/\.docx?$/i.test(res.filename ?? "");
+    profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 6 } as ResumeProfile;
+    (profile as any).parse_check = await verifyParse(profile, refiled.log, text, pages, isPdf ? buf : null);
+    if (!(profile as any).parse_check.verified) console.error(`[${tag}] PARSE UNVERIFIED`, resumeId, (profile as any).parse_check);
     if (refiled.log.length) console.error(`[${tag}] REFILED`, resumeId, refiled.log);
     await db.from("resumes").update({ parsed: profile, text }).eq("id", resumeId).then(() => {}, () => {});
   }
@@ -196,6 +224,19 @@ async function runShotBody(shotId: string, shot: any) {
     // line. A failing document is repaired with the candidate's own lines; one that still fails is not delivered — the
     // Sharpen goes back, and the hold is on record for us to read.
     const toldLines = pre ? pre.matches.filter((m) => m.told && m.line).map((m) => String(m.line)) : [];
+    // within each role, what the posting asks for comes first (master rule 8): order only — no line changes, none changes role
+    const ordered = orderByRelevance(out.rewrite, out.matches as any);
+    out.rewrite = ordered.rewrite;
+    // a line with nothing behind it — not theirs, not reworded from theirs, not added for a requirement on quoted evidence,
+    // not told to us — does not go out, whatever the verifier thought of it
+    {
+      const rec = evidenceRecord(out.rewrite, profile, out.matches as any);
+      const orphans = rec.filter((e) => e.kind === "new" && e.role !== "Profile");
+      if (orphans.length) {
+        for (const r of out.rewrite.roles) r.bullets = r.bullets.filter((b) => !orphans.some((o) => o.line === b && o.role === `${r.company} · ${r.title}`));
+        console.error("[shot] UNSOURCED LINES REMOVED", shotId, orphans.map((o) => `${o.role}: ${o.line.slice(0, 70)}`));
+      }
+    }
     let gate = deliveryGate(out.rewrite, profile, out.verification?.problems ?? [], toldLines);
     let gateLog: string[] = [];
     if (!gate.ok) {
@@ -209,10 +250,25 @@ async function runShotBody(shotId: string, shot: any) {
         throw Object.assign(new Error("We held this one back: the finished résumé did not pass our accuracy check, and we don’t send a document we can’t stand behind. Your Sharpen has been returned, and we’ve been told. Try again — or write to human@notaghost.jobs and we’ll look at it today."), { status: 422 });
       }
     }
-    (out as any).gate = { ok: true, repaired: gateLog };
+    (out as any).gate = { ok: true, repaired: gateLog, reordered: ordered.moved };
+    // the evidence record: where every line of the document comes from (kept with the shot; the page shows it)
+    (out as any).evidence = evidenceRecord(out.rewrite, profile, out.matches as any);
     await stage("pdf");
 
-    const pdf = await resumePdf(out.rewrite, profile);
+    let pdf = await resumePdf(out.rewrite, profile);
+    // THE PDF, READ BACK: what a screener's software will see, against the document it was made from. One re-render; a PDF
+    // that still does not read true is not sent.
+    {
+      const read = async (buf: Buffer) => { try { const t = await readingOrder(buf); const pg = await pdfPages(buf); return pdfCheck(t ?? "", pg, out.rewrite, profile.name ?? ""); } catch (e) { return [`the PDF could not be read back: ${e instanceof Error ? e.message : e}`]; } };
+      let bad = await read(pdf);
+      if (bad.length) { pdf = await resumePdf(out.rewrite, profile); bad = await read(pdf); }
+      (out as any).gate.pdf = bad.length ? bad : "ok";
+      if (bad.length) {
+        console.error("[shot] PDF CHECK", shotId, bad);
+        await db.from("reader_control").upsert({ key: `sharpen_fail:hold:${shotId}`, value: { at: new Date().toISOString(), user: shot.user_id, resume: shot.resume_id, pdf: bad }, updated_at: new Date().toISOString() }).then(() => {}, () => {});
+        throw Object.assign(new Error("We held this one back: the finished PDF did not read back correctly, and we don’t send a document we can’t stand behind. Your Sharpen has been returned, and we’ve been told. Try again — or write to human@notaghost.jobs and we’ll look at it today."), { status: 422 });
+      }
+    }
     const pdf_path = `${shot.user_id}/${shotId}.pdf`;
     const up = await db.storage.from("outputs").upload(pdf_path, pdf, { contentType: "application/pdf" });
     if (up.error) throw up.error;

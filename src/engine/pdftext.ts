@@ -78,3 +78,10 @@ export async function linkAnnotations(buf: Buffer): Promise<string[]> {
   return out.slice(0, 12);
 }
 
+
+/** How many pages the PDF has. */
+export async function pdfPages(buf: Buffer): Promise<number> {
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true, disableFontFace: true }).promise;
+  try { return doc.numPages; } finally { await doc.destroy().catch(() => {}); }
+}

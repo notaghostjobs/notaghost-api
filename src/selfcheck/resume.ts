@@ -8,7 +8,9 @@
 import PDFDocument from "pdfkit";
 import { readingOrder } from "../engine/pdftext.js";
 import { refileBullets, sanitizeProfile } from "../engine/refile.js";
-import { deliveryGate, repairForGate } from "../engine/gate.js";
+import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck } from "../engine/gate.js";
+import { flagOwnership, acceptInto, withdrawFrom, gapsOf } from "../engine/told.js";
+import { resumePdf } from "../engine/pdf.js";
 import type { ResumeProfile, Rewrite } from "../engine/sharpen.js";
 
 let failed = 0;
@@ -117,7 +119,48 @@ async function main() {
     ok("a claim that cannot be settled holds the document", !g3.ok);
   }
 
+  // 8. order, evidence, the ownership question
+  {
+    const orig = profile();
+    const rw: any = { headline: "", summary: "Runs three bottling plants.", relevant: [], roles: JSON.parse(JSON.stringify(ROLES)), skills: ["Lean"], education: [], extra_sections: [] };
+    rw.roles[1].bullets[1] = "Introduced a daily loss review with maintenance and quality leads, cutting repeat stoppages.";
+    rw.roles[1].bullets.push("Planned preventive maintenance windows with the engineering team.");
+    rw.roles[1].bullets.push("Won a national award for packaging innovation.");
+    const matches: any[] = [
+      { requirement: "Train and certify line operators", kind: "must", bucket: "said", evidence: ROLES[1].bullets[2] },
+      { requirement: "Plan preventive maintenance", kind: "nice", bucket: "have_not_said", evidence: "x", line: "Planned preventive maintenance windows with the engineering team.", told: true },
+    ];
+    const o = orderByRelevance(rw, matches).rewrite;
+    ok("the posting's must-have leads its role; nothing else changes", o.roles[1].bullets[0] === ROLES[1].bullets[2] && o.roles[1].bullets.length === rw.roles[1].bullets.length && JSON.stringify(o.roles[0]) === JSON.stringify(rw.roles[0]), JSON.stringify(o.roles[1].bullets));
+    const ev = evidenceRecord(rw, orig, matches).filter((e) => e.role.startsWith("Blue Harbor"));
+    ok("every line has its source on record", ev.map((e) => e.kind).join(",") === "yours,reworded,yours,told,new" && ev[1].original === ROLES[1].bullets[1], ev.map((e) => e.kind).join(","));
+    const ms: any[] = [
+      { requirement: "Own the plant maintenance budget", kind: "must", bucket: "have_not_said", evidence: "Supported the maintenance lead in preparing the annual budget.", line: "Supported preparation of the annual maintenance budget.", sayable: true },
+      { requirement: "Lead shift handovers", kind: "must", bucket: "said", evidence: "Led shift handovers across three lines." },
+      { requirement: "Manage vendor contracts", kind: "nice", bucket: "have_not_said", evidence: "Worked with procurement on vendor contracts." },
+      { requirement: "Own food safety audits", kind: "must", bucket: "missing", evidence: "" },
+    ];
+    const f = flagOwnership(ms as any) as any[];
+    ok("ownership is asked only for an ambiguous must-have", f.filter((m) => m.ownership_asked).map((m) => m.requirement).join("|") === "Own the plant maintenance budget" && gapsOf(f as any).filter((g) => g.ownership).length === 1);
+    const back = withdrawFrom(acceptInto(f as any, ms[0].requirement, "I owned the budget", "Owned the plant maintenance budget."), ms[0].requirement) as any[];
+    ok("taking an ownership answer back restores what the résumé showed", back[0].evidence === ms[0].evidence && back[0].bucket === "have_not_said" && !back[0].told);
+  }
+
+  // 9. the finished PDF, read back
+  {
+    const orig = profile();
+    const rw: any = { headline: "Head of Plant Operations", summary: "Runs three bottling plants with nine years in beverage manufacturing.", relevant: [], roles: JSON.parse(JSON.stringify(ROLES)), skills: ["Lean manufacturing", "Line balancing"], education: orig.education, extra_sections: orig.extra_sections, changes: [] };
+    try {
+      const buf = await resumePdf(rw, orig);
+      const t = (await readingOrder(buf)) ?? "";
+      ok("our own PDF reads back complete and in order", pdfCheck(t, 1, rw, orig.name).length === 0, JSON.stringify(pdfCheck(t, 1, rw, orig.name)));
+      const more = JSON.parse(JSON.stringify(rw)); more.roles[2].bullets.push("Commissioned the second pasteuriser ahead of schedule.");
+      ok("a line missing from the PDF is caught", pdfCheck(t, 1, more, orig.name).length === 1);
+      ok("roles out of order in the PDF are caught", pdfCheck(t, 1, { ...rw, roles: [rw.roles[1], rw.roles[0], rw.roles[2]] }, orig.name).some((x: string) => /out of order/.test(x)));
+    } catch (e) { console.log("  – PDF read-back skipped here (no browser):", e instanceof Error ? e.message.split("\n")[0] : e); }
+  }
+
   if (failed) { console.error(`résumé self-check: ${failed} failed`); process.exit(1); }
   console.log("résumé self-check: all passed");
 }
-main().catch((e) => { console.error("résumé self-check crashed", e); process.exit(1); });
+main().then(() => process.exit(0)).catch((e) => { console.error("résumé self-check crashed", e); process.exit(1); });

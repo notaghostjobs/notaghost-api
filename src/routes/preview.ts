@@ -1,4 +1,5 @@
 import { canonicalPostingUrl, asUrl } from "../engine/ghost/canon.js";
+import { checkedProfile } from "../engine/worker.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -11,7 +12,7 @@ import { assess, fit, ENGINE_VERSION } from "../engine/fit.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../engine/sharpen.js";
 import { radarMatchesFor } from "./radar.js";
 import { withMeter } from "../engine/meter.js";
-import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, type Facts } from "../engine/told.js";
+import { gapsOf, flagOwnership, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, type Facts } from "../engine/told.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(canonicalPostingUrl(u).trim().toLowerCase()).digest("hex");
 export const preview = new Hono<{ Variables: { user: User } }>();
@@ -54,6 +55,11 @@ preview.post("/", async (c) => {
 
   const resume = await currentParsedResume<{ id: string; parsed: any }>(u.id, "id, parsed");
   if (!resume?.parsed) return c.json({ error: "Upload your résumé first." }, 400);
+  // the fit is read from the checked parse — the one the document will be written from
+  { const checked = await checkedProfile(resume.id, "preview").catch(() => null); if (checked) resume.parsed = checked; }
+  // a layout whose lines we could not attribute to their roles with certainty, even on a second reading: nothing is sold on it
+  if (resume.parsed?.parse_check?.verified === false)
+    return c.json({ error: "We couldn’t be sure which lines belong to which job in this résumé’s layout, so we won’t rewrite it — a line under the wrong employer is worse than no rewrite. Upload a simpler version: one column, each job followed by its own points (a Word or Google Docs file, or a PDF saved from one). Nothing has been used.", code: "layout" }, 400);
   { const src = srcOf(c); await stampUser(u.id, src); void logEvent("preview", { src, userId: u.id, meta: { posting_url: body.data.posting_url ?? null } }); }
 
   let postingText = body.data.posting_text ?? "", postingId: string | null = null, parsed: any = null;
@@ -104,13 +110,14 @@ preview.post("/", async (c) => {
     matches = g.matches; fits = g.fits ?? null;
     // what they told us on earlier postings answers the same question here, before they are asked again
     try { const bank = await recallAnswers(u.id); const re = applyRemembered(matches, bank); if (re.n) { matches = re.matches; console.error("[preview] remembered answers applied", re.n); } } catch {}
+    matches = flagOwnership(matches);   // the ownership question, only for an ambiguous must-have
     const a0 = assess(matches);
     // remember this exact match so the paid run scores against the same list the user saw
     const { data: pv } = await db.from("previews").insert({ user_id: u.id, resume_id: resume.id, posting_id: postingId, posting_text: postingText, posting: { ...posting, __engine: ENGINE_VERSION }, matches, score_before: a0.current, score_after: a0.promised }).select("id").single();
     previewId = pv?.id ?? null;
   }
   // "things we couldn't see": the three tap-able ways of having done each missing requirement, made once and kept
-  if (previewId && matches.some((m) => m.bucket === "missing" && !m.options?.length)) {
+  if (previewId && matches.some((m) => (m.bucket === "missing" || (m as any).ownership_asked) && !m.options?.length)) {
     try { const withOpts = await fillOptions(matches); if (withOpts !== matches) { matches = withOpts; await db.from("previews").update({ matches }).eq("id", previewId); } } catch { /* the page works without options; the card falls back to "say it my way" */ }
   }
   const roles = ((resume.parsed as ResumeProfile).roles ?? []).map((r) => ({ company: r.company, start: r.start, end: r.end })).slice(0, 8);
