@@ -636,7 +636,7 @@ export function factAudit(rw: Rewrite, resume: ResumeProfile): { claim: string; 
   const told = normT(JSON.stringify(resume.candidate_added_facts ?? []));
   const byCompany = new Map<string, Set<string>>();
   for (const r of resume.roles ?? []) { const k = normT(r.company); const set = byCompany.get(k) ?? new Set<string>(); for (const n of numbersIn([r.title, r.start, r.end, ...r.bullets].join(" "))) set.add(n); byCompany.set(k, set); }
-  const profileNums = new Set(numbersIn([resume.headline ?? "", ...(resume.skills ?? []).map((x: any) => x?.evidence ?? ""), ...(resume.extra_sections ?? []).flatMap((x) => x.items)].join(" ")));   // facts the original states without an employer
+  const profileNums = new Set(numbersIn([resume.headline ?? "", String((resume as any).summary ?? ""), ...(resume.skills ?? []).map((x: any) => x?.evidence ?? ""), ...(resume.extra_sections ?? []).flatMap((x) => x.items)].join(" ")));   // facts the original states without an employer
   const companyIn = (text: string) => [...byCompany.keys()].filter((k) => k && (normT(text).includes(k) || (k.split(" ")[0].length > 4 && normT(text).includes(k.split(" ")[0]))));
   for (const r of doc.roles ?? []) {
     const own = byCompany.get(normT(r.company)); if (!own) continue;
@@ -646,7 +646,7 @@ export function factAudit(rw: Rewrite, resume: ResumeProfile): { claim: string; 
     for (const sent of text.split(/(?<=[.;])\s+/).flatMap((x) => (companyIn(x).length > 1 ? x.split(/[,;:]\s+/) : [x]))) {
       const cos = companyIn(sent); if (cos.length !== 1) continue;
       const own = byCompany.get(cos[0])!;
-      for (const n of numbersIn(sent)) if (!own.has(n) && !numbersIn(told).includes(n) && !/^(19|20)\d\d$/.test(n)) out.push({ claim: sent.slice(0, 160), reason: `"${n}" is attributed to ${cos[0]} but is not in that employer's lines in the original (${where})` });
+      for (const n of numbersIn(sent)) if (!own.has(n) && !numbersIn(told).includes(n) && !profileNums.has(n) && !/^(19|20)\d\d$/.test(n)) out.push({ claim: sent.slice(0, 160), reason: `"${n}" is attributed to ${cos[0]} but is not in that employer's lines in the original (${where})` });
     }
   }
   const origNorm = normT(origText);

@@ -318,7 +318,7 @@ admin.get("/shots", async (c) => {
     const owed = (o.matches ?? []).filter((m: any) => m.bucket === "have_not_said" && m.sayable && m.line);
     return { id: s.id, at: s.created_at, status: s.status, error: s.error, before: o.before, promised: o.promised, after: o.after, repeat: o.repeat, timing: o.timing,
       owed: owed.map((m: any) => { const core = norm(m.line).split(" ").slice(0, 10).join(" "); const now = (o.after_matches ?? []).find((x: any) => x.requirement === m.requirement); return { req: String(m.requirement).slice(0, 80), told: !!m.told, in_doc: !!doc && doc.includes(core), counted: now?.bucket === "said", line: String(m.line).slice(0, 140) }; }),
-      problems: o.verification?.problems, broken: o.broken, needs_review: o.needs_review, gate: o.gate, detail: o.detail };
+      problems: o.verification?.problems, broken: o.broken, needs_review: o.needs_review, gate: o.gate, detail: o.detail, foreign: o.foreign };
   }));
 });
 

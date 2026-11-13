@@ -291,7 +291,7 @@ async function runShotBody(shotId: string, shot: any) {
     const friendly = (e as { status?: number }).status && (e as { status?: number }).status! < 500
       ? raw
       : "We couldn't finish this one. Nothing was used — try again in a minute.";
-    await db.from("shots").update({ status: "failed", error: friendly, output: { detail: raw.slice(0, 500) } }).eq("id", shotId);
+    await db.from("shots").update({ status: "failed", error: friendly, output: { detail: raw.slice(0, 500), foreign: (e as any)?.foreign ?? undefined } }).eq("id", shotId);
     // refund the shot
     await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
   }
