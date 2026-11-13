@@ -157,7 +157,7 @@ export function evidenceRecord(rw: Rewrite, orig: ResumeProfile, matches: MatchL
     const own = ((orig.roles ?? []).find((o) => roleKey(o) === roleKey(r)) ?? (orig.roles ?? []).find((o) => norm(o.company) === norm(r.company) && norm(o.start) === norm(r.start)))?.bullets ?? [];
     for (const b of r.bullets) out.push({ role: `${r.company} · ${r.title}`, line: b, ...classify(b, own) });
   }
-  const everything = (orig.roles ?? []).flatMap((o) => o.bullets ?? []);
+  const everything = [...(orig.roles ?? []).flatMap((o) => o.bullets ?? []), ...sentences(String((orig as any).summary ?? ""))];   // a profile line may be their own summary sentence
   for (const x of rw.relevant ?? []) out.push({ role: "Profile", line: x, ...classify(x, everything) });
   return out;
 }
@@ -209,4 +209,50 @@ export function pdfCheck(text: string, pages: number, rw: Rewrite, name: string)
   if (rw.summary && !present(rw.summary)) bad.push("the profile is not fully readable in the PDF");
   for (const s of rw.skills ?? []) if (!present(s)) { bad.push(`skill not readable in the PDF: ${s}`); break; }
   return bad;
+}
+
+// ---------- the profile: no figure of theirs lost, no sentence said twice ----------
+const FIG = /\d[\d,]*(?:\.\d+)?\s?(?:%|x\b|k\b|m\b|bn\b|cr\b|lakhs?\b|\+)?/gi;
+/** the figures in a text, as comparable keys ("30%", "5m", "250") — years and one-digit counts are not figures */
+export function figures(t: string): string[] {
+  return [...new Set((String(t ?? "").match(FIG) ?? []).map((f) => f.toLowerCase().replace(/[\s,]/g, "")).filter((f) => !/^(19|20)\d\d$/.test(f) && (/\D/.test(f) || f.length >= 2)))];
+}
+const sentences = (t: string) => String(t ?? "").split(/(?<=[.!?])\s+(?=[A-Z0-9“"(])|\n+|\s*[•▪●◦]\s*/).map((s) => s.replace(/^[\s\-–•▪●◦]+/, "").trim()).filter((s) => s.length > 12);
+const docText = (rw: Rewrite) => JSON.stringify({ h: rw.headline, s: rw.summary, r: rw.relevant, roles: rw.roles, x: rw.extra_sections });
+
+/** A figure the candidate put in their own profile ("30% YoY growth") that the finished document says nowhere: the sentence
+ *  that carried it goes into the profile block, in their words. At most two; a figure is theirs to keep. */
+export function keepProfileFigures(rw: Rewrite, orig: ResumeProfile): string[] {
+  const log: string[] = [];
+  const src = sentences(String((orig as any).summary ?? ""));
+  for (const s of src) {
+    if (log.length >= 2) break;
+    const have = new Set(figures(docText(rw)));
+    const gone = figures(s).filter((f) => !have.has(f));
+    if (!gone.length) continue;
+    rw.relevant = [...(rw.relevant ?? []), s];
+    log.push(`figure kept (${gone.join(", ")}): ${s.slice(0, 70)}`);
+  }
+  return log;
+}
+/** A summary sentence that the profile block says again, nearly word for word, is said once: the summary's copy goes. */
+export function dedupeProfile(rw: Rewrite): string[] {
+  const log: string[] = [];
+  const ss = String(rw.summary ?? "").split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (ss.length < 2) return log;
+  const keep = ss.filter((s) => { const dup = (rw.relevant ?? []).some((r) => content(s).length >= 4 && covered(s, r) >= 0.85); if (dup) log.push(`said twice in the profile, kept once: ${s.slice(0, 70)}`); return !dup; });
+  if (keep.length && keep.length !== ss.length) rw.summary = keep.join(" ");
+  return keep.length ? log : [];
+}
+
+// ---------- wording that changes no fact: a finished role is told in the past tense ----------
+const PAST: Record<string, string> = { enhancing: "Enhanced", devising: "Devised", utilizing: "Utilized", utilising: "Utilised", developing: "Developed", implementing: "Implemented", managing: "Managed", leading: "Led", driving: "Drove", building: "Built", creating: "Created", designing: "Designed", delivering: "Delivered", executing: "Executed", overseeing: "Oversaw", handling: "Handled", coordinating: "Coordinated", collaborating: "Collaborated", analyzing: "Analyzed", analysing: "Analysed", optimizing: "Optimized", optimising: "Optimised", preparing: "Prepared", conducting: "Conducted", supporting: "Supported", ensuring: "Ensured", maintaining: "Maintained", establishing: "Established", launching: "Launched", negotiating: "Negotiated", identifying: "Identified", defining: "Defined", owning: "Owned", running: "Ran", working: "Worked", spearheading: "Spearheaded", streamlining: "Streamlined", improving: "Improved", increasing: "Increased", reducing: "Reduced", growing: "Grew", scaling: "Scaled", heading: "Headed", formulating: "Formulated", liaising: "Liaised", partnering: "Partnered", evaluating: "Evaluated", generating: "Generated", providing: "Provided", performing: "Performed", achieving: "Achieved", crafting: "Crafted", cultivating: "Cultivated", directing: "Directed", facilitating: "Facilitated", championing: "Championed", supervising: "Supervised", resolving: "Resolved", deploying: "Deployed", presenting: "Presented", leveraging: "Leveraged", assisting: "Assisted", contributing: "Contributed", monitoring: "Monitored" };
+const ENDED = (end: string) => !!String(end ?? "").trim() && !/present|current|now|till date|to date|ongoing/i.test(end);
+/** "Enhancing engagement…" under a role that has ended reads "Enhanced engagement…". Only the opening verb of a sentence
+ *  changes, only from a fixed list, and never when the word is being used as a noun ("Managing of…", "Leading and…"). */
+export function polishTense(rw: Rewrite): { rewrite: Rewrite; changed: number } {
+  const next: Rewrite = JSON.parse(JSON.stringify(rw)); let changed = 0;
+  const fix = (b: string) => b.replace(/(^|[.;]\s+)([A-Z][a-z]+ing)\b(?=\s+(?!of\b|and\b|&|or\b)[a-z0-9(“"$₹])/g, (m, pre, w) => { const p = PAST[w.toLowerCase()]; if (!p) return m; changed++; return pre + p; });
+  for (const r of next.roles ?? []) if (ENDED(r.end)) r.bullets = r.bullets.map(fix);
+  return { rewrite: next, changed };
 }

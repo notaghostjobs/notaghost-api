@@ -8,7 +8,8 @@
 import PDFDocument from "pdfkit";
 import { readingOrder } from "../engine/pdftext.js";
 import { refileBullets, sanitizeProfile } from "../engine/refile.js";
-import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck } from "../engine/gate.js";
+import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck, keepProfileFigures, dedupeProfile, polishTense, figures } from "../engine/gate.js";
+import { isOwnDocument } from "../engine/own.js";
 import { flagOwnership, acceptInto, withdrawFrom, gapsOf } from "../engine/told.js";
 import { resumePdf } from "../engine/pdf.js";
 import type { ResumeProfile, Rewrite } from "../engine/sharpen.js";
@@ -160,6 +161,28 @@ async function main() {
     } catch (e) { console.log("  – PDF read-back skipped here (no browser):", e instanceof Error ? e.message.split("\n")[0] : e); }
   }
 
+  // ---- 13 Nov, evening: the profile lost a figure, said a sentence twice, kept the wrong tense; an upload of our own document was re-scored
+  {
+    const o = profile(); (o as any).summary = "Runs plants for a living. Attained a 30% YoY growth in output with a 20% margin. Led teams of over 250 members across layers.";
+    const rw: Rewrite = JSON.parse(JSON.stringify({ headline: o.headline, summary: "Plant leader with nine years in beverages. Led teams of over 250 members across layers.", relevant: ["Led teams of over 250 members across layers; margin held at 20%."], roles: o.roles, skills: [], education: o.education, extra_sections: [], fit_line: "", referral_note: "", changes: [] }));
+    rw.roles[1].bullets = [...rw.roles[1].bullets, "Enhancing uptime through weekly reviews. Devising checklists for every line."];
+    const o2 = JSON.parse(JSON.stringify(o)); o2.roles[1].bullets = [...o2.roles[1].bullets, "Enhancing uptime through weekly reviews. Devising checklists for every line."];
+    const kept = keepProfileFigures(rw, o2);
+    ok("a figure from their own profile is kept", kept.length === 1 && figures(JSON.stringify(rw.relevant)).includes("30%"), JSON.stringify(kept));
+    const dd = dedupeProfile(rw);
+    ok("a sentence said twice in the profile is said once", dd.length === 1 && !/250/.test(rw.summary) && /nine years/.test(rw.summary), rw.summary);
+    const pol = polishTense(rw);
+    ok("a finished role is told in the past tense", pol.changed === 2 && pol.rewrite.roles[1].bullets.some((b) => b.startsWith("Enhanced uptime") && b.includes(". Devised checklists")), JSON.stringify(pol.rewrite.roles[1].bullets.slice(-1)));
+    ok("the current role's wording is left alone", JSON.stringify(pol.rewrite.roles[0]) === JSON.stringify(rw.roles[0]));
+    ok("the polished document passes the same gate", deliveryGate(pol.rewrite, o2, [], []).ok, JSON.stringify(deliveryGate(pol.rewrite, o2, [], [])));
+    const rec = evidenceRecord(pol.rewrite, o2, []);
+    ok("a polished line is on record as reworded, with their original", rec.some((e) => e.kind === "reworded" && /^Enhancing/.test(e.original ?? "")), JSON.stringify(rec.filter((e) => e.kind !== "yours")));
+    // our own document, uploaded again
+    const up = JSON.parse(JSON.stringify(o2)); up.roles = pol.rewrite.roles; up.summary = pol.rewrite.summary + " " + pol.rewrite.relevant.join(" ");
+    ok("an upload of the document we delivered is recognised", isOwnDocument(up, pol.rewrite));
+    const told = JSON.parse(JSON.stringify(pol.rewrite)); told.roles[0].bullets.push("Launched two private label lines with overseas suppliers.", "Owned the annual operating plan for the region."); told.roles[1].bullets.push("Set up a vendor scorecard used by forty suppliers.");
+    ok("their original résumé is not mistaken for it", !isOwnDocument(o2, told));
+  }
   if (failed) { console.error(`résumé self-check: ${failed} failed`); process.exit(1); }
   console.log("résumé self-check: all passed");
 }

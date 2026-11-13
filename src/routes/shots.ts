@@ -7,7 +7,7 @@ import { rewriteResume, type ResumeProfile, type PostingProfile, type Match } fr
 import { MODEL } from "../engine/claude.js";
 import { addedFacts } from "../engine/told.js";
 import { z } from "zod";
-import { deliveryGate, repairForGate, evidenceRecord, pdfCheck, type EvidenceLine } from "../engine/gate.js";
+import { deliveryGate, repairForGate, evidenceRecord, pdfCheck, type EvidenceLine, keepProfileFigures } from "../engine/gate.js";
 import { readingOrder, pdfPages } from "../engine/pdftext.js";
 import { resumePdf } from "../engine/pdf.js";
 import { db, activePlan, currentResume, type User, type Product } from "../lib/db.js";
@@ -164,6 +164,34 @@ shots.post("/:id/correct", async (c) => {
   await db.from("shots").update({ output: { ...out, rewrite: fixed, evidence, corrections } }).eq("id", shot.id);
   await db.from("reader_control").upsert({ key: `sharpen_correction:${shot.id}:${corrections.length}`, value: corrections[corrections.length - 1], updated_at: new Date().toISOString() }).then(() => {}, () => {});
   return c.json({ ok: true, evidence, rewrite: fixed });
+});
+
+/** "How does it read?" — one tap on the delivered page. "Not quite" opens the line-by-line view for them; here it makes us
+ *  look at the document again with today's checks. Only a fault WE can confirm (a line of theirs lost or under the wrong
+ *  employer, a figure of theirs gone) gives the Sharpen back, once; a preference never does. Every answer is kept. */
+shots.post("/:id/feedback", async (c) => {
+  const body = z.object({ reads: z.enum(["yes", "no"]) }).safeParse(await c.req.json());
+  if (!body.success) return c.json({ error: "yes or no" }, 400);
+  const u = c.get("user");
+  const { data: shot } = await db.from("shots").select("id, resume_id, plan_id, output, status").eq("id", c.req.param("id")).eq("user_id", u.id).maybeSingle();
+  const out = shot?.output as any;
+  if (!shot || shot.status !== "done" || !out?.rewrite) return c.json({ error: "Not ready." }, 404);
+  let faults: string[] = [], given_back = !!out.given_back;
+  if (body.data.reads === "no") {
+    try {
+      const profile = await checkedProfile(shot.resume_id, "feedback");
+      if (profile) {
+        const told = (out.matches ?? []).filter((m: any) => m.told && m.line).map((m: any) => String(m.line));
+        const g = deliveryGate(out.rewrite, profile, [], told);
+        faults = [...g.lost, ...g.moved, ...g.factual, ...keepProfileFigures(JSON.parse(JSON.stringify(out.rewrite)), profile)];
+      }
+    } catch (e) { console.error("[feedback] re-check", (e as Error).message); }
+    if (faults.length && !given_back && shot.plan_id) { await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => { given_back = true; }, () => {}); console.error("[shot] GIVEN BACK after feedback", shot.id, faults); }
+  }
+  const feedback = { at: new Date().toISOString(), reads: body.data.reads, faults };
+  await db.from("shots").update({ output: { ...out, feedback, given_back } }).eq("id", shot.id);
+  await db.from("reader_control").upsert({ key: `sharpen_feedback:${shot.id}`, value: { ...feedback, user: u.id, given_back }, updated_at: feedback.at }).then(() => {}, () => {});
+  return c.json({ ok: true, given_back: given_back && !out.given_back });
 });
 
 /** Everything this person has sharpened, newest first: the role, the numbers, and a signed link to each document. */

@@ -12,6 +12,7 @@ import { assess, fit, ENGINE_VERSION } from "../engine/fit.js";
 import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../engine/sharpen.js";
 import { radarMatchesFor } from "./radar.js";
 import { withMeter } from "../engine/meter.js";
+import { ownDocumentFor } from "../engine/own.js";
 import { gapsOf, flagOwnership, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, type Facts } from "../engine/told.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(canonicalPostingUrl(u).trim().toLowerCase()).digest("hex");
@@ -90,6 +91,13 @@ preview.post("/", async (c) => {
     if (thin(posting)) return c.json({ error: "We couldn’t read the requirements on that page. Open the job, copy everything on it, and paste the description instead — no shot is used." }, 400);
   }
   if (postingId && !parsed) await db.from("postings").update({ company: posting.company, title: posting.title, parsed: posting }).eq("id", postingId);
+  // the upload is the very document we delivered for this posting: the number is the one it was delivered with, nothing is re-scored
+  {
+    const own = await ownDocumentFor(u.id, resume.parsed, postingId, posting).catch(() => null);
+    if (own) return c.json({ already: own, prior_shot: own, preview_id: null, posting_id: postingId, posting: { company: posting.company, title: posting.title, location: posting.location },
+      score_before: own.after, score_after: own.after, band: "high", reachable: own.after, can_lift: false, floor_shown: own.after, similar_open: 0,
+      counts: { said: 0, unsaid: 0, buried: 0, missing: 0, total: 0 }, changes: [], reasons: [], matches: [], fits: null, gaps: [], roles: [] });
+  }
   // The same résumé against the same posting is the same fit: the first read is kept and returned again, to the digit, for 30
   // days or until the résumé changes. A number that moved between two looks at one posting was never a promise.
   const since = new Date(Date.now() - 30 * 86400e3).toISOString();

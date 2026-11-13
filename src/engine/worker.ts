@@ -4,7 +4,7 @@ import { db } from "../lib/db.js";
 import { extractText, fetchPosting } from "./extract.js";
 import { parseResume, runSharpen, type ResumeProfile, type PostingProfile, type Match } from "./sharpen.js";
 import { sanitizeProfile } from "./refile.js";
-import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck } from "./gate.js";
+import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck, keepProfileFigures, dedupeProfile, polishTense } from "./gate.js";
 import { readingOrder, pdfPages } from "./pdftext.js";
 import { resumePdf } from "./pdf.js";
 import { createHash } from "node:crypto";
@@ -237,6 +237,9 @@ async function runShotBody(shotId: string, shot: any) {
         console.error("[shot] UNSOURCED LINES REMOVED", shotId, orphans.map((o) => `${o.role}: ${o.line.slice(0, 70)}`));
       }
     }
+    // their own profile: a figure they stated is not lost, and nothing is said twice
+    const profileLog = [...keepProfileFigures(out.rewrite, profile), ...dedupeProfile(out.rewrite)];
+    if (profileLog.length) console.error("[shot] PROFILE", shotId, profileLog);
     let gate = deliveryGate(out.rewrite, profile, out.verification?.problems ?? [], toldLines);
     let gateLog: string[] = [];
     if (!gate.ok) {
@@ -250,7 +253,10 @@ async function runShotBody(shotId: string, shot: any) {
         throw Object.assign(new Error("We held this one back: the finished résumé did not pass our accuracy check, and we don’t send a document we can’t stand behind. Your Sharpen has been returned, and we’ve been told. Try again — or write to human@notaghost.jobs and we’ll look at it today."), { status: 422 });
       }
     }
-    (out as any).gate = { ok: true, repaired: gateLog, reordered: ordered.moved };
+    // wording that changes no fact (a finished role in the past tense), kept only if the document still passes the same gate
+    let polished = 0;
+    { const pol = polishTense(out.rewrite); if (pol.changed && deliveryGate(pol.rewrite, profile, [], toldLines).ok) { out.rewrite = pol.rewrite; polished = pol.changed; } }
+    (out as any).gate = { ok: true, repaired: [...gateLog, ...profileLog], reordered: ordered.moved, polished };
     // the evidence record: where every line of the document comes from (kept with the shot; the page shows it)
     (out as any).evidence = evidenceRecord(out.rewrite, profile, out.matches as any);
     await stage("pdf");
