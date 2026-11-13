@@ -49,7 +49,7 @@ export async function processResume(resumeId: string) {
     if (refiled.log.length) { parsed = refiled.profile; console.error("[resume] REFILED", resumeId, refiled.log); }
     // lines that met after the refile (a cut-off copy and its full line) are tidied once more
     const tidy2 = sanitizeProfile(parsed); if (tidy2.log.length) { parsed = tidy2.profile; console.error("[resume] SANITIZED", resumeId, tidy2.log); }
-    (parsed as any).refiled = 3;
+    (parsed as any).refiled = 4;
   }
   await db.from("resumes").update({ text, parsed }).eq("id", resumeId);
   return parsed;
@@ -70,9 +70,9 @@ async function runShotInner(shotId: string, shot: any) {
     const { data: res } = await db.from("resumes").select("parsed, text, storage_path, filename").eq("id", shot.resume_id).single();
     if (!res?.parsed) throw new Error("Résumé not parsed yet.");
     let profile = res.parsed as ResumeProfile;
-    // refiled === 3 is the 13 Nov check (the page read in reading order, roles in the page's order); older parses are checked
+    // refiled === 4 is the 13 Nov check (the page read in reading order, roles in the page's order); older parses are checked
     // again on their next shot — against the file read afresh, since the text on record may be in stream order
-    if (res.text && (profile as any).refiled !== 3 && !(profile as any).read_from_page) {
+    if (res.text && (profile as any).refiled !== 4 && !(profile as any).read_from_page) {
       let text: string = res.text;
       try {
         const file = await db.storage.from("resumes").download(res.storage_path);
@@ -80,7 +80,7 @@ async function runShotInner(shotId: string, shot: any) {
       } catch { /* the text on record it is */ }
       const tidy = sanitizeProfile(profile); if (tidy.log.length) console.error("[shot] SANITIZED", shot.resume_id, tidy.log);
       const refiled = refileBullets(tidy.profile, text);
-      profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 3 } as ResumeProfile;
+      profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 4 } as ResumeProfile;
       if (refiled.log.length) console.error("[shot] REFILED", shot.resume_id, refiled.log);
       await db.from("resumes").update({ parsed: profile, text }).eq("id", shot.resume_id).then(() => {}, () => {});
     }
