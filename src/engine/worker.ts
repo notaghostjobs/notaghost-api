@@ -50,6 +50,8 @@ export async function processResume(resumeId: string) {
     const refiled = refileBullets(parsed, text);
     if (refiled.log.length) { parsed = refiled.profile; console.error("[resume] REFILED", resumeId, refiled.log); }
     // lines that met after the refile (a cut-off copy and its full line) are tidied once more
+    // whether the parse could be checked against the page at all (headers found, text in reading order): on record with the parse
+    (parsed as any).parse_check = { verified: !refiled.log.some((l) => /skipped/.test(l)), notes: refiled.log.filter((l) => /skipped/.test(l)) };
     const tidy2 = sanitizeProfile(parsed); if (tidy2.log.length) { parsed = tidy2.profile; console.error("[resume] SANITIZED", resumeId, tidy2.log); }
     (parsed as any).refiled = 5;
   }
@@ -102,7 +104,7 @@ export async function checkedProfile(resumeId: string, tag = "shot"): Promise<Re
     } catch { /* the text on record it is */ }
     const tidy = sanitizeProfile(profile); if (tidy.log.length) console.error(`[${tag}] SANITIZED`, resumeId, tidy.log);
     const refiled = refileBullets(tidy.profile, text);
-    profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 5 } as ResumeProfile;
+    profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 5, parse_check: { verified: !refiled.log.some((l) => /skipped/.test(l)), notes: refiled.log.filter((l) => /skipped/.test(l)) } } as ResumeProfile;
     if (refiled.log.length) console.error(`[${tag}] REFILED`, resumeId, refiled.log);
     await db.from("resumes").update({ parsed: profile, text }).eq("id", resumeId).then(() => {}, () => {});
   }

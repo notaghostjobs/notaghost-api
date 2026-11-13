@@ -236,7 +236,7 @@ admin.get("/diag/shot", async (c) => {
 admin.get("/diag/resumes", async (c) => {
   const n = Math.min(10, Math.max(1, Number(c.req.query("n") ?? 3)));
   const { data } = await db.from("resumes").select("id, created_at, filename, text, parsed").order("created_at", { ascending: false }).limit(n);
-  return c.json((data ?? []).map((r: any) => ({ id: r.id, created_at: r.created_at, filename: r.filename, text_len: (r.text ?? "").length, pages: r.parsed?.pages, refiled: !!r.parsed?.refiled, source_is_ghosted: !!r.parsed?.source_is_ghosted, layout_warning: r.parsed?.layout_warning ?? null,
+  return c.json((data ?? []).map((r: any) => ({ id: r.id, created_at: r.created_at, filename: r.filename, text_len: (r.text ?? "").length, pages: r.parsed?.pages, refiled: !!r.parsed?.refiled, source_is_ghosted: !!r.parsed?.source_is_ghosted, layout_warning: r.parsed?.layout_warning ?? null, parse_check: r.parsed?.parse_check ?? null,
     name: r.parsed?.name, roles: (r.parsed?.roles ?? []).map((x: any) => ({ company: x.company, title: x.title, start: x.start, end: x.end, bullets: x.bullets })), skills: (r.parsed?.skills ?? []).length, education: r.parsed?.education, extra: (r.parsed?.extra_sections ?? []).map((x: any) => `${x.title} (${x.items?.length ?? 0})`) })));
 });
 

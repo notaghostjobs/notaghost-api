@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && node dist/selfcheck/resume.js",
     "start": "node --max-old-space-size=384 dist/index.js",
     "typecheck": "tsc --noEmit",
     "worker": "node --max-old-space-size=320 dist/reader/worker.js"
