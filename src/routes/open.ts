@@ -215,7 +215,9 @@ Judge from the role title and what the question asks a person to actually do. Ye
 open.get("/q/:id/me", async (c) => {
   const u = c.get("user"); const q = await store.get<Question>(qKey(c.req.param("id")));
   if (!q) return c.json({ error: "This question isn’t on Ghosted Open." }, 404);
-  if (q.owner === u.id) return c.json({ owner: true });
+  // a tester walks both sides on one number: "as=candidate" lets them answer their own question
+  const both = isTester(u) && c.req.query("as") === "candidate";
+  if (q.owner === u.id && !both) return c.json({ owner: true, tester: isTester(u) });
   const mine = await store.get<Answer>(aKey(q.id, u.id));
   const r = await relevance(u, q);
   return c.json({ owner: false, ...r, answer: mine ? candA(mine, q) : null });
@@ -224,7 +226,7 @@ open.post("/q/:id/answers", async (c) => {
   const u = c.get("user"); const q = await store.get<Question>(qKey(c.req.param("id")));
   if (!q) return c.json({ error: "This question isn’t on Ghosted Open." }, 404);
   if (!isLive(q)) return c.json({ error: "This role has closed." }, 409);
-  if (q.owner === u.id) return c.json({ error: "This is your own question." }, 403);
+  if (q.owner === u.id && !(isTester(u) && c.req.query("as") === "candidate")) return c.json({ error: "This is your own question." }, 403);
   const b = z.object({ text: z.string().trim().min(80).max(1500), ms: z.number().min(0).max(36e5).default(0), pasted: z.boolean().default(false) }).safeParse(await c.req.json().catch(() => ({})));
   if (!b.success) return c.json({ error: "An answer is between a few sentences and about 250 words." }, 400);
   if (await store.get<Answer>(aKey(q.id, u.id))) return c.json({ error: "You’ve already answered this one." }, 409);

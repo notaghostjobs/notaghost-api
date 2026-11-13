@@ -110,6 +110,17 @@ export function labelOf(same: Same, near: string | null): Label | null {
 const TITLE_STOP = new Set(["manager", "management", "senior", "sr", "jr", "junior", "lead", "leader", "head", "director", "associate", "assistant", "analyst", "specialist", "executive", "officer", "consultant", "principal", "staff", "chief", "vice", "president", "vp", "avp", "general", "gm", "deputy", "business", "india", "bangalore", "bengaluru", "blr", "ii", "iii", "iv", "i", "of", "and", "the", "for", "to", "in", "a", "an", "at", "with", "role", "roles", "team", "group", "global", "regional", "national", "office", "ops", "mgr", "mgmt", "copy", "new", "exp", "years", "yrs", "yoe", "full", "time"]);
 const STEM = (w: string) => w.replace(/(ings?|ions?|ers?|ies|es|s|al|ic)$/, "");
 const words = (t: string) => (t ?? "").toLowerCase().replace(/&/g, " and ").split(/[^a-z]+/).filter((w) => w.length > 2 && !TITLE_STOP.has(w)).map(STEM).filter((w) => w.length > 2);
+/** A title as the employer wrote it. Some boards hand us the title with the listing's age and city glued on the end
+ *  ("Backend Developer (Golang)176 days agoBangalore2-5 Full Time"): the title is the part before the glue, and a years
+ *  range in the glued tail is the posting's own band, kept in words so the years gate can see it. */
+export function cleanTitle(raw: string | null | undefined): string {
+  const s = String(raw ?? "").replace(/\s+/g, " ").trim();
+  const m = s.match(/^(.*?[a-z)\]])(?=\d{1,3}\+? ?days? ago|Bangalore|Bengaluru|Bengalooru)(.*)$/);
+  if (!m || m[1].trim().length < 4) return s;
+  const head = m[1].trim().replace(/[\s,\-–|]+$/, "");
+  const band = m[2].replace(/\d{1,3}\+? ?days? ago/gi, " ").match(/(?:^|[^\d])(\d{1,2})\s*(?:[-–]|to)\s*(\d{1,2})(?!\d)/);
+  return band && Number(band[2]) >= Number(band[1]) && Number(band[2]) <= 30 ? `${head} · ${band[1]}–${band[2]} years` : head;
+}
 export function sharesFunction(title: string, candTitles: string[], functions: string[]): boolean {
   const mine = new Set([...candTitles, ...functions].flatMap(words));
   if (!mine.size) return true;

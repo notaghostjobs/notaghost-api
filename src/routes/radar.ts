@@ -18,6 +18,7 @@ import { type ResumeProfile, type PostingProfile, type Match } from "../engine/s
 import { createHash, randomUUID } from "node:crypto";
 import { charge, withMeter } from "../engine/meter.js";
 import { screenGate, resumeBlob, yearsFromRoles, levelFromRoles, settleLevel } from "../radar/gates.js";
+import { cleanTitle } from "../radar/v2.js";
 import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict, cleanSame, sharesFunction } from "../radar/v2.js";
 import { readPostingText, DEAD_PAGE } from "../reader/enrich.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
@@ -118,7 +119,7 @@ async function livePool(): Promise<Sighting[]> {
   for (let from = 0; from < 80000; from += 1000) {
     const { data, error } = await db.from("sightings").select("id, title, company_name, location, url, posted_at, first_seen, employer_key").eq("blr", true).is("gone_at", null).order("id", { ascending: true }).range(from, from + 999);
     if (error) throw new Error(error.message);
-    rows.push(...((data ?? []) as Sighting[]));
+    rows.push(...((data ?? []) as Sighting[]).map((r) => ({ ...r, title: cleanTitle(r.title) })));
     if (!data || data.length < 1000) break;
   }
   const readable = new Set<number>();

@@ -10,6 +10,8 @@ import { readingOrder } from "../engine/pdftext.js";
 import { refileBullets, sanitizeProfile } from "../engine/refile.js";
 import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck, keepProfileFigures, dedupeProfile, polishTense, figures } from "../engine/gate.js";
 import { isOwnDocument } from "../engine/own.js";
+import { cleanTitle } from "../radar/v2.js";
+import { bandGate } from "../radar/gates.js";
 import { flagOwnership, acceptInto, withdrawFrom, gapsOf } from "../engine/told.js";
 import { resumePdf } from "../engine/pdf.js";
 import type { ResumeProfile, Rewrite } from "../engine/sharpen.js";
@@ -181,6 +183,10 @@ async function main() {
     const two: Rewrite = JSON.parse(JSON.stringify(pol.rewrite)); two.summary = "Plant leader with nine years in beverages. Brings apparel category work at Kestrel Beverages."; two.relevant = ["Fashion: category management and operations at Kestrel Beverages."];
     const fx = repairForGate(two, o2, [{ claim: 'Summary: "apparel category work at Kestrel Beverages"; relevant section: "Fashion: category management and operations at Kestrel Beverages"', reason: "the original never says apparel" }], []);
     ok("a claim quoted in two places is removed from both", !/apparel/i.test(fx.rewrite.summary) && !(fx.rewrite.relevant ?? []).some((x) => /Fashion/.test(x)) && fx.unsettled.length === 0, JSON.stringify([fx.rewrite.summary, fx.rewrite.relevant, fx.unsettled]));
+    // Radar: a board's glued title is cut back to the title, and a glued years range is kept as the band
+    ok("a glued title is cut to the title", cleanTitle("Director of Strategy & Operations39 days agoBengaluru (Korma") === "Director of Strategy & Operations" && cleanTitle("Performance / Growth Marketing ManagerBangalore - Head Offic") === "Performance / Growth Marketing Manager", cleanTitle("Performance / Growth Marketing ManagerBangalore - Head Offic"));
+    ok("a glued years range is kept as the band", cleanTitle("Backend Developer (Golang)176 days agoBangalore2-5 Full Time") === "Backend Developer (Golang) · 2–5 years" && bandGate(0.25, "", cleanTitle("Backend Developer (Golang)176 days agoBangalore2-5 Full Time")) !== null, String(bandGate(0.25, "", "Backend Developer (Golang) · 2–5 years")));
+    ok("an ordinary title is untouched", cleanTitle("Senior Manager, Category Management — Bengaluru") === "Senior Manager, Category Management — Bengaluru" && cleanTitle("Program Manager, Bangalore") === "Program Manager, Bangalore");
     // our own document, uploaded again
     const up = JSON.parse(JSON.stringify(o2)); up.roles = pol.rewrite.roles; up.summary = pol.rewrite.summary + " " + pol.rewrite.relevant.join(" ");
     ok("an upload of the document we delivered is recognised", isOwnDocument(up, pol.rewrite));
