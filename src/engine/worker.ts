@@ -44,7 +44,7 @@ export async function processResume(resumeId: string) {
     // the parse is checked against the text it came from: a bullet filed under the neighbouring employer goes back to its own
     const refiled = refileBullets(parsed, text);
     if (refiled.log.length) { parsed = refiled.profile; console.error("[resume] REFILED", resumeId, refiled.log); }
-    (parsed as any).refiled = true;
+    (parsed as any).refiled = 2;
   }
   await db.from("resumes").update({ text, parsed }).eq("id", resumeId);
   return parsed;
@@ -66,9 +66,10 @@ async function runShotInner(shotId: string, shot: any) {
     if (!res?.parsed) throw new Error("Résumé not parsed yet.");
     let profile = res.parsed as ResumeProfile;
     // profiles parsed before 6 Nov were never checked against their text; check now, and keep the corrected parse
-    if (res.text && !(profile as any).refiled) {
+    // refiled === 2 is the 13 Nov check (roles read in the text's own order); older parses are checked again on their next shot
+    if (res.text && (profile as any).refiled !== 2 && !(profile as any).read_from_page) {
       const refiled = refileBullets(profile, res.text);
-      profile = { ...refiled.profile, refiled: true } as ResumeProfile;
+      profile = { ...refiled.profile, refiled: 2 } as ResumeProfile;
       if (refiled.log.length) console.error("[shot] REFILED", shot.resume_id, refiled.log);
       await db.from("resumes").update({ parsed: profile }).eq("id", shot.resume_id).then(() => {}, () => {});
     }

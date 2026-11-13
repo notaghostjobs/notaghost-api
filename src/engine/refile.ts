@@ -26,6 +26,40 @@ function locate(hay: string, needle: string, from = 0, n = 8): number {
   return -1;
 }
 
+/** Every position of the first k words of `needle` in `hay`, for the longest k (≤ n, ≥ 4) that occurs at all. */
+function occurrences(hay: string, needle: string, n = 8): number[] {
+  const w = words(needle); if (!w.length) return [];
+  for (const k of [Math.min(n, w.length), 6, 5, 4]) {
+    if (k > w.length || k < 4) continue;
+    const key = " " + w.slice(0, k).join(" ") + " "; const out: number[] = [];
+    for (let i = hay.indexOf(key); i >= 0; i = hay.indexOf(key, i + 1)) out.push(i);
+    if (out.length) return out;
+  }
+  return [];
+}
+
+/** Each role's header position found on its own, in any order: the title's occurrence with the company named within ~200
+ *  characters of it (two roles at one employer, or one title held twice, are told apart by that); the company alone when
+ *  the title can't be found. Every role must land on its own distinct position, else null. */
+function headerPositions(hay: string, roles: ResumeProfile["roles"]): number[] | null {
+  const cands: number[][] = roles.map((r) => {
+    let c = occurrences(hay, r.title || "");
+    const co = words(r.company || "").slice(0, 2).join(" ");
+    if (c.length && co) { const near = c.filter((i) => hay.slice(Math.max(0, i - 80), i + 200).includes(" " + co + " ")); if (near.length) c = near; }
+    if (!c.length && co) { const key = " " + co + " "; for (let i = hay.indexOf(key); i >= 0; i = hay.indexOf(key, i + 1)) c.push(i); }
+    return c;
+  });
+  if (cands.some((c) => !c.length)) return null;
+  const pos: number[] = new Array(roles.length).fill(-1); const claimed = new Set<number>();
+  // roles with the fewest candidates choose first; each takes its earliest unclaimed occurrence
+  for (const i of roles.map((_, i) => i).sort((a, b) => cands[a].length - cands[b].length)) {
+    const pick = cands[i].find((p) => ![...claimed].some((q) => Math.abs(q - p) < 20));
+    if (pick == null) return null;
+    pos[i] = pick; claimed.add(pick);
+  }
+  return pos;
+}
+
 export function refileBullets(profile: ResumeProfile, text: string): { profile: ResumeProfile; log: string[] } {
   const log: string[] = [];
   if ((profile as any).layout_warning && /two columns|sidebar/i.test(String((profile as any).layout_warning))) return { profile, log: ["refile skipped: multi-column layout"] };
@@ -33,19 +67,45 @@ export function refileBullets(profile: ResumeProfile, text: string): { profile: 
   if (roles.length < 2 || !text) return { profile, log };
   const hay = " " + norm(text) + " ";
   // header position of each role: title then company (or company then title) in reading order, after the previous header
-  const heads: number[] = []; let from = 0;
+  let heads: number[] = []; let from = 0; let seqFail = "";
   for (const r of roles) {
-    const a = locate(hay, r.title || "", from, 4), b = locate(hay, r.company || "", from, 4);
+    // the title marks the header; the company alone does not (it recurs in the profile, in other roles' lines). The company
+    // only stands in when the title can't be found — or is found far from the company, which means another use of the words.
+    const a = locate(hay, r.title || "", from, 8), b = locate(hay, r.company || "", from, 4);
     let pos = -1;
-    if (a >= 0 && b >= 0) pos = Math.min(a, b); else pos = Math.max(a, b);
-    if (pos < 0 && r.company) { const i = hay.indexOf(" " + words(r.company).slice(0, 2).join(" ") + " ", from); pos = i; }
-    if (pos < 0) return { profile, log: ["refile skipped: header not found for " + r.company] };   // layout we don't understand: leave the parse alone
+    const co = words(r.company || "").slice(0, 2).join(" ");
+    const coNear = (i: number) => !co || hay.slice(Math.max(0, i - 120), i + 220).includes(" " + co + " ");
+    if (a >= 0 && (coNear(a) || b < 0)) pos = a; else if (b >= 0 && a >= 0) pos = Math.min(a, b); else pos = Math.max(a, b);
+    if (pos < 0 && co) { const i = hay.indexOf(" " + co + " ", from); pos = i; }
+    if (pos < 0) { seqFail = "header not found for " + r.company; break; }
     heads.push(pos); from = pos + 1;
   }
   // text order must match role order, or the headers were mis-located
-  for (let i = 1; i < heads.length; i++) if (heads[i] <= heads[i - 1]) return { profile, log: ["refile skipped: headers out of order"] };
+  if (!seqFail) for (let i = 1; i < heads.length; i++) if (heads[i] <= heads[i - 1]) { seqFail = "headers out of order"; break; }
+  let order = roles.map((_, i) => i);   // roles in text order
+  if (seqFail) {
+    // the roles are not in the text's order (seen 13 Nov: the parse listed Ninjacart Apr'18–Mar'21 before Fashinza Mar'21–Feb'22 and
+    // filed both roles' lines under their neighbours). Find every header on its own — the title, with the company close by to tell
+    // two similar titles apart — and read the roles in the order the page has them.
+    const found = headerPositions(hay, roles);
+    if (!found) return { profile, log: ["refile skipped: " + seqFail] };   // layout we don't understand: leave the parse alone
+    order = roles.map((_, i) => i).sort((x, y) => found[x] - found[y]);
+    heads = order.map((i) => found[i]);
+    if (order.some((v, i) => v !== i)) log.push("roles reordered to the text's order: " + order.map((i) => roles[i].company).join(" › "));
+  }
+  // the text must actually be in reading order: between two role headers there is that role's work. When the headers sit
+  // back to back (a PDF whose stream lists every header first, then every bullet — seen 13 Nov), position says nothing
+  // about ownership, and moving lines by it would scramble the parse. Leave it alone.
+  let clustered = 0;
+  for (let i = 0; i + 1 < heads.length; i++) {
+    const r = roles[order[i]]; const own = words(r.title).length + words(r.company).length + words(r.start + " " + r.end).length + 6;
+    const between = hay.slice(heads[i], heads[i + 1]).split(" ").filter(Boolean).length;
+    if (between < own + 8) clustered++;   // a role with no lines of its own looks the same; two of those in a row is rare enough that skipping is the safe side
+  }
+  if (clustered >= 2 || (clustered === 1 && heads.length <= 3)) return { profile, log: [`refile skipped: ${clustered} role header(s) back to back — text is not in reading order`] };
   const segOf = (pos: number) => { let s = 0; for (let i = 0; i < heads.length; i++) if (pos >= heads[i]) s = i; return s; };
   const next: ResumeProfile = JSON.parse(JSON.stringify(profile));
+  next.roles = order.map((i) => next.roles[i]);
   const moved: { to: number; pos: number; b: string }[] = [];
   next.roles.forEach((r, i) => {
     const keep: string[] = [];
@@ -53,7 +113,7 @@ export function refileBullets(profile: ResumeProfile, text: string): { profile: 
       const pos = locate(hay, b, heads[0]);
       if (pos < 0) { keep.push(b); continue; }
       const s = segOf(pos);
-      if (s === i) keep.push(b); else { moved.push({ to: s, pos, b }); log.push(`bullet refiled: ${r.company} → ${roles[s].company}: ${b.slice(0, 60)}`); }
+      if (s === i) keep.push(b); else { moved.push({ to: s, pos, b }); log.push(`bullet refiled: ${r.company} → ${next.roles[s].company}: ${b.slice(0, 60)}`); }
     }
     r.bullets = keep;
   });

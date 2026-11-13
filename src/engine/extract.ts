@@ -25,8 +25,52 @@ export async function extractText(buf: Buffer, filename: string): Promise<{ text
     const r = await parser.getText();
     let ours = false;
     try { const info: any = await parser.getInfo(); const meta = JSON.stringify(info?.info ?? info ?? {}).toLowerCase(); ours = /ghosted|notaghost/.test(meta); } catch {}
-    return { text: clean(r.text), pages: r.total, ours };
+    // the stream order of a PDF is not always the reading order (a Chromium-printed résumé put all five role headers first,
+    // then all their bullets, 13 Nov): the page is re-read top to bottom, and that order is used when the page is one column
+    let text = clean(r.text);
+    try { const o = await readingOrder(buf); if (o) text = o; } catch { /* stream order it is */ }
+    return { text, pages: r.total, ours };
   } finally { await parser.destroy(); }
+}
+
+/** The page's text top to bottom, left to right — lines rebuilt from glyph positions. Null when a page reads as two
+ *  columns (long text side by side on many lines), where top-to-bottom would interleave them; stream order stays then. */
+export async function readingOrder(buf: Buffer): Promise<string | null> {
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true, disableFontFace: true }).promise;
+  const pages: string[] = [];
+  try {
+    for (let p = 1; p <= doc.numPages; p++) {
+      const page = await doc.getPage(p);
+      const vp = page.getViewport({ scale: 1 });
+      const tc = await page.getTextContent();
+      type It = { x: number; y: number; w: number; h: number; s: string };
+      const items: It[] = tc.items.filter((i: any) => typeof i.str === "string" && i.str.trim()).map((i: any) => ({ x: i.transform[4], y: i.transform[5], w: i.width, h: Math.abs(i.transform[3]) || i.height || 10, s: i.str }));
+      items.sort((a, b) => (b.y - a.y) || (a.x - b.x));
+      // lines: items whose baselines sit within half a line of each other
+      const lines: It[][] = [];
+      for (const it of items) { const L = lines[lines.length - 1]; if (L && Math.abs(L[0].y - it.y) <= Math.max(2, L[0].h * 0.5)) L.push(it); else lines.push([it]); }
+      let wide = 0, left = 0, right = 0;
+      const out: string[] = [];
+      for (const L of lines) {
+        L.sort((a, b) => a.x - b.x);
+        // where lines begin: a sidebar layout has many lines starting at the margin and many starting a third of the way in
+        if (L[0].x < vp.width * 0.15) left++; else if (L[0].x > vp.width * 0.2 && L[0].x + L.reduce((n, i) => n + i.w, 0) < vp.width * 0.98) right++;
+        let s = ""; let endX = -1; let longLeft = false;
+        for (const it of L) {
+          const gap = endX < 0 ? 0 : it.x - endX;
+          if (endX >= 0 && gap > vp.width * 0.08) { if (longLeft && it.s.trim().length > 25) wide++; s += "\t"; }
+          else if (endX >= 0 && gap > it.h * 0.15) s += " ";
+          s += it.s; endX = it.x + it.w; longLeft = longLeft || s.trim().length > 25;
+        }
+        out.push(s.replace(/[ \t]+$/, ""));
+      }
+      if (lines.length >= 8 && (wide / lines.length > 0.15 || (left / lines.length > 0.25 && right / lines.length > 0.25))) return null;   // two columns or a sidebar: not ours to reorder
+      pages.push(out.join("\n"));
+    }
+  } finally { await doc.destroy().catch(() => {}); }
+  const text = pages.map((t, i) => t + (i < pages.length - 1 ? `\n\n-- ${i + 1} of ${pages.length} --\n\n` : "")).join("");
+  return clean(text) || null;
 }
 
 function clean(s: string) {
