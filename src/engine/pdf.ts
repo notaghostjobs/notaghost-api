@@ -34,8 +34,15 @@ function browser() {
     const candidates = [process.env.CHROMIUM_PATH, "/opt/pw-browsers/chromium", "/usr/bin/chromium", "/usr/bin/chromium-browser"].filter(Boolean) as string[];
     const executablePath = candidates.find((p) => existsSync(p)); // undefined -> playwright default (Docker image)
     browserP = chromium.launch({ headless: true, executablePath, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+    // a browser that dies must not be handed out again (13 Nov: one crash failed every document after it until a restart)
+    browserP.then((b) => b.on("disconnected", () => { browserP = null; })).catch(() => { browserP = null; });
   }
   return browserP;
+}
+/** A page on a live browser: if the one we hold has gone, start another and try once more. */
+async function freshPage() {
+  try { const b = await browser(); if (!b.isConnected()) throw new Error("browser gone"); return await b.newPage(); }
+  catch { browserP = null; return await (await browser()).newPage(); }
 }
 
 // inline SVG icons (currentColor, 1em)
@@ -164,8 +171,7 @@ function firstWords(t: string, n: number): string {
 export async function htmlToPdf(html: string, opts: { target?: number; floor?: number } = {}): Promise<{ pdf: Buffer; pages: number }> {
   const TARGET = opts.target ?? 0;          // 0 = natural page count (other documents)
   const FLOOR = opts.floor ?? 0.84;         // smallest type scale that still reads as the same design
-  const b = await browser();
-  const page = await b.newPage();
+  const page = await freshPage();
   try {
     await page.setContent(html, { waitUntil: "load" });
     // passed as a string: tsx/esbuild inject helpers into function bodies that don't exist in the page

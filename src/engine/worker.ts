@@ -68,6 +68,18 @@ export async function runShot(shotId: string) {
   if (plan?.product === "radar") { await charge(shot.user_id, plan.created_at ?? new Date().toISOString(), "sharpen:radar", () => runShotInner(shotId, shot)); return; }
   await withMeter({ tag: `sharpen:${shot.product ?? "sharpen"}`, user: shot.user_id }, () => runShotInner(shotId, shot));
 }
+/** Shots a restart left behind: "running" or "queued" for more than ten minutes will never finish. They are closed as
+ *  failed and the Sharpen returned, so nobody watches a timer that cannot end. Runs at boot. */
+export async function unstickShots(): Promise<number> {
+  const cutoff = new Date(Date.now() - 10 * 60e3).toISOString();
+  const { data } = await db.from("shots").select("id, plan_id").in("status", ["running", "queued"]).lt("created_at", cutoff).limit(50);
+  for (const s of data ?? []) {
+    await db.from("shots").update({ status: "failed", error: "We were interrupted while working on this one. Nothing was used — try again.", output: { detail: "closed at boot: left running by a restart" } }).eq("id", s.id);
+    await db.rpc("refund_shot", { p_plan: s.plan_id }).then(() => {}, () => {});
+  }
+  return (data ?? []).length;
+}
+
 /** The contact line's links as URLs. A résumé often shows "LinkedIn Profile" as the words of a link: the parse copies the
  *  words; the URL behind them (from the PDF's link annotations) replaces them, and any embedded profile link not in the
  *  contact line is added. */
@@ -111,11 +123,30 @@ export async function checkedProfile(resumeId: string, tag = "shot"): Promise<Re
   return profile;
 }
 
+/** No shot runs past this: a step that never returns must not leave someone watching a timer. */
+const SHOT_LIMIT_MS = 6 * 60e3;
 async function runShotInner(shotId: string, shot: any) {
+  let timer: NodeJS.Timeout | undefined;
+  const limit = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error("shot exceeded its time limit")), SHOT_LIMIT_MS); });
+  try { await Promise.race([runShotBody(shotId, shot), limit]); }
+  catch (e) {
+    const { data: cur } = await db.from("shots").select("status, output").eq("id", shotId).maybeSingle();
+    if (cur?.status === "running") {
+      console.error("[shot] TIME LIMIT", shotId, (cur.output as any)?.stage);
+      await db.from("shots").update({ status: "failed", error: "This one took too long and we stopped it. Nothing was used — try again.", output: { detail: `${e instanceof Error ? e.message : e} at stage: ${(cur.output as any)?.stage ?? "?"}` } }).eq("id", shotId);
+      await db.rpc("refund_shot", { p_plan: shot.plan_id }).then(() => {}, () => {});
+    }
+  } finally { if (timer) clearTimeout(timer); }
+}
+async function runShotBody(shotId: string, shot: any) {
   await db.from("shots").update({ status: "running" }).eq("id", shotId);
   try {
+    // where the shot is, on its own row: a shot that stops is then seen to have stopped somewhere
+    const stage = (st: string) => db.from("shots").update({ output: { stage: st, at: new Date().toISOString() } }).eq("id", shotId).eq("status", "running").then(() => {}, () => {});
+    await stage("résumé");
     const profile = await checkedProfile(shot.resume_id);
     if (!profile) throw new Error("Résumé not parsed yet.");
+    await stage("posting");
 
     // posting: fetch or pasted; cache by url hash
     const input = shot.input as { posting_url?: string; posting_text?: string; preview_id?: string; fresh?: boolean };
@@ -156,7 +187,9 @@ async function runShotInner(shotId: string, shot: any) {
     // rewrite may state it (verbatim, as the vetted line), the verifier and the number rule accept it, and nothing else changes
     const told = pre ? addedFacts(pre.matches) : [];
     const source: ResumeProfile = told.length ? { ...profile, candidate_added_facts: told } : profile;
-    const out = await runSharpen(source, postingText, undefined, pre, undefined, pre && input.preview_id ? takeDraft(draftKey(input.preview_id, pre.matches, profile)) : null);
+    await stage("writing");
+    const out = await runSharpen(source, postingText, (st) => { void stage("writing: " + st); }, pre, undefined, pre && input.preview_id ? takeDraft(draftKey(input.preview_id, pre.matches, profile)) : null);
+    await stage("gate");
     if (postingId) await db.from("postings").update({ company: out.posting.company, title: out.posting.title, parsed: out.posting }).eq("id", postingId);
 
     // THE DELIVERY GATE (master rule 15). No model here: the finished document against the candidate's own résumé, line by
@@ -177,6 +210,7 @@ async function runShotInner(shotId: string, shot: any) {
       }
     }
     (out as any).gate = { ok: true, repaired: gateLog };
+    await stage("pdf");
 
     const pdf = await resumePdf(out.rewrite, profile);
     const pdf_path = `${shot.user_id}/${shotId}.pdf`;
@@ -192,7 +226,7 @@ async function runShotInner(shotId: string, shot: any) {
     await db.from("shots").update({
       status: "done", posting_id: postingId, done_at: new Date().toISOString(),
       output: { ...out, before, after, promised, pdf_path, told: told.length ? pre!.matches.filter((m) => m.told).map((m) => ({ requirement: m.requirement, line: m.line, fact: m.evidence })) : undefined },
-    }).eq("id", shotId);
+    }).eq("id", shotId).eq("status", "running");
     void notifyDocumentReady(shot.user_id, shotId, { title: out.posting?.title ?? pre?.posting?.title ?? "the role", company: out.posting?.company ?? pre?.posting?.company ?? "", before, after, pdf_path, filename: `${String((profile as any)?.name ?? "resume").replace(/\s+/g, "-")}-${String(out.posting?.company ?? "sharpened").replace(/\s+/g, "-")}.pdf` });
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);
