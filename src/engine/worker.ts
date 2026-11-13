@@ -256,6 +256,8 @@ async function runShotBody(shotId: string, shot: any) {
     // wording that changes no fact (a finished role in the past tense), kept only if the document still passes the same gate
     let polished = 0;
     { const pol = polishTense(out.rewrite); if (pol.changed && deliveryGate(pol.rewrite, profile, [], toldLines).ok) { out.rewrite = pol.rewrite; polished = pol.changed; } }
+    // what the verifier flagged has been taken out by the gate (it would have held the document otherwise): the record says so
+    if (gateLog.length && out.verification && out.verification.ok === false) out.verification = { ...out.verification, ok: true, problems: [], settled: out.verification.problems } as any;
     (out as any).gate = { ok: true, repaired: [...gateLog, ...profileLog], reordered: ordered.moved, polished };
     // the evidence record: where every line of the document comes from (kept with the shot; the page shows it)
     (out as any).evidence = evidenceRecord(out.rewrite, profile, out.matches as any);

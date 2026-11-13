@@ -96,7 +96,11 @@ export function repairForGate(rw0: Rewrite, orig: ResumeProfile, problems: { cla
   // what the verifier could not support: the line goes, unless it is the candidate's own wording in its own role
   const unsettled: { claim: string; reason: string }[] = [];
   for (const p of problems) {
-    const quoted = (String(p.claim).match(/[“"]([^”"]{12,})[”"]/) ?? [])[1] ?? String(p.claim).replace(/^[^:]{0,60}:\s*/, "");
+    // a claim can quote the same unsupported fact in two places ("summary: “…”; relevant: “…”"): every quoted place is dealt with
+    const quotes = [...String(p.claim).matchAll(/[“"]([^”"]{12,})[”"]/g)].map((m) => m[1]);
+    if (!quotes.length) quotes.push(String(p.claim).replace(/^[^:]{0,60}:\s*/, ""));
+    let settled = true;
+    for (const quoted of quotes) {
     let hit = false, ownLine = false;
     for (const r of rw.roles) {
       r.bullets = r.bullets.filter((b) => {
@@ -112,7 +116,9 @@ export function repairForGate(rw0: Rewrite, orig: ResumeProfile, problems: { cla
     const sents = String(rw.summary ?? "").match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) ?? [];
     const keep = sents.filter((s) => !(covered(quoted, s) >= 0.8 || (content(s).length >= 4 && covered(s, quoted) >= 0.8)));
     if (keep.length !== sents.length && keep.length) { rw.summary = keep.join("").trim(); hit = true; log.push(`unsupported sentence removed from the summary: ${quoted.slice(0, 60)}`); }
-    if (!(hit || ownLine)) unsettled.push(p);
+    if (!(hit || ownLine)) settled = false;
+    }
+    if (!settled) unsettled.push(p);
   }
   // the candidate's own lines, back where they wrote them
   for (const o of orig.roles ?? []) {
@@ -230,7 +236,8 @@ export function keepProfileFigures(rw: Rewrite, orig: ResumeProfile): string[] {
     const have = new Set(figures(docText(rw)));
     const gone = figures(s).filter((f) => !have.has(f));
     if (!gone.length) continue;
-    rw.relevant = [...(rw.relevant ?? []), s];
+    // the profile block holds three lines; past that the sentence joins the summary
+    if ((rw.relevant ?? []).length < 3) rw.relevant = [...(rw.relevant ?? []), s]; else rw.summary = `${String(rw.summary ?? "").trim()} ${s}`.trim();
     log.push(`figure kept (${gone.join(", ")}): ${s.slice(0, 70)}`);
   }
   return log;
