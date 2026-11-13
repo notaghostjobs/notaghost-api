@@ -60,6 +60,36 @@ function headerPositions(hay: string, roles: ResumeProfile["roles"]): number[] |
   return pos;
 }
 
+/** A sub-heading inside a role ("Responsibilities across the tenure:", "Highlights:", "Key achievements"). Never a bullet. */
+export const LABEL = /^(?:key\s+)?(?:responsibilities|highlights|achievements|accomplishments|duties|roles?\s*(?:&|and)\s*responsibilities)\b[^:]{0,30}:?\s*/i;
+
+/** Deterministic tidy of a parse, before anything reads it: private-use glyphs and leading bullet marks gone, sub-heading
+ *  labels stripped off the front of a line (or the line dropped if that is all it was), education lines out of the roles,
+ *  exact duplicates within a role kept once. Nothing reworded. */
+export function sanitizeProfile(profile: ResumeProfile): { profile: ResumeProfile; log: string[] } {
+  const log: string[] = [];
+  const next: ResumeProfile = JSON.parse(JSON.stringify(profile));
+  const edu = (next.education ?? []).flatMap((e) => [e.school, e.degree]).map((x) => norm(x || "")).filter((x) => x.length > 6);
+  for (const r of next.roles ?? []) {
+    const seen = new Set<string>();   // within the role: two roles may genuinely carry the same line (seen on a real résumé)
+    const keep: string[] = [];
+    for (const raw of r.bullets ?? []) {
+      let b = String(raw ?? "").replace(/[\ue000-\uf8ff\ufffd]/g, " ").replace(/^[\s•●▪◦‣■□➢➤►▶·*\-–—]+/, "").replace(/\s+/g, " ").trim();
+      const m = b.match(LABEL);
+      if (m) { b = b.slice(m[0].length).replace(/^[\s•●▪◦‣■□➢➤►▶·*\-–—]+/, "").trim(); log.push(`label stripped in ${r.company}: ${String(raw).slice(0, 50)}`); }
+      if (words(b).length < 3) { if (raw) log.push(`line dropped in ${r.company}: ${String(raw).slice(0, 50)}`); continue; }
+      const n = norm(b);
+      if (edu.some((e) => n.includes(e))) { log.push(`education line out of ${r.company}: ${b.slice(0, 50)}`); continue; }
+      const key = n.split(" ").slice(0, 12).join(" ");
+      if (seen.has(key)) { log.push(`duplicate dropped in ${r.company}: ${b.slice(0, 50)}`); continue; }
+      seen.add(key); keep.push(b);
+    }
+    // a cut-off copy of a longer line in the same role (an earlier recovery left one): the longer line stands
+    r.bullets = keep.filter((b, i) => { const n = norm(b); return !keep.some((o, j) => j !== i && norm(o).length > n.length && norm(o).startsWith(n) && words(n).length >= 6) || (log.push(`cut-off copy dropped in ${r.company}: ${b.slice(0, 50)}`), false); });
+  }
+  return { profile: next, log };
+}
+
 export function refileBullets(profile: ResumeProfile, text: string): { profile: ResumeProfile; log: string[] } {
   const log: string[] = [];
   if ((profile as any).layout_warning && /two columns|sidebar/i.test(String((profile as any).layout_warning))) return { profile, log: ["refile skipped: multi-column layout"] };
@@ -120,10 +150,9 @@ export function refileBullets(profile: ResumeProfile, text: string): { profile: 
   for (const m of moved.sort((x, y) => x.pos - y.pos)) next.roles[m.to].bullets.push(m.b);
   // a bullet's own role lost it entirely? lines in the stretch that nothing covers come back verbatim (from the raw text)
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const all = " " + norm(JSON.stringify(next)) + " ";
   // a section heading ("VENTURES", "E X P E R T I S E", "SKILLS & TOOLS"): no lowercase, short; the experience block ends at the first one after the last role
   const isHeading = (l: string) => { const t = l.replace(/\s+/g, ""); return t.length >= 3 && t.length <= 30 && /^[A-Z][A-Z&\/]*$/.test(t); };
-  const dated = (l: string) => /(?:(?:19|20)\d\d|['’]\d\d)\s*(?:[–-]|to)\s*(?:[A-Za-z]{3,9}\.?\s*)?['’]?(?:(?:19|20)\d\d|\d\d\b|present)/i.test(l);
+  const dated = (l: string) => /(?:(?:19|20)\d\d|['’ʼ′`]\d\d)\s*(?:[–—-]|to)\s*(?:[A-Za-z]{3,9}\.?\s*)?['’ʼ′`]?(?:(?:19|20)\d\d|\d\d\b|present|now|current)/i.test(l);
   let expEnd = Infinity;
   for (const l of lines) { const p = locate(hay, l, 0, 4); if (p > heads[heads.length - 1] && isHeading(l)) { expEnd = p; break; } }
   if (expEnd === Infinity) { for (const l of lines) { if (!isHeading(l)) continue; const p = " " + norm(l.replace(/\s+/g, "")) + " "; const i = hay.indexOf(p); if (i > heads[heads.length - 1]) { expEnd = i; break; } } }
@@ -136,26 +165,30 @@ export function refileBullets(profile: ResumeProfile, text: string): { profile: 
     const sents: { text: string; glyph: boolean }[] = []; let cur = ""; let curGlyph = false;
     const flush = () => { if (cur) sents.push({ text: cur, glyph: curGlyph }); cur = ""; curGlyph = false; };
     for (const l of lines) {
-      if (isHeading(l) || dated(l) || /^-- \d+ of \d+ --$/.test(l)) { flush(); continue; }
-      const p = locate(hay, l, 0, 4); if (p < start || p >= end) { flush(); continue; }
+      if (isHeading(l) || dated(l) || /^-- (?:\d+ of \d+|sidebar) --$/.test(l) || (LABEL.test(l) && l.length < 60)) { flush(); continue; }   // a sub-heading label starts nothing
+      const p = locate(hay, l, start, 4); if (p < start || p >= end) { flush(); continue; }   // searched from this role on: the same line under an earlier role must not hide this one
       const g = GLYPH.test(l); if (g) flush();
       cur = cur ? cur + " " + l.replace(GLYPH, "") : l.replace(GLYPH, ""); curGlyph = curGlyph || g;
       if (/[.!?]$/.test(l)) flush();
     }
     flush();
     const found: string[] = [];
+    const mine = " " + norm(JSON.stringify(r.bullets ?? [])) + " ";
     for (const { text: s, glyph } of sents) {
       if (glyphs && !glyph) continue;
       const w = words(s); if (w.length < 7) continue;                                   // headers, one-word lines
       if (norm(s).includes(norm(r.company)) && w.length < 10) continue;                  // the company line itself
       if (norm(s).includes(norm(r.title))) continue;                                      // the title line
-      if (all.includes(" " + w.slice(0, 6).join(" ") + " ")) continue;                   // already somewhere in the parse
+      if (next.roles.some((o) => o !== r && words(o.title).length >= 2 && norm(s).includes(norm(o.title)))) continue;   // another role's header
+      if (mine.includes(" " + w.slice(0, 6).join(" ") + " ")) continue;                  // already under this role (the same line under another role is that role's own copy)
       if (/@|\bemail\b|\bmobile\b|\bphone\b/i.test(s)) continue;                        // contact lines of a jumbled layout
+      if (LABEL.test(s)) continue;                                                           // "Responsibilities across the tenure:" — a label, not a line
+      if (found.some((f) => norm(f) === norm(s))) continue;                              // the same line seen twice in the raw lines (an earlier role's copy, located here)
       found.push(s.replace(/\s+/g, " "));
     }
     // more than a handful of uncovered sentences means the text is not laid out the way we read it (columns, sidebars):
     // then nothing is recovered, because we cannot tell whose lines they are
-    if (found.length > 5) { log.push(`recovery skipped for ${r.company}: ${found.length} uncovered lines (layout)`); return; }
+    if (found.length > 5) { log.push(`recovery skipped for ${r.company}: ${found.length} uncovered lines (layout): ${found.map((f) => f.slice(0, 40)).join(" | ")}`); return; }
     for (const s of found) { r.bullets.push(s); log.push(`bullet recovered: ${r.company}: ${s.slice(0, 60)}`); }
   });
   return { profile: next, log };

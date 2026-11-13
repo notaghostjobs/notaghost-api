@@ -3,6 +3,7 @@ import { notifyDocumentReady } from "../routes/whatsapp.js";
 import { db } from "../lib/db.js";
 import { extractText, fetchPosting } from "./extract.js";
 import { parseResume, runSharpen, type ResumeProfile, type PostingProfile, type Match } from "./sharpen.js";
+import { sanitizeProfile } from "./refile.js";
 import { resumePdf } from "./pdf.js";
 import { createHash } from "node:crypto";
 import { fit, target } from "../engine/fit.js";
@@ -42,8 +43,12 @@ export async function processResume(resumeId: string) {
     const layout = layoutWarning(text, pages);
     (parsed as any).layout_warning = layout;
     // the parse is checked against the text it came from: a bullet filed under the neighbouring employer goes back to its own
+    const tidy = sanitizeProfile(parsed);
+    if (tidy.log.length) { parsed = tidy.profile; console.error("[resume] SANITIZED", resumeId, tidy.log); }
     const refiled = refileBullets(parsed, text);
     if (refiled.log.length) { parsed = refiled.profile; console.error("[resume] REFILED", resumeId, refiled.log); }
+    // lines that met after the refile (a cut-off copy and its full line) are tidied once more
+    const tidy2 = sanitizeProfile(parsed); if (tidy2.log.length) { parsed = tidy2.profile; console.error("[resume] SANITIZED", resumeId, tidy2.log); }
     (parsed as any).refiled = 2;
   }
   await db.from("resumes").update({ text, parsed }).eq("id", resumeId);
@@ -68,8 +73,9 @@ async function runShotInner(shotId: string, shot: any) {
     // profiles parsed before 6 Nov were never checked against their text; check now, and keep the corrected parse
     // refiled === 2 is the 13 Nov check (roles read in the text's own order); older parses are checked again on their next shot
     if (res.text && (profile as any).refiled !== 2 && !(profile as any).read_from_page) {
-      const refiled = refileBullets(profile, res.text);
-      profile = { ...refiled.profile, refiled: 2 } as ResumeProfile;
+      const tidy = sanitizeProfile(profile); if (tidy.log.length) console.error("[shot] SANITIZED", shot.resume_id, tidy.log);
+      const refiled = refileBullets(tidy.profile, res.text);
+      profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 2 } as ResumeProfile;
       if (refiled.log.length) console.error("[shot] REFILED", shot.resume_id, refiled.log);
       await db.from("resumes").update({ parsed: profile }).eq("id", shot.resume_id).then(() => {}, () => {});
     }

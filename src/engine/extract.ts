@@ -33,48 +33,68 @@ export async function extractText(buf: Buffer, filename: string): Promise<{ text
   } finally { await parser.destroy(); }
 }
 
-/** The page's text top to bottom, left to right — lines rebuilt from glyph positions. Null when a page reads as two
- *  columns (long text side by side on many lines), where top-to-bottom would interleave them; stream order stays then. */
+/** The page's text in reading order — lines rebuilt from glyph positions, top to bottom, left to right. A page laid out
+ *  in two columns (a sidebar beside the main column) is read one column at a time: the main column of every page first,
+ *  in page order, so a role that continues on the next page keeps its lines; the sidebars after. Null when the page
+ *  cannot be read this way at all. */
 export async function readingOrder(buf: Buffer): Promise<string | null> {
   const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const doc = await pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true, disableFontFace: true }).promise;
-  const pages: string[] = [];
+  type It = { x: number; y: number; w: number; h: number; s: string };
+  const mains: string[] = [], sides: string[] = [];
+  let anyColumns = false;
+  // lines: items whose baselines sit within half a line of each other, each line left to right, gaps kept as tabs
+  const toLines = (items: It[], width: number) => {
+    items.sort((a, b) => (b.y - a.y) || (a.x - b.x));
+    const lines: It[][] = [];
+    for (const it of items) { const L = lines[lines.length - 1]; if (L && Math.abs(L[0].y - it.y) <= Math.max(2, L[0].h * 0.5)) L.push(it); else lines.push([it]); }
+    return lines.map((L) => {
+      L.sort((a, b) => a.x - b.x);
+      let s = ""; let endX = -1;
+      for (const it of L) {
+        const gap = endX < 0 ? 0 : it.x - endX;
+        if (endX >= 0 && gap > width * 0.08) s += "\t"; else if (endX >= 0 && gap > it.h * 0.15) s += " ";
+        s += it.s; endX = it.x + it.w;
+      }
+      return s.replace(/[ \t]+$/, "");
+    });
+  };
   try {
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p);
       const vp = page.getViewport({ scale: 1 });
       const tc = await page.getTextContent();
-      type It = { x: number; y: number; w: number; h: number; s: string };
       const items: It[] = tc.items.filter((i: any) => typeof i.str === "string" && i.str.trim()).map((i: any) => ({ x: i.transform[4], y: i.transform[5], w: i.width, h: Math.abs(i.transform[3]) || i.height || 10, s: i.str }));
+      if (!items.length) { mains.push(""); sides.push(""); continue; }
+      // where lines begin: a sidebar layout has many lines starting at the margin and many starting a fifth of the way in or later
+      const probe = toLines([...items], vp.width);   // for the count only
       items.sort((a, b) => (b.y - a.y) || (a.x - b.x));
-      // lines: items whose baselines sit within half a line of each other
-      const lines: It[][] = [];
-      for (const it of items) { const L = lines[lines.length - 1]; if (L && Math.abs(L[0].y - it.y) <= Math.max(2, L[0].h * 0.5)) L.push(it); else lines.push([it]); }
-      let wide = 0, left = 0, right = 0;
-      const out: string[] = [];
-      for (const L of lines) {
-        L.sort((a, b) => a.x - b.x);
-        // where lines begin: a sidebar layout has many lines starting at the margin and many starting a third of the way in
-        if (L[0].x < vp.width * 0.15) left++; else if (L[0].x > vp.width * 0.2 && L[0].x + L.reduce((n, i) => n + i.w, 0) < vp.width * 0.98) right++;
-        let s = ""; let endX = -1; let longLeft = false;
-        for (const it of L) {
-          const gap = endX < 0 ? 0 : it.x - endX;
-          if (endX >= 0 && gap > vp.width * 0.08) { if (longLeft && it.s.trim().length > 25) wide++; s += "\t"; }
-          else if (endX >= 0 && gap > it.h * 0.15) s += " ";
-          s += it.s; endX = it.x + it.w; longLeft = longLeft || s.trim().length > 25;
-        }
-        out.push(s.replace(/[ \t]+$/, ""));
-      }
-      if (lines.length >= 8 && (wide / lines.length > 0.15 || (left / lines.length > 0.25 && right / lines.length > 0.25))) return null;   // two columns or a sidebar: not ours to reorder
-      pages.push(out.join("\n"));
+      const starts: number[] = []; { const ls: It[][] = []; for (const it of items) { const L = ls[ls.length - 1]; if (L && Math.abs(L[0].y - it.y) <= Math.max(2, L[0].h * 0.5)) L.push(it); else ls.push([it]); } for (const L of ls) starts.push(Math.min(...L.map((i) => i.x))); }
+      const left = starts.filter((x) => x < vp.width * 0.15).length, right = starts.filter((x) => x > vp.width * 0.2 && x < vp.width * 0.6).length;
+      const columns = probe.length >= 8 && left / starts.length > 0.25 && right / starts.length > 0.25;
+      if (!columns) { mains.push(toLines(items, vp.width).join("\n")); sides.push(""); continue; }
+      anyColumns = true;
+      // the split sits just before the second column's usual start; each item goes by where it begins
+      const rs = starts.filter((x) => x > vp.width * 0.2 && x < vp.width * 0.6).sort((a, b) => a - b);
+      const split = rs[Math.floor(rs.length * 0.1)] - 4;
+      const L = items.filter((i) => i.x < split), R = items.filter((i) => i.x >= split);
+      const lt = toLines(L, vp.width), rt = toLines(R, vp.width);
+      const lc = lt.join("").length, rc = rt.join("").length;
+      // the main column is the one with more text; the other is the sidebar
+      if (rc >= lc) { mains.push(rt.join("\n")); sides.push(lt.join("\n")); } else { mains.push(lt.join("\n")); sides.push(rt.join("\n")); }
     }
   } finally { await doc.destroy().catch(() => {}); }
-  const text = pages.map((t, i) => t + (i < pages.length - 1 ? `\n\n-- ${i + 1} of ${pages.length} --\n\n` : "")).join("");
+  const n = mains.length;
+  const body = mains.map((t, i) => t + (i < n - 1 ? `\n\n-- ${i + 1} of ${n} --\n\n` : "")).join("");
+  const side = sides.filter(Boolean).join("\n\n");
+  const text = anyColumns && side ? `${body}\n\n-- sidebar --\n\n${side}` : body;
   return clean(text) || null;
 }
 
 function clean(s: string) {
-  return s.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  // a résumé font's own bullet comes out as a private-use character (\ue12c and the like): no other font can draw it,
+  // and it would ride into the document as a box
+  return s.replace(/[\ue000-\uf8ff\ufffd]/g, " ").replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** Fetch a posting URL and reduce it to readable text. Pasted text goes straight through. */
