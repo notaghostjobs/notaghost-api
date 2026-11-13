@@ -1,4 +1,6 @@
-import { checkedProfile } from "../engine/worker.js";
+import { checkedProfile, processResume } from "../engine/worker.js";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 // Radar (v2, 10 Nov): the live Bengaluru openings that are this person's function, level and years — discovered on facts.
 // Flow: profile → what they're a fit for (one call) → title match over the live sightings (₹0) → the screen-out gates on
 // the posting's own text (₹0) → one question to the model per posting, "same function: yes / adjacent / no" (twelve a
@@ -9,6 +11,7 @@ import { z } from "zod";
 import { db, type User } from "../lib/db.js";
 import { requireUser, createSession } from "../lib/auth.js";
 import { sharpenProbe, SHARPEN_FLOW_KEY } from "../probe/sharpen.js";
+import { openProbe, OPEN_FLOW_KEY } from "../probe/open.js";
 import { isRadarTester as isTester } from "../lib/testers.js";
 import { json, MODEL } from "../engine/claude.js";
 import { type ResumeProfile, type PostingProfile, type Match } from "../engine/sharpen.js";
@@ -611,6 +614,22 @@ export async function panelLast(): Promise<(PanelResult & { reason?: string }) |
  *  the list — through the app's own request handler, and times it. A run that does not reach "done" inside six minutes,
  *  a reveal without its three employers, or a list line without a title, a reason or an employer page is a failure.
  *  (A run sat on an old "questions" status for seven minutes while a tester watched the scan; nothing had checked that.) */
+export const TEST_RESUME = "ghosted-test-resume-v1.pdf";
+/** The probe account's résumé: the fixed test file, read by the normal upload pipeline. Written once; reused while it is there. */
+export async function fixedTestResume(userId: string): Promise<{ id: string } | null> {
+  const { data: have } = await db.from("resumes").select("id, parsed, filename").eq("user_id", userId).eq("is_current", true).maybeSingle();
+  if (have?.filename === TEST_RESUME && (have.parsed as any)?.roles?.length) return { id: have.id };
+  const buf = await readFile(join(process.cwd(), "seed", "test-resume-v1.pdf"));
+  const id = randomUUID(); const path = `probe/${id}.pdf`;
+  const up = await db.storage.from("resumes").upload(path, buf, { contentType: "application/pdf", upsert: true });
+  if (up.error) throw new Error(up.error.message);
+  await db.from("resumes").delete().eq("user_id", userId);
+  const ins = await db.from("resumes").insert({ id, user_id: userId, storage_path: path, filename: TEST_RESUME, is_current: true }).select("id").single();
+  if (ins.error || !ins.data) throw new Error(ins.error?.message ?? "not written");
+  const parsed = await processResume(id);
+  if (!(parsed as any)?.roles?.length) throw new Error("the test résumé did not read");
+  return { id };
+}
 export const PROBE_PHONE = "+910000000000";   // stored like every other number (country code + ten digits); testers.ts matches the last ten
 export type FlowProbe = { at: string; ok: boolean; ms: number; status: string; chance: number; taste: string[]; items: number; problems: string[] };
 export async function flowProbe(app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }): Promise<FlowProbe> {
@@ -619,18 +638,10 @@ export async function flowProbe(app: { request: (input: string, init?: RequestIn
   try {
     const { data: u, error: uerr } = await db.from("users").upsert({ phone: PROBE_PHONE, last_seen_at: new Date().toISOString() }, { onConflict: "phone" }).select("id").single();
     if (!u) { problems.push(`probe account could not be created: ${uerr?.message ?? "no row"}`); return out("none"); }
-    // the résumé: the panel's most recent real one, copied under the probe account
-    const { data: rows } = await db.from("resumes").select("id, parsed, text, storage_path, filename").not("parsed", "is", null).order("created_at", { ascending: false }).not("storage_path", "like", "probe/%").limit(20);
-    // the copy stands on the same file and the same checked parse a real run would: a parse that cannot be verified is not probed with
-    let src: any = null;
-    for (const r of (rows ?? []).filter((r: any) => r.parsed?.roles?.length && r.parsed?.name).slice(0, 4)) {
-      const checked = await checkedProfile(r.id, "probe").catch(() => null);
-      if (checked && (checked as any).parse_check?.verified !== false) { src = { ...r, parsed: checked }; break; }
-    }
-    if (!src) { problems.push("no résumé to probe with"); return out("none"); }
-    await db.from("resumes").delete().eq("user_id", u.id);   // one probe résumé at a time
-    const { data: res, error: rerr } = await db.from("resumes").insert({ id: randomUUID(), user_id: u.id, storage_path: src.storage_path, filename: src.filename ?? "probe.pdf", parsed: src.parsed, text: src.text ?? null, is_current: true }).select("id").single();
-    if (rerr || !res) { problems.push(`probe résumé: ${rerr?.message ?? "not written"}`); return out("none"); }
+    // the résumé: one fixed, invented résumé (seed/test-resume-v1.pdf), so every run is comparable with the last. It goes
+    // through the same upload reading as a customer's file, once; later runs reuse it.
+    const res = await fixedTestResume(u.id).catch((e) => { problems.push(`test résumé: ${(e as Error).message.slice(0, 120)}`); return null; });
+    if (!res) return out("none");
     const token = await createSession(u.id);
     const H = { authorization: `Bearer ${token}`, "content-type": "application/json", "x-ghosted-src-first": "probe", "x-ghosted-src-last": "probe" };
     const get = async <T,>(path: string, init: RequestInit = {}) => { const r = await app.request(path, { ...init, headers: { ...H, ...(init.headers as any ?? {}) } }); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(`${path} → HTTP ${r.status} ${(j as any).error ?? ""}`); return j as T; };
@@ -685,6 +696,10 @@ export async function panelTick(app?: { request: (input: string, init?: RequestI
   const sp = await sharpenProbe(app);
   await kv.set(SHARPEN_FLOW_KEY, { ...sp, commit });
   console.log(`[sharpen] flow probe ${sp.ok ? "PASS" : "FAIL"} in ${Math.round(sp.ms / 1000)}s: ${sp.status}, ${sp.posting}${sp.problems.length ? ` — ${sp.problems.join("; ")}` : ""}`);
+  // Open: employer and candidate, the whole way through
+  const op = await openProbe(app, PROBE_PHONE);
+  await kv.set(OPEN_FLOW_KEY, { ...op, commit });
+  console.log(`[open] flow probe ${op.ok ? "PASS" : "FAIL"} in ${Math.round(op.ms / 1000)}s: ${op.steps.length} steps${op.problems.length ? ` — ${op.problems.join("; ")}` : ""}`);
   if (res && (!flow.ok || !sp.ok)) await kv.set(PANEL_KEY, { ...res, pass: false, failures: res.failures + flow.problems.length + sp.problems.length, flow });
 }
 
@@ -730,6 +745,17 @@ radarPublic.get("/latest", async (c) => {
 });
 
 /** The questionnaire's pre-fill: what the résumé says they're a fit for. */
+/** A person's Record: the checked résumé and what it says they are (function, level, years). One reading, shared by Radar and Open. */
+export async function recordFor(userId: string): Promise<{ resume: { id: string; parsed: ResumeProfile }; targets: Targets } | null> {
+  const resume = await currentResume(userId);
+  if (!resume) return null;
+  const key = `radar:targets:v3:${userId}:${resume.id}`;
+  let t = await kv.get<Targets>(key);
+  if (!t) { t = await withMeter({ tag: "radar:targets", user: userId }, () => deriveTargets(resume.parsed)); await kv.set(key, t); }
+  return { resume, targets: t };
+}
+export type { Targets };
+
 radar.get("/test/targets", async (c) => {
   const u = c.get("user");
   const resume = await currentResume(u.id);

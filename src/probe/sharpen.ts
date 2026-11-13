@@ -27,21 +27,12 @@ export async function sharpenProbe(app: App): Promise<SharpenProbe> {
   try {
     const { data: u, error: uerr } = await db.from("users").upsert({ phone: PROBE_PHONE, last_seen_at: new Date().toISOString() }, { onConflict: "phone" }).select("id").single();
     if (!u) { problems.push(`probe account: ${uerr?.message ?? "no row"}`); return out("none"); }
-    // the résumé: the one the Radar probe left on this account (it copies the newest real résumé); else the newest real one
-    let { data: res } = await db.from("resumes").select("id, parsed").eq("user_id", u.id).eq("is_current", true).maybeSingle();
-    if (!res?.parsed) {
-      const { data: rows } = await db.from("resumes").select("id, parsed, text, storage_path, filename").not("parsed", "is", null).order("created_at", { ascending: false }).not("storage_path", "like", "probe/%").limit(20);
-      // the copy stands on the same file and the same checked parse a real run would: a parse that cannot be verified is not probed with
-      let src: any = null;
-      for (const r of (rows ?? []).filter((r: any) => r.parsed?.roles?.length && r.parsed?.name).slice(0, 4)) {
-        const checked = await checkedProfile(r.id, "probe").catch(() => null);
-        if (checked && (checked as any).parse_check?.verified !== false) { src = { ...r, parsed: checked }; break; }
-      }
-      if (!src) { problems.push("no résumé to probe with"); return out("none"); }
-      const ins = await db.from("resumes").insert({ id: randomUUID(), user_id: u.id, storage_path: src.storage_path, filename: src.filename ?? "probe.pdf", parsed: src.parsed, text: src.text ?? null, is_current: true }).select("id, parsed").single();
-      if (ins.error || !ins.data) { problems.push(`probe résumé: ${ins.error?.message ?? "not written"}`); return out("none"); }
-      res = ins.data;
-    }
+    // the résumé: the fixed test résumé (the Radar walk leaves it on this account; written here if it is not there yet)
+    const { fixedTestResume } = await import("../routes/radar.js");
+    const fixed = await fixedTestResume(u.id).catch((e) => { problems.push(`test résumé: ${(e as Error).message.slice(0, 120)}`); return null; });
+    if (!fixed) return out("none");
+    const { data: res } = await db.from("resumes").select("id, parsed").eq("id", fixed.id).single();
+    if (!res?.parsed) { problems.push("test résumé has no reading"); return out("none"); }
     // the posting: the first line of the Radar probe's own list (a live posting the account is a fit for), else any live
     // Bengaluru posting with a full description
     const run = await kv.get<{ items?: { url?: string; title?: string; company?: string }[] }>(`radar:run:${u.id}`);

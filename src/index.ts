@@ -13,6 +13,7 @@ import { whatsapp } from "./routes/whatsapp.js";
 import { preview } from "./routes/preview.js";
 import { check } from "./routes/check.js";
 import { radar, radarPublic } from "./routes/radar.js";
+import { open, openPublic } from "./routes/open.js";
 import { events } from "./routes/funnel.js";
 import { admin } from "./routes/admin.js";
 import { snapshotDue } from "./engine/ghost/index.js";
@@ -49,6 +50,8 @@ app.route("/preview", preview);
 app.route("/check", check);
 app.route("/radar/public", radarPublic);
 app.route("/radar", radar);
+app.route("/open/public", openPublic);
+app.route("/open", open);
 app.route("/events", events);
 app.route("/admin", admin);
 
