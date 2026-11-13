@@ -1,3 +1,4 @@
+import { checkedProfile } from "../engine/worker.js";
 // The Sharpen flow probe (11 Nov): the product the way a paying person meets it, walked by a machine after every deploy
 // and nightly. The probe account (the same +910000000000 Radar's probe uses) carries a real résumé; a live posting that
 // Radar put on that account's own list is the job; a plan is written as if paid; then, through the app's own request
@@ -29,10 +30,15 @@ export async function sharpenProbe(app: App): Promise<SharpenProbe> {
     // the résumé: the one the Radar probe left on this account (it copies the newest real résumé); else the newest real one
     let { data: res } = await db.from("resumes").select("id, parsed").eq("user_id", u.id).eq("is_current", true).maybeSingle();
     if (!res?.parsed) {
-      const { data: rows } = await db.from("resumes").select("id, parsed, text").not("parsed", "is", null).order("created_at", { ascending: false }).limit(20);
-      const src = (rows ?? []).find((r: any) => r.parsed?.roles?.length && r.parsed?.name);
+      const { data: rows } = await db.from("resumes").select("id, parsed, text, storage_path, filename").not("parsed", "is", null).order("created_at", { ascending: false }).not("storage_path", "like", "probe/%").limit(20);
+      // the copy stands on the same file and the same checked parse a real run would: a parse that cannot be verified is not probed with
+      let src: any = null;
+      for (const r of (rows ?? []).filter((r: any) => r.parsed?.roles?.length && r.parsed?.name).slice(0, 4)) {
+        const checked = await checkedProfile(r.id, "probe").catch(() => null);
+        if (checked && (checked as any).parse_check?.verified !== false) { src = { ...r, parsed: checked }; break; }
+      }
       if (!src) { problems.push("no résumé to probe with"); return out("none"); }
-      const ins = await db.from("resumes").insert({ id: randomUUID(), user_id: u.id, storage_path: `probe/${src.id}`, filename: "probe.pdf", parsed: src.parsed, text: src.text ?? null, is_current: true }).select("id, parsed").single();
+      const ins = await db.from("resumes").insert({ id: randomUUID(), user_id: u.id, storage_path: src.storage_path, filename: src.filename ?? "probe.pdf", parsed: src.parsed, text: src.text ?? null, is_current: true }).select("id, parsed").single();
       if (ins.error || !ins.data) { problems.push(`probe résumé: ${ins.error?.message ?? "not written"}`); return out("none"); }
       res = ins.data;
     }

@@ -1,3 +1,4 @@
+import { checkedProfile } from "../engine/worker.js";
 // Radar (v2, 10 Nov): the live Bengaluru openings that are this person's function, level and years — discovered on facts.
 // Flow: profile → what they're a fit for (one call) → title match over the live sightings (₹0) → the screen-out gates on
 // the posting's own text (₹0) → one question to the model per posting, "same function: yes / adjacent / no" (twelve a
@@ -619,11 +620,16 @@ export async function flowProbe(app: { request: (input: string, init?: RequestIn
     const { data: u, error: uerr } = await db.from("users").upsert({ phone: PROBE_PHONE, last_seen_at: new Date().toISOString() }, { onConflict: "phone" }).select("id").single();
     if (!u) { problems.push(`probe account could not be created: ${uerr?.message ?? "no row"}`); return out("none"); }
     // the résumé: the panel's most recent real one, copied under the probe account
-    const { data: rows } = await db.from("resumes").select("id, parsed, text").not("parsed", "is", null).order("created_at", { ascending: false }).limit(20);
-    const src = (rows ?? []).find((r: any) => r.parsed?.roles?.length && r.parsed?.name);
+    const { data: rows } = await db.from("resumes").select("id, parsed, text, storage_path, filename").not("parsed", "is", null).order("created_at", { ascending: false }).not("storage_path", "like", "probe/%").limit(20);
+    // the copy stands on the same file and the same checked parse a real run would: a parse that cannot be verified is not probed with
+    let src: any = null;
+    for (const r of (rows ?? []).filter((r: any) => r.parsed?.roles?.length && r.parsed?.name).slice(0, 4)) {
+      const checked = await checkedProfile(r.id, "probe").catch(() => null);
+      if (checked && (checked as any).parse_check?.verified !== false) { src = { ...r, parsed: checked }; break; }
+    }
     if (!src) { problems.push("no résumé to probe with"); return out("none"); }
     await db.from("resumes").delete().eq("user_id", u.id);   // one probe résumé at a time
-    const { data: res, error: rerr } = await db.from("resumes").insert({ id: randomUUID(), user_id: u.id, storage_path: `probe/${src.id}`, filename: "probe.pdf", parsed: src.parsed, text: src.text ?? null, is_current: true }).select("id").single();
+    const { data: res, error: rerr } = await db.from("resumes").insert({ id: randomUUID(), user_id: u.id, storage_path: src.storage_path, filename: src.filename ?? "probe.pdf", parsed: src.parsed, text: src.text ?? null, is_current: true }).select("id").single();
     if (rerr || !res) { problems.push(`probe résumé: ${rerr?.message ?? "not written"}`); return out("none"); }
     const token = await createSession(u.id);
     const H = { authorization: `Bearer ${token}`, "content-type": "application/json", "x-ghosted-src-first": "probe", "x-ghosted-src-last": "probe" };
