@@ -163,7 +163,8 @@ preview.post("/:id/answer", async (c) => {
   const { data: pv } = await db.from("previews").select("id, resume_id, matches").eq("id", id).eq("user_id", u.id).maybeSingle();
   if (!pv?.matches) return c.json({ error: "That fit check has expired. Run it again." }, 404);
   const matches = pv.matches as Match[];
-  const m = matches.find((x) => x.requirement === body.data.requirement && (x.bucket === "missing" || x.told));
+  // an ownership question is asked about a requirement the résumé already shows, so it is not "missing": it is answerable too
+  const m = matches.find((x) => x.requirement === body.data.requirement && (x.bucket === "missing" || x.told || (x as any).ownership_asked));
   if (!m) return c.json({ error: "That isn’t one of the things we couldn’t see." }, 400);
   let next: Match[];
   if (body.data.withdraw) next = withdrawFrom(matches, m.requirement);
