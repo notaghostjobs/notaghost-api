@@ -4,6 +4,7 @@ import { db } from "../lib/db.js";
 import { extractText, fetchPosting } from "./extract.js";
 import { parseResume, runSharpen, type ResumeProfile, type PostingProfile, type Match } from "./sharpen.js";
 import { sanitizeProfile } from "./refile.js";
+import { deliveryGate, repairForGate } from "./gate.js";
 import { resumePdf } from "./pdf.js";
 import { createHash } from "node:crypto";
 import { fit, target } from "../engine/fit.js";
@@ -155,6 +156,25 @@ async function runShotInner(shotId: string, shot: any) {
     const source: ResumeProfile = told.length ? { ...profile, candidate_added_facts: told } : profile;
     const out = await runSharpen(source, postingText, undefined, pre, undefined, pre && input.preview_id ? takeDraft(draftKey(input.preview_id, pre.matches, profile)) : null);
     if (postingId) await db.from("postings").update({ company: out.posting.company, title: out.posting.title, parsed: out.posting }).eq("id", postingId);
+
+    // THE DELIVERY GATE (master rule 15). No model here: the finished document against the candidate's own résumé, line by
+    // line. A failing document is repaired with the candidate's own lines; one that still fails is not delivered — the
+    // Sharpen goes back, and the hold is on record for us to read.
+    const toldLines = pre ? pre.matches.filter((m) => m.told && m.line).map((m) => String(m.line)) : [];
+    let gate = deliveryGate(out.rewrite, profile, out.verification?.problems ?? [], toldLines);
+    let gateLog: string[] = [];
+    if (!gate.ok) {
+      const fix = repairForGate(out.rewrite, profile, out.verification?.problems ?? [], toldLines);
+      out.rewrite = fix.rewrite; gateLog = fix.log;
+      const first = gate;
+      gate = deliveryGate(out.rewrite, profile, fix.unsettled, toldLines);
+      console.error("[shot] GATE", shotId, { first, repaired: fix.log, after: gate });
+      if (!gate.ok) {
+        await db.from("reader_control").upsert({ key: `sharpen_fail:hold:${shotId}`, value: { at: new Date().toISOString(), user: shot.user_id, resume: shot.resume_id, url: input.posting_url ?? null, first, repaired: fix.log, after: gate }, updated_at: new Date().toISOString() }).then(() => {}, () => {});
+        throw Object.assign(new Error("We held this one back: the finished résumé did not pass our accuracy check, and we don’t send a document we can’t stand behind. Your Sharpen has been returned, and we’ve been told. Try again — or write to human@notaghost.jobs and we’ll look at it today."), { status: 422 });
+      }
+    }
+    (out as any).gate = { ok: true, repaired: gateLog };
 
     const pdf = await resumePdf(out.rewrite, profile);
     const pdf_path = `${shot.user_id}/${shotId}.pdf`;
