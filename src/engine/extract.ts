@@ -4,7 +4,7 @@ import { db } from "../lib/db.js";
 import { jobKey, stripFurniture, CLEAN_SINCE, canonicalPostingUrl } from "./ghost/canon.js";
 
 /** Plain text out of a PDF or DOCX résumé. No AI here. */
-export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number; ours?: boolean }> {
+export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number; ours?: boolean; links?: string[] }> {
   const lower = filename.toLowerCase();
   if (lower.endsWith(".doc")) {
     // Word 97–2003: still common on Indian campuses. word-extractor reads the binary format without Office installed.
@@ -29,7 +29,11 @@ export async function extractText(buf: Buffer, filename: string): Promise<{ text
     // then all their bullets, 13 Nov): the page is re-read top to bottom, and that order is used when the page is one column
     let text = clean(r.text);
     try { const o = await readingOrder(buf); if (o) text = o; } catch { /* stream order it is */ }
-    return { text, pages: r.total, ours };
+    // the links behind the words ("LinkedIn Profile" is a link to a profile): the URLs ride along for the contact line
+    let links: string[] = [];
+    try { links = await linkAnnotations(buf); } catch { /* none */ }
+    if (links.length) text += "\n\nLINKS (behind the text): " + links.join(" ");
+    return { text, pages: r.total, ours, links };
   } finally { await parser.destroy(); }
 }
 
@@ -89,6 +93,20 @@ export async function readingOrder(buf: Buffer): Promise<string | null> {
   const side = sides.filter(Boolean).join("\n\n");
   const text = anyColumns && side ? `${body}\n\n-- sidebar --\n\n${side}` : body;
   return clean(text) || null;
+}
+
+/** The http(s) links embedded in the PDF (link annotations), in page order, without duplicates. */
+export async function linkAnnotations(buf: Buffer): Promise<string[]> {
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true, disableFontFace: true }).promise;
+  const out: string[] = [];
+  try {
+    for (let p = 1; p <= doc.numPages; p++) {
+      const anns = await (await doc.getPage(p)).getAnnotations();
+      for (const a of anns) { const u = typeof a?.url === "string" ? a.url.trim() : ""; if (/^https?:\/\//i.test(u) && !out.includes(u)) out.push(u); }
+    }
+  } finally { await doc.destroy().catch(() => {}); }
+  return out.slice(0, 12);
 }
 
 function clean(s: string) {

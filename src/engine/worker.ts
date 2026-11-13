@@ -19,7 +19,7 @@ export async function processResume(resumeId: string) {
   const file = await db.storage.from("resumes").download(row.storage_path);
   if (file.error) throw file.error;
   const buf = Buffer.from(await file.data.arrayBuffer());
-  let { text, pages, ours } = await extractText(buf, row.filename ?? "resume.pdf");
+  let { text, pages, ours, links } = await extractText(buf, row.filename ?? "resume.pdf");
   const isPdf = !/\.docx?$/i.test(row.filename ?? "");
   // a PDF with no text layer (printed to PDF as shapes, a scan, an image export): the clerk reads it from the page itself.
   // Decided 7 Nov (option B): a bounce becomes a customer, and they are told their file is invisible to employer software.
@@ -45,11 +45,12 @@ export async function processResume(resumeId: string) {
     // the parse is checked against the text it came from: a bullet filed under the neighbouring employer goes back to its own
     const tidy = sanitizeProfile(parsed);
     if (tidy.log.length) { parsed = tidy.profile; console.error("[resume] SANITIZED", resumeId, tidy.log); }
+    parsed = withLinks(parsed, links ?? []);
     const refiled = refileBullets(parsed, text);
     if (refiled.log.length) { parsed = refiled.profile; console.error("[resume] REFILED", resumeId, refiled.log); }
     // lines that met after the refile (a cut-off copy and its full line) are tidied once more
     const tidy2 = sanitizeProfile(parsed); if (tidy2.log.length) { parsed = tidy2.profile; console.error("[resume] SANITIZED", resumeId, tidy2.log); }
-    (parsed as any).refiled = 4;
+    (parsed as any).refiled = 5;
   }
   await db.from("resumes").update({ text, parsed }).eq("id", resumeId);
   return parsed;
@@ -64,22 +65,43 @@ export async function runShot(shotId: string) {
   if (plan?.product === "radar") { await charge(shot.user_id, plan.created_at ?? new Date().toISOString(), "sharpen:radar", () => runShotInner(shotId, shot)); return; }
   await withMeter({ tag: `sharpen:${shot.product ?? "sharpen"}`, user: shot.user_id }, () => runShotInner(shotId, shot));
 }
-/** The résumé's parse as every reader must see it. A parse made before the 13 Nov check (marker 4) is checked once against
+/** The contact line's links as URLs. A résumé often shows "LinkedIn Profile" as the words of a link: the parse copies the
+ *  words; the URL behind them (from the PDF's link annotations) replaces them, and any embedded profile link not in the
+ *  contact line is added. */
+export function withLinks(profile: ResumeProfile, links: string[]): ResumeProfile {
+  if (!links.length) return profile;
+  const isUrl = (x: string) => /^(https?:\/\/|www\.)|\.[a-z]{2,}\//i.test(x) || /\b[a-z0-9-]+\.(com|in|io|dev|me|co|org|net)\b/i.test(x);
+  const cur = (profile.contact?.links ?? []).map((x) => String(x).trim()).filter(Boolean);
+  const out: string[] = [];
+  const used = new Set<string>();
+  for (const x of cur) {
+    if (isUrl(x)) { out.push(x); continue; }
+    // the words of a link ("LinkedIn Profile", "Portfolio", "GitHub") → the matching URL
+    const key = x.toLowerCase();
+    const hit = links.find((u) => !used.has(u) && ((/linkedin/.test(key) && /linkedin\.com/i.test(u)) || (/github/.test(key) && /github\.com/i.test(u)) || (/portfolio|website|site|blog/.test(key) && !/linkedin|github|mailto/i.test(u))));
+    if (hit) { out.push(hit); used.add(hit); } else out.push(x);
+  }
+  // a profile link embedded in the page but nowhere in the contact line
+  for (const u of links) if (/linkedin\.com\/in\//i.test(u) && !out.some((x) => x.toLowerCase().includes("linkedin"))) out.push(u);
+  return { ...profile, contact: { ...(profile.contact ?? {}), links: out } };
+}
+
+/** The résumé's parse as every reader must see it. A parse made before the 13 Nov check (marker 5) is checked once against
  *  the file read afresh — the text on record may be in stream order — and the corrected parse is kept. The prewarm and the
  *  shot both go through here, so a draft is never written from a parse the shot will no longer use. */
 export async function checkedProfile(resumeId: string, tag = "shot"): Promise<ResumeProfile | null> {
   const { data: res } = await db.from("resumes").select("parsed, text, storage_path, filename").eq("id", resumeId).single();
   if (!res?.parsed) return null;
   let profile = res.parsed as ResumeProfile;
-  if (res.text && (profile as any).refiled !== 4 && !(profile as any).read_from_page) {
+  if (res.text && (profile as any).refiled !== 5 && !(profile as any).read_from_page) {
     let text: string = res.text;
     try {
       const file = await db.storage.from("resumes").download(res.storage_path);
-      if (!file.error) { const again = await extractText(Buffer.from(await file.data.arrayBuffer()), res.filename ?? "resume.pdf"); if (again.text.length > 200) text = again.text; }
+      if (!file.error) { const again = await extractText(Buffer.from(await file.data.arrayBuffer()), res.filename ?? "resume.pdf"); if (again.text.length > 200) text = again.text; profile = withLinks(profile, again.links ?? []); }
     } catch { /* the text on record it is */ }
     const tidy = sanitizeProfile(profile); if (tidy.log.length) console.error(`[${tag}] SANITIZED`, resumeId, tidy.log);
     const refiled = refileBullets(tidy.profile, text);
-    profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 4 } as ResumeProfile;
+    profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 5 } as ResumeProfile;
     if (refiled.log.length) console.error(`[${tag}] REFILED`, resumeId, refiled.log);
     await db.from("resumes").update({ parsed: profile, text }).eq("id", resumeId).then(() => {}, () => {});
   }

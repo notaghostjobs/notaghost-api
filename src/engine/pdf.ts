@@ -77,6 +77,7 @@ export function resumeHtml(r: Rewrite, o: ResumeProfile) {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(o.name)}</title>
 <style>
 ${fontCss}
+.contact a{color:inherit;text-decoration:none}
 :root{ --s:1; --g:1; --ink:#15171a; --mid:#4a4f57; --faint:#7d838c; --accent:#6b5d4a; --rule:#2a2d31; --chip:#f1efeb; }
 *{box-sizing:border-box;margin:0;padding:0}
 @page{ size:A4; margin:16mm 0 15mm }
@@ -119,7 +120,7 @@ li::before{ content:""; position:absolute; left:2pt; top:calc(0.58em - 1.2pt); w
   <div class="name">${esc(o.name === o.name.toUpperCase() ? o.name.toLowerCase().replace(/(^|\s|-)\S/g, (c) => c.toUpperCase()) : o.name)}</div>
   <div class="head">${esc(r.headline)}</div>
   <div class="bar"></div>
-  <div class="contact">${contact.map((c) => `<span><i>${ICON[iconFor(c!)]}</i>${esc(c!.replace(/^https?:\/\/(www\.)?/, ""))}</span>`).join("")}</div>
+  <div class="contact">${contact.map((c) => { const v = String(c); const href = /@/.test(v) && !/\s/.test(v) ? `mailto:${v}` : /^\+?\d[\d\s-]{7,}$/.test(v) ? `tel:${v.replace(/[\s-]/g, "")}` : /^(https?:\/\/|www\.)|\.[a-z]{2,}\//i.test(v) ? (/^https?:\/\//i.test(v) ? v : `https://${v}`) : ""; const label = esc(v.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")); return `<span><i>${ICON[iconFor(v)]}</i>${href ? `<a href="${esc(href)}">${label}</a>` : label}</span>`; }).join("")}</div>
 </header>
 ${sec("Profile", `<p class="sum">${esc(r.summary)}</p>${relevant}`)}
 ${sec("Experience", roles)}
