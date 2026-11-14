@@ -684,7 +684,7 @@ export async function flowProbe(app: { request: (input: string, init?: RequestIn
     const taste: string[] = (rv.taste ?? []).map((t: any) => String(t.company ?? ""));
     if (chance > 0) {
       if (!taste.length) problems.push("reveal has no taste");
-      if (taste.some((c) => !c || c.length > 40 || /\b(is|are)\b/i.test(c) || /^careers? at/i.test(c))) problems.push(`taste employer reads wrong: ${taste.join(" | ")}`);
+      if (taste.some((c) => !c || c.length > 64 || /\b(is|are)\b/i.test(c) || /^careers? at/i.test(c))) problems.push(`taste employer reads wrong: ${taste.join(" | ")}`);
       if (chance >= 3 && new Set(taste.map((c) => c.toLowerCase())).size < 3) problems.push(`taste repeats an employer: ${taste.join(" | ")}`);
       if (r.unlocked) problems.push("locked run came back unlocked");
       if ((r.items ?? []).some((i: any) => i.title || i.url || i.why)) problems.push("locked result leaks titles, links or reasons");
@@ -696,7 +696,8 @@ export async function flowProbe(app: { request: (input: string, init?: RequestIn
     if (items.length !== chance) problems.push(`reveal said ${chance} roles, the list has ${items.length}`);
     for (const i of items) {
       if (!i.title || !/^https?:\/\//.test(i.url ?? "") || !i.why || i.why.length < 8) problems.push(`line without title, page or reason: ${i.company} — ${i.title}`);
-      if (!i.company || i.company.length > 40 || /\b(is|are)\b/i.test(i.company)) problems.push(`employer reads wrong: ${i.company}`);
+      if (!i.company || i.company.length > 64 ||   // a legal name can be long ("Standard Chartered Global Business Services India"); a tagline is longer still
+         /\b(is|are)\b/i.test(i.company)) problems.push(`employer reads wrong: ${i.company}`);
     }
     return out("done", chance, taste, items.length);
   } catch (e) { problems.push(`probe error: ${(e as Error).message.slice(0, 160)}`); return out("error"); }
