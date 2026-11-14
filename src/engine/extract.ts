@@ -1,3 +1,5 @@
+import { QA } from "../qa/guard.js";
+import { takeFault } from "../qa/state.js";
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import { db } from "../lib/db.js";
@@ -7,6 +9,7 @@ import { jobKey, stripFurniture, CLEAN_SINCE, canonicalPostingUrl } from "./ghos
 
 /** Plain text out of a PDF or DOCX résumé. No AI here. */
 export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number; ours?: boolean; links?: string[] }> {
+  if (QA && takeFault("parse_fail")) throw Object.assign(new Error("We couldn’t read that file. Try a PDF exported from Word or Google Docs."), { status: 422, simulated: true });
   const lower = filename.toLowerCase();
   if (lower.endsWith(".doc")) {
     // Word 97–2003: still common on Indian campuses. word-extractor reads the binary format without Office installed.
@@ -42,6 +45,7 @@ export async function extractText(buf: Buffer, filename: string): Promise<{ text
 
 /** Fetch a posting URL and reduce it to readable text. Pasted text goes straight through. */
 export async function fetchPosting(url0: string, opts: { bypassCache?: boolean } = {}): Promise<string> {
+  if (QA && takeFault("page_unavailable")) throw Object.assign(new Error("Couldn’t open that link right now. Paste the posting text instead."), { status: 502, simulated: true });
   const url = canonicalPostingUrl(url0);   // a LinkedIn search link with currentJobId is the job's own page
   // the user's own browser usually read this posting seconds ago (the card) and sent it to us; that copy beats any
   // server fetch — and job boards like Naukri refuse the server outright

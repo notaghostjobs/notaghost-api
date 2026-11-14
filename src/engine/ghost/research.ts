@@ -2,16 +2,19 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../../lib/env.js";
 import { FAST, MODEL } from "../claude.js";
+import { qaBefore, qaAfter } from "../../qa/budget.js";
 
 const client = new Anthropic({ apiKey: env.anthropicKey });
 
 async function ask<T>(instructions: string, question: string, maxUses = 4, model = FAST, effort: "low" | "medium" | "high" = "medium"): Promise<T | null> {
+  await qaBefore(); const t0 = Date.now();
   const r = await client.messages.create({
     model, max_tokens: 2500, thinking: { type: "adaptive" }, output_config: { effort },
     system: instructions + "\n\nSearch the web as needed, then respond with a single JSON object and nothing else. Report only what the results say; use null when unknown. Today is " + new Date().toDateString() + ".",
     tools: [{ type: "web_search_20250305", name: "web_search", max_uses: maxUses }],
     messages: [{ role: "user", content: question }],
-  } as any);
+  } as any).catch(async (e) => { await qaAfter(model, instructions, null, Date.now() - t0); throw e; });
+  await qaAfter(model, instructions, (r as any).usage ?? {}, Date.now() - t0);
   const text = r.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
   const a = text.lastIndexOf("{"), b = text.lastIndexOf("}");
   // the final JSON is usually the last object; find the outermost one that parses
