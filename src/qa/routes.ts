@@ -115,7 +115,7 @@ export function qaRoutes(app: App) {
   // ---------- seed and reset ----------
   qa.post("/seed", async (c) => {
     const b = z.object({ to: z.number().int().min(1).max(100).default(10) }).safeParse(await c.req.json().catch(() => ({}))); const to = b.success ? b.data.to : 10;
-    await store.set("qa:environment", { name: "qa", seeded: now(), database: supabaseRef(env.supabaseUrl) });
+    { const m = await store.get<any>("qa:environment"); await store.set("qa:environment", { ...(m ?? {}), name: "qa", seeded: now(), database: supabaseRef(env.supabaseUrl) }); }
     for (let n = 1; n <= to; n++) await db.from("users").upsert({ phone: qaPhone(n), name: CANDIDATES.find((x) => x.n === n)?.name ?? `QA Candidate ${n}`, last_seen_at: now() }, { onConflict: "phone" });
     for (const e of EMPLOYERS) { const live = JOBS.filter((j) => j.employer === e.name && j.state === "live").length;
       await db.from("employers").upsert({ key: companyKey(e.name), name: e.name, website: `${PUBLIC()}/qa/company/${e.slug}`, careers_url: `${PUBLIC()}/qa/company/${e.slug}`, ats: e.feed === "followed" ? "greenhouse" : e.feed === "none" ? "none" : null, ats_ref: e.feed === "followed" ? e.slug : null, source: "seed", resolved_at: e.feed === "unknown" ? null : now(), read_at: e.feed === "followed" ? now() : null, openings: live, blr_openings: live, evidence: "QA fixture" }, { onConflict: "key" }); }

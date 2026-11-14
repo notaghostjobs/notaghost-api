@@ -115,9 +115,10 @@ setInterval(() => snapshotDue(200).then((n) => n && console.log(`[snapshot] rech
   if (strangers.length) { console.error(`[qa] REFUSING TO RUN: this database holds ${strangers.length} account(s) that are not QA identities — it is not a QA database`); process.exit(1); }
   const { count: paid } = await db.from("payments").select("id", { count: "exact", head: true }).not("razorpay_payment_id", "is", null).not("razorpay_payment_id", "like", "pay_QA_%").not("razorpay_order_id", "like", "test_%");
   if (paid) console.warn(`[qa] note: ${paid} payment row(s) came through Razorpay test checkout`);
-  if (!marker) console.log("[qa] empty QA database: POST /qa/seed to create the identities and fixtures");
-  else console.log("[qa] database identity confirmed:", (marker.value as any)?.database);
-  if (!marker) await db.from("reader_control").upsert({ key: "qa:environment", value: { name: "qa", database: supabaseRef(env.supabaseUrl) } }, { onConflict: "key" });   // an empty database that passed every check above is claimed for QA
+  // the database must have been prepared as QA (supabase/qa/qa-database.sql), and for this very project
+  const marked = (marker?.value as any)?.database;
+  if (!marker || marked !== supabaseRef(env.supabaseUrl)) { console.error(`[qa] REFUSING TO RUN: this database is ${marker ? `marked for project "${marked}", not the one in SUPABASE_URL` : "not marked as the QA database (run supabase/qa/qa-database.sql in the QA project)"}`); process.exit(1); }
+  console.log("[qa] database identity confirmed:", marked);
   // every start proves the isolation again, and publishes the result at /qa/report
   setTimeout(() => import("./qa/selftest.js").then((m) => m.isolationReport(app)).catch((e) => console.error("[qa] self-test", e?.message ?? e)), 15e3);
 })().catch((e) => { console.error("[qa] database identity check failed", e?.message ?? e); if (QA) process.exit(1); });

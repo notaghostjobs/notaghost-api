@@ -11,7 +11,7 @@ Branch: `qa` in both repositories. `main` is untouched and `qa` is never merged 
 
 | Thing | Production | QA | Enforced by |
 |---|---|---|---|
-| Database + file storage | project `vviporiiqwykfcetusta` | a new Supabase project | The service refuses to start on production's project, or on any project other than the one named in `QA_SUPABASE_REF`. Every outbound call to production's project is refused at the network boundary. The QA database rejects any phone number that is not a QA identity (check constraint). At start the service exits if it finds a non-QA account. |
+| Database + file storage | project `vviporiiqwykfcetusta` | a new Supabase project | The service refuses to start on production's project, or on any project other than the one named in `QA_SUPABASE_REF`. Every outbound call to production's project is refused at the network boundary. The QA database rejects any phone number that is not a QA identity (check constraint). At start the service exits unless the database carries the QA mark for this same project, or if it finds a non-QA account. |
 | API | `notaghost-api.onrender.com` | a new Render service on branch `qa` | Separate service, separate settings. QA cannot call production's API (boundary answers 599). |
 | Site | `notaghost.jobs` | a new Cloudflare Pages project on branch `qa` | `npm run build:qa` refuses a production API address and fails if one is left in the output. In the browser, the QA build refuses calls to production and stops if the service does not report `env: qa`. |
 | AI | production key | a key from a separate Anthropic workspace | The service counts the cost of every call and stops at `QA_AI_BUDGET_INR` (max 1000). The workspace spend limit is the outer backstop. **The service cannot verify the key is a different key** — that is declared with `QA_AI_KEY_IS_SEPARATE=yes` and is the operator's responsibility. |
@@ -36,7 +36,7 @@ Admin and tester back doors do not exist in QA: `ADMIN_SECRET`, `RADAR_TESTERS`,
 
 Checks that run without infrastructure (already run on this branch):
 
-- `npm run build` → includes `QA safety self-check` (configuration guard, access gate, budget arithmetic).
+- `npm run build` → includes `QA safety self-check` (configuration guard, access gate, budget arithmetic) and checks `qa-database.sql` still matches the migrations.
 - `npx tsx scripts/qa-boundary-check.ts` → the network boundary, with placeholder settings.
 - Site: `npm run build:qa` with a production address → refused.
 
@@ -45,11 +45,17 @@ Checks that run without infrastructure (already run on this branch):
 Nothing here touches production. Secrets go into the dashboards only — never into chat or Git.
 
 ### A. Supabase — new project
+Nothing is run in production. The QA structure comes from this repository's migrations.
 1. supabase.com → **New project**. Name `ghosted-qa`. Region: Mumbai. Generate a database password and keep it in your password manager.
-2. In the **production** project → SQL Editor → paste `supabase/qa/1-export-structure.sql` → Run. It is one read-only `SELECT`; it reads no customer row. Copy the single result cell.
-3. In the **QA** project → SQL Editor → paste that text → Run.
-4. Still in QA → paste `supabase/qa/2-qa-setup.sql` → Run. Expect `QA project ready: N tables`. (It stops by itself if the project holds real users or payments.)
-5. QA project → Settings → API: note the **Project URL** and the **service_role** key for step C.
+2. Project Settings → General → copy the **Reference ID** (20 letters). It is not a secret.
+3. Open `supabase/qa/qa-database.sql`. Replace `PASTE_QA_PROJECT_REF` (one place, near the top) with that Reference ID.
+4. In the **QA** project → SQL Editor → paste the whole file → Run. Expect `QA database ready: 16 tables, marked for project <your reference>`.
+   - It checks first that the project is new and empty (no tables, no types, no storage buckets, no sign-in users) and that the reference is not production's. If any check fails it says `STOP: …` and nothing is changed.
+   - It is one transaction: if anything fails part-way, nothing is kept.
+   - It can only be run once. A second run stops at the first check.
+5. Project Settings → API: note the **Project URL** and the **service_role** key for step C.
+
+What the script contains: `create table / index / type / sequence / function` from migrations 0001–0010; one added column (`postings.created_at`); a rule that phone numbers must be QA identities; three private storage buckets; row-level security on every table; removal of the public keys' access; the QA mark. It contains no `drop`, `truncate`, `delete` or `update` of existing data (`scripts/qa-schema.mjs` fails if one appears). 0011 (Open's tables) is left out because production has not applied it.
 
 ### B. Anthropic — separate workspace
 1. console.anthropic.com → Settings → Workspaces → **Create workspace** `ghosted-qa`.
@@ -136,6 +142,7 @@ Ghost Meter signals, as numbered in the product: 2 templated description · 3 ca
 
 ## 6. Known limitations
 
+- The QA structure is built from the repository's migrations, not copied from production. Every table and column the code names was checked against it (16 tables, 154 columns; one missing column added). A difference in production that the code does not name — a type, a default, an index — would not be reproduced.
 - The AI key's separateness is declared, not verifiable from inside the service.
 - Links inside simulated WhatsApp messages are built for the production site's address; read the message in the outbox rather than following it.
 - `payment.failed` is not a webhook event the product handles; the `failed` scenario shows the payment staying unpaid.
