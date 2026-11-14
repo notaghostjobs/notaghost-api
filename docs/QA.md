@@ -107,7 +107,7 @@ Do **not** set: `ADMIN_SECRET`, `RADAR_TESTERS`, `OTP_DEV_CODE`, `OTP_TEST_PHONE
 - Site: the QA Pages address. Enter the access code once per browser. A red "QA Environment · build … · QA00x" marker is always on screen.
 - Start page: `#/qa`. Candidates, sign-in, codes, messages, fixtures, reset.
 - Two ways to sign in: **Sign in** on a candidate row (instant session), or the product's own sign-in with the candidate's number (`00000 01001` for QA001 … `00000 01010` for QA010) and the code shown under **Codes**.
-- Résumé files: **Download résumé** on each row (`/qa/files/QA001.pdf`).
+- Résumé files: **Download résumé** on each row (`/qa/files/QA001.pdf`, access code required).
 - Job links: **Fixtures and expected results** lists every invented role and every Ghost Meter page with what the catalogue expects.
 - Every control has a `data-testid` (its element id where one exists, otherwise `btn-…`, `field-…`, `link-…`, `file-…` from its label). QA tools use `qa-…`.
 - Every API answer carries `x-request-id`; the same id is on the AI calls, messages and blocked calls it caused.

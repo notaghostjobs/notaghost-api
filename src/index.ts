@@ -30,7 +30,7 @@ if (QA) {
   app.use("*", async (c, next) => {
     const id = rid(); c.header("x-request-id", id); c.header("x-ghosted-env", "qa");
     const path = new URL(c.req.url).pathname;
-    const open = c.req.method === "OPTIONS" || path === "/health" || /^\/qa\/(jobs|company|files)\//.test(path) || path === "/qa/report" || path === "/payments/webhook";
+    const open = c.req.method === "OPTIONS" || path === "/health" || /^\/qa\/(jobs|company)\//.test(path) || path === "/qa/report" || path === "/payments/webhook";
     const signed = (c.req.header("authorization") ?? "").startsWith("Bearer ");   // a session: the route's own check decides
     if (!open && !signed && !hasQaAccess(c.req.header("x-qa-access"))) return c.json({ error: "This is the Ghosted QA environment. QA access is required, or it has expired.", request_id: id }, 401);
     await qaCtx.run({ rid: id }, next);
