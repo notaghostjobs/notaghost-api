@@ -18,6 +18,10 @@ import { qaSpend, promptVersion } from "./budget.js";
 import { EMPLOYERS, FUNCTIONS, JOBS, GM, CANDIDATES, BAND } from "./fixtures.js";
 import { MODEL, HOUSEKEEPING } from "../engine/claude.js";
 import { isolationReport, runPilot, pilotBusy } from "./selftest.js";
+import { extractText } from "../engine/extract.js";
+import { checkPackage, checkJobs } from "./truth.js";
+import { evaluate, evalMeter, type MeterResult, type SharpenIn } from "./evaluate.js";
+import { allJobs, employerSlug, expectedFor, getImported, getJobs, importedEmployer, knownJobSlugs, listImported, meterCases, qaId, removeImported, resumeBytes, saveImported, saveJobs, type ImportedRole } from "./catalog.js";
 
 type App = { request: (input: string, init?: RequestInit) => Response | Promise<Response> };
 const PUBLIC = () => (process.env.QA_PUBLIC_URL ?? "").replace(/\/$/, "");
@@ -32,6 +36,7 @@ export function hasQaAccess(given: string | undefined | null): boolean {
   return timingSafeEqual(Buffer.from(got), Buffer.from(want));
 }
 const userOf = async (id: string) => { const n = qaNumber(id); if (!n) return null; const { data } = await db.from("users").select("id, phone, name").eq("phone", qaPhone(n)).maybeSingle(); return data ? { ...data, qa: `QA${String(n).padStart(3, "0")}`, n } : null; };
+const esc = (x: unknown) => String(x ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const html = (title: string, body: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><style>body{font:16px/1.55 system-ui,sans-serif;max-width:760px;margin:0 auto;padding:28px 20px;color:#111}h1{font-size:28px;margin:0 0 4px}.co{color:#444;margin:0}.posted{color:#666;font-size:14px}.qa{background:#fff3cd;border:1px solid #e0c060;border-radius:8px;padding:6px 10px;font-size:12px;margin-bottom:18px}li{margin:3px 0}a.apply{display:inline-block;margin-top:14px;background:#111;color:#fff;border-radius:999px;padding:10px 20px;text-decoration:none}</style></head><body><div class="qa">QA fixture · an invented posting for testing · not a real job</div>${body}</body></html>`;
 
 export function qaRoutes(app: App) {
@@ -47,18 +52,25 @@ export function qaRoutes(app: App) {
       return c.html(html(`${g.title} — ${g.employer}`, g.html(posted) + (g.http ? "" : `<a class="apply" href="${jobUrl(slug)}#apply">Apply</a>`)), (g.http ?? 200) as 200);
     }
     const j = JOBS.find((x) => x.slug === slug);
-    if (!j) return c.html(html("Not found", "<h1>404</h1><p>No such posting.</p>"), 404);
+    if (!j) { const r = (await getJobs()).roles.find((x) => x.slug === slug); if (!r) return c.html(html("Not found", "<h1>404</h1><p>No such posting.</p>"), 404);
+      // an imported role: the page says what the fixture tells it to say, which may deliberately disagree with the employer's system
+      const closed = r.page.closed_notice || r.state === "gone"; const posted = r.page.posted_text ?? `Posted ${r.posted_days} days ago`;
+      const text = r.text.trim().split("\n").map((l) => (/^[•\-*]\s/.test(l) ? `<li>${esc(l.replace(/^[•\-*]\s*/, ""))}</li>` : l.trim() ? `<p>${esc(l)}</p>` : "")).join("");
+      return c.html(html(`${esc(r.title)} — ${esc(r.employer)}`, `<h1>${esc(r.title)}</h1><p class="co">${esc(r.employer)} · ${esc(r.location)}</p><p class="posted">${closed ? "This position is no longer accepting applications." : esc(posted)}</p>${r.pay ? `<p>Compensation: ${esc(r.pay)}</p>` : ""}${text}${closed ? "" : `<a class="apply" href="${jobUrl(slug)}#apply">Apply</a>`}`), (r.page.http ?? 200) as 200); }
     const [, , ...rest] = j.text.split("\n");
     const body = rest.join("\n").trim().split("\n").map((l) => (l.startsWith("•") ? `<li>${l.slice(1).trim()}</li>` : l.trim() ? `<p>${l}</p>` : "")).join("");
     return c.html(html(`${j.title} — ${j.employer}`, `<h1>${j.title}</h1><p class="co">${j.employer} · Bengaluru, Karnataka, India</p><p class="posted">${j.state === "gone" ? "This position is no longer accepting applications." : `Posted ${j.posted_days} days ago`}</p>${body}${j.state === "live" ? `<a class="apply" href="${jobUrl(slug)}#apply">Apply</a>` : ""}`));
   });
-  qa.get("/company/:slug", (c) => {
-    const e = EMPLOYERS.find((x) => x.slug === c.req.param("slug")); if (!e) return c.html(html("Not found", "<h1>404</h1>"), 404);
+  qa.get("/company/:slug", async (c) => {
+    const e = EMPLOYERS.find((x) => x.slug === c.req.param("slug"));
+    if (!e) { const x = await importedEmployer(c.req.param("slug")); if (!x) return c.html(html("Not found", "<h1>404</h1>"), 404); const open = (await getJobs()).roles.filter((r) => r.employer === x.name && r.state === "live" && r.system.listed);
+      return c.html(html(`Careers at ${esc(x.name)}`, `<h1>Careers at ${esc(x.name)}</h1><p>${esc(x.about)}</p><h2>Open roles (${open.length})</h2><ul>${open.map((r) => `<li><a href="${jobUrl(r.slug)}">${esc(r.title)}</a> · ${esc(r.location)}</li>`).join("")}</ul>`)); }
     const open = JOBS.filter((j) => j.employer === e.name && j.state === "live");
     return c.html(html(`Careers at ${e.name}`, `<h1>Careers at ${e.name}</h1><p>${e.about}</p><h2>Open roles (${open.length})</h2><ul>${open.map((j) => `<li><a href="${jobUrl(j.slug)}">${j.title}</a> · Bengaluru</li>`).join("")}</ul>`));
   });
   qa.get("/files/:name", async (c) => {
     const name = c.req.param("name"); if (!/^QA\d{3}\.(pdf|docx)$/.test(name)) return c.text("not found", 404);
+    if (name.endsWith(".pdf")) { const r = await resumeBytes(name.slice(0, 5)); if (!r) return c.text("not found", 404); return new Response(new Uint8Array(r.buf), { headers: { "content-type": "application/pdf", "content-disposition": `attachment; filename="${name}"`, "x-qa-resume-source": r.source } }); }
     try { const buf = await readFile(join(process.cwd(), "seed", "qa", "resumes", name)); return new Response(new Uint8Array(buf), { headers: { "content-type": name.endsWith(".pdf") ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "content-disposition": `attachment; filename="${name}"` } }); }
     catch { return c.text("not found", 404); }
   });
@@ -76,8 +88,8 @@ export function qaRoutes(app: App) {
   qa.get("/identities", async (c) => {
     const { data } = await db.from("users").select("id, phone, name").like("phone", "+9100000%").order("phone");
     const out = [];
-    for (const u of data ?? []) { const cand = CANDIDATES.find((x) => qaPhone(x.n) === u.phone); const { data: r } = await db.from("resumes").select("filename").eq("user_id", u.id).eq("is_current", true).maybeSingle(); const { data: p } = await db.from("plans").select("product, shots_total, shots_used, expires_at").eq("user_id", u.id).gt("expires_at", now());
-      out.push({ id: qaIdOf(u.phone), phone: u.phone, name: u.name, profile: cand ? { function: FUNCTIONS.find((f) => f.key === cand.fn)?.name, level: cand.level, years: cand.years, covers: cand.covers } : null, resume_file: `${PUBLIC()}/qa/files/${qaIdOf(u.phone)}.pdf`, resume_on_file: r?.filename ?? null, plans: p ?? [] }); }
+    for (const u of data ?? []) { const ex = await expectedFor(qaNumber(qaIdOf(u.phone) ?? "") ?? 0); const cand = ex.source ? { fn: ex.fn, level: ex.level, years: ex.years, covers: ex.covers } : null; const { data: r } = await db.from("resumes").select("filename").eq("user_id", u.id).eq("is_current", true).maybeSingle(); const { data: p } = await db.from("plans").select("product, shots_total, shots_used, expires_at").eq("user_id", u.id).gt("expires_at", now());
+      out.push({ id: qaIdOf(u.phone), phone: u.phone, name: u.name, profile: cand ? { function: cand.fn, level: cand.level, years: cand.years, covers: cand.covers, ground_truth: ex.source === "imported" } : null, resume_file: `${PUBLIC()}/qa/files/${qaIdOf(u.phone)}.pdf`, resume_on_file: r?.filename ?? null, plans: p ?? [] }); }
     return c.json({ identities: out });
   });
   /** the identity selector: a normal session for a synthetic candidate. No code is sent because none is needed here; the
@@ -105,6 +117,7 @@ export function qaRoutes(app: App) {
   qa.post("/pilot", async (c) => {
     const b = z.object({ from: z.number().int().min(1).max(100).default(1), to: z.number().int().min(1).max(100).default(10), sharpen: z.boolean().default(true), meter: z.boolean().default(true) }).safeParse(await c.req.json().catch(() => ({})));
     if (!b.success || b.data.to < b.data.from) return c.json({ error: "from, to (1–100), sharpen, meter" }, 400);
+    if (process.env.QA_PAID_RUNS !== "on") return c.json({ error: "Paid model runs are switched off. The automated run starts only after QA_PAID_RUNS=on is set on the QA service." }, 403);
     if (pilotBusy()) return c.json({ ok: true, already: true });
     if ((await qaSpend()).left_paise <= 0) return c.json({ error: "The QA AI budget is used up. The pilot will not start." }, 503);
     const ids = Array.from({ length: b.data.to - b.data.from + 1 }, (_, i) => b.data.from + i);
@@ -116,15 +129,26 @@ export function qaRoutes(app: App) {
   qa.post("/seed", async (c) => {
     const b = z.object({ to: z.number().int().min(1).max(100).default(10) }).safeParse(await c.req.json().catch(() => ({}))); const to = b.success ? b.data.to : 10;
     { const m = await store.get<any>("qa:environment"); await store.set("qa:environment", { ...(m ?? {}), name: "qa", seeded: now(), database: supabaseRef(env.supabaseUrl) }); }
-    for (let n = 1; n <= to; n++) await db.from("users").upsert({ phone: qaPhone(n), name: CANDIDATES.find((x) => x.n === n)?.name ?? `QA Candidate ${n}`, last_seen_at: now() }, { onConflict: "phone" });
+    for (let n = 1; n <= to; n++) await db.from("users").upsert({ phone: qaPhone(n), name: (await expectedFor(n)).name ?? `QA Candidate ${n}`, last_seen_at: now() }, { onConflict: "phone" });
     for (const e of EMPLOYERS) { const live = JOBS.filter((j) => j.employer === e.name && j.state === "live").length;
       await db.from("employers").upsert({ key: companyKey(e.name), name: e.name, website: `${PUBLIC()}/qa/company/${e.slug}`, careers_url: `${PUBLIC()}/qa/company/${e.slug}`, ats: e.feed === "followed" ? "greenhouse" : e.feed === "none" ? "none" : null, ats_ref: e.feed === "followed" ? e.slug : null, source: "seed", resolved_at: e.feed === "unknown" ? null : now(), read_at: e.feed === "followed" ? now() : null, openings: live, blr_openings: live, evidence: "QA fixture" }, { onConflict: "key" }); }
     const slugOf = (name: string) => EMPLOYERS.find((e) => e.name === name)!.slug;
     const rows = JOBS.map((j, i) => ({ source: "greenhouse", source_id: `${slugOf(j.employer)}:${1000 + i}`, employer_key: companyKey(j.employer), company_name: j.employer, title: j.title, location: "Bengaluru, Karnataka, India", url: jobUrl(j.slug), posted_at: ago(j.posted_days), posted_text: `${j.posted_days} days ago`, salary_text: j.pay, blr: true, description: j.text, first_seen: ago(j.posted_days), last_seen: j.state === "gone" ? ago(3) : now(), gone_at: j.state === "gone" ? ago(3) : null, raw: { qa: true, slug: j.slug } }));
     const gm = GM.filter((g) => g.listed).map((g, i) => ({ source: "greenhouse", source_id: `${slugOf(g.employer)}:${5000 + i}`, employer_key: companyKey(g.employer), company_name: g.employer, title: g.title, location: "Bengaluru, Karnataka, India", url: jobUrl(g.slug), posted_at: ago(g.first_seen_days ?? 6), posted_text: `${g.first_seen_days ?? 6} days ago`, salary_text: null, blr: g.slug !== "gm-closed", description: null, first_seen: ago(g.first_seen_days ?? 6), last_seen: g.slug === "gm-closed" ? ago(2) : now(), gone_at: g.slug === "gm-closed" ? ago(2) : null, raw: { qa: true, slug: g.slug } }));
     const up = await db.from("sightings").upsert([...rows, ...gm], { onConflict: "source,source_id" });
-    return c.json({ ok: !up.error, error: up.error?.message ?? null, identities: to, employers: EMPLOYERS.length, roles: rows.length, ghost_meter_pages: GM.length });
+    const imp = await syncImportedJobs();
+    return c.json({ ok: !up.error && !imp.error, error: up.error?.message ?? imp.error ?? null, identities: to, employers: EMPLOYERS.length + imp.employers, roles: rows.length + imp.roles, ghost_meter_pages: GM.length, imported: imp });
   });
+  /** imported employers and roles, written the way the product's own reader would have recorded them */
+  async function syncImportedJobs() {
+    const j = await getJobs(); if (!j.roles.length && !j.employers.length) return { employers: 0, roles: 0, error: null as string | null };
+    for (const e of j.employers) { const live = j.roles.filter((r) => r.employer === e.name && r.state === "live" && r.system.listed); const blr = live.filter((r) => /bengaluru|bangalore/i.test(r.location)).length;
+      await db.from("employers").upsert({ key: companyKey(e.name), name: e.name, website: `${PUBLIC()}/qa/company/${e.slug}`, careers_url: `${PUBLIC()}/qa/company/${e.slug}`, ats: e.hiring_system === "followed" ? "greenhouse" : e.hiring_system === "none" ? "none" : null, ats_ref: e.hiring_system === "followed" ? e.slug : null, source: "seed", resolved_at: e.hiring_system === "unknown" ? null : now(), read_at: e.hiring_system === "followed" ? now() : null, openings: live.length, blr_openings: blr, evidence: "QA fixture (imported)" }, { onConflict: "key" }); }
+    const rows = []; for (const r of j.roles.filter((x: ImportedRole) => x.system.listed)) { const es = await employerSlug(r.employer); const seen = r.system.first_seen_days ?? r.posted_days;
+      rows.push({ source: "greenhouse", source_id: `${es}:i-${r.slug}`, employer_key: companyKey(r.employer), company_name: r.employer, title: r.title, location: r.location, url: jobUrl(r.slug), posted_at: ago(seen), posted_text: `${seen} days ago`, salary_text: r.pay, blr: /bengaluru|bangalore/i.test(r.location), description: r.text, first_seen: ago(seen), last_seen: r.state === "gone" ? ago(3) : now(), gone_at: r.state === "gone" ? ago(3) : null, raw: { qa: true, slug: r.slug, imported: true } }); }
+    const up = rows.length ? await db.from("sightings").upsert(rows, { onConflict: "source,source_id" }) : { error: null };
+    return { employers: j.employers.length, roles: rows.length, error: up.error?.message ?? null };
+  }
   async function wipe(u: { id: string; phone: string }) {
     const { data: rs } = await db.from("resumes").select("storage_path").eq("user_id", u.id);
     const paths = (rs ?? []).map((r: any) => r.storage_path).filter(Boolean); if (paths.length) await db.storage.from("resumes").remove(paths).then(() => {}, () => {});
@@ -204,10 +228,71 @@ export function qaRoutes(app: App) {
       radar: run ? { status: run.status, started: run.started, finished: run.finished, resume_id: run.resume_id, by_title: run.by_title, scored: run.scored, items: run.items, violations: run.violations ?? [], error: run.error ?? null } : null,
       previews: (previews as any[]).map((p) => ({ id: p.id, at: p.created_at, before: p.score_before, promised: p.score_after, lines: p.matches })),
       sharpens: (shots as any[]).map((s) => ({ id: s.id, at: s.created_at, done_at: s.done_at, status: s.status, error: s.error, job: s.input?.posting_url ?? null, before: s.output?.before, after: s.output?.after, rewrite: s.output?.rewrite ?? null, evidence: s.output?.evidence ?? null, verification: s.output?.verification ?? null, gate: s.output?.gate ?? null, pdf: s.output?.pdf_check ?? null, pdf_path: s.output?.pdf_path ?? null })),
-      plans, payments, outbox, ai: { calls: ai.length, paise: ai.reduce((n, r) => n + (r.paise ?? 0), 0), by_prompt: Object.entries(ai.reduce((m: Record<string, number>, r) => ((m[`${r.tag} · ${r.model} · ${r.prompt}`] = (m[`${r.tag} · ${r.model} · ${r.prompt}`] ?? 0) + 1), m), {})).map(([k, n]) => ({ step: k, calls: n })) } });
+      failed_steps: (await store.list<any>("qa:http:", 400)).filter((r) => r.user === u.id).slice(0, 40), plans, payments, outbox, ai: { calls: ai.length, paise: ai.reduce((n, r) => n + (r.paise ?? 0), 0), by_prompt: Object.entries(ai.reduce((m: Record<string, number>, r) => ((m[`${r.tag} · ${r.model} · ${r.prompt}`] = (m[`${r.tag} · ${r.model} · ${r.prompt}`] ?? 0) + 1), m), {})).map(([k, n]) => ({ step: k, calls: n })) } });
   });
+  // ---------- importing synthetic candidates and job fixtures ----------
+  /** one candidate package: the résumé PDF and its ground truth. `check` validates and stores nothing. */
+  const pkg = async (c: any, store_it: boolean) => {
+    const f = await c.req.formData().catch(() => null); if (!f) return c.json({ error: "Send a form with: id, resume (the PDF), truth (the JSON file or text)." }, 400);
+    const id = String(f.get("id") ?? "").toUpperCase().trim(); const file = f.get("resume"); const tr = f.get("truth");
+    if (!qaNumber(id)) return c.json({ error: "id must be QA001 to QA100." }, 400);
+    if (!(file instanceof File)) return c.json({ error: "resume must be the PDF file." }, 400);
+    if (file.size > 5 * 1024 * 1024) return c.json({ ok: false, errors: ["the PDF is larger than 5 MB"], warnings: [] }, 422);
+    const buf = Buffer.from(await file.arrayBuffer()); const isPdf = buf.subarray(0, 5).toString("latin1") === "%PDF-";
+    let raw: unknown; try { raw = JSON.parse(tr instanceof File ? await tr.text() : String(tr ?? "")); } catch { return c.json({ ok: false, errors: ["truth is not valid JSON"], warnings: [] }, 422); }
+    let text = "", pages = 0; if (isPdf) try { const x = await extractText(buf, `${id}.pdf`); text = x.text; pages = x.pages; } catch (e: any) { if (!(raw as any)?.layout?.image_only) return c.json({ ok: false, errors: [`the PDF could not be read: ${String(e?.message ?? e).slice(0, 160)}`], warnings: [] }, 422); }
+    const r = checkPackage(raw, { text, pages, bytes: buf.length, isPdf }, id, await knownJobSlugs());
+    const summary = r.truth ? { id, name: r.truth.person.name, roles: r.truth.roles.length, employers: new Set(r.truth.roles.map((x) => x.employer)).size, achievements: r.truth.roles.reduce((n, x) => n + x.achievements.length, 0), pdf_pages: pages, pdf_characters: text.length, expected_for_you: r.truth.expected.radar.for_you.length, expected_never: r.truth.expected.radar.never.length, sharpen_targets: r.truth.expected.sharpen.length } : null;
+    if (!r.ok || !store_it) return c.json({ ok: r.ok, stored: false, errors: r.errors, warnings: r.warnings, summary }, r.ok ? 200 : 422);
+    const replaced = !!(await getImported(id)); const saved = await saveImported(id, r.truth!, buf, { pages, chars: text.length, warnings: r.warnings });
+    await db.from("users").upsert({ phone: qaPhone(qaNumber(id)!), name: r.truth!.person.name, last_seen_at: now() }, { onConflict: "phone" });
+    const u = await userOf(id); if (u) await wipe(u);   // the old résumé's Record, Radar and Sharpens no longer describe this candidate
+    return c.json({ ok: true, stored: true, replaced, errors: [], warnings: r.warnings, summary, sha256: saved.sha256, resume: `${PUBLIC()}/qa/files/${id}.pdf`, note: "This candidate's earlier results were cleared. No model call was made." });
+  };
+  qa.post("/import/check", (c) => pkg(c, false));
+  qa.post("/import", (c) => pkg(c, true));
+  qa.post("/import/jobs", async (c) => {
+    const r = checkJobs(await c.req.json().catch(() => null)); if (!r.ok || c.req.query("check")) return c.json({ ok: r.ok, stored: false, errors: r.errors, warnings: r.warnings, roles: r.jobs?.roles.length ?? 0, employers: r.jobs?.employers.length ?? 0 }, r.ok ? 200 : 422);
+    const all = await saveJobs(r.jobs!); const sync = await syncImportedJobs();
+    return c.json({ ok: !sync.error, stored: true, errors: sync.error ? [sync.error] : [], warnings: r.warnings, imported_total: { employers: all.employers.length, roles: all.roles.length }, pages: r.jobs!.roles.map((x) => jobUrl(x.slug)) });
+  });
+  qa.get("/import", async (c) => { const cs = await listImported(); const j = await getJobs();
+    return c.json({ candidates: cs.map((s) => ({ id: s.truth.id, name: s.truth.person.name, covers: s.truth.summary.covers, imported_at: s.imported_at, pages: s.pages, sha256: s.sha256, warnings: s.warnings, resume: `${PUBLIC()}/qa/files/${s.truth.id}.pdf` })), employers: j.employers.map((e) => ({ name: e.name, careers: `${PUBLIC()}/qa/company/${e.slug}`, hiring_system: e.hiring_system })), roles: j.roles.map((r) => ({ slug: r.slug, url: jobUrl(r.slug), title: r.title, employer: r.employer, function: r.function, level: r.level, location: r.location, state: r.state, ghost_meter: r.ghost_meter ?? null })), functions_in_use: [...new Set((await allJobs()).map((x) => x.fn))] }); });
+  qa.get("/import/truth/:id", async (c) => { const s = await getImported(c.req.param("id").toUpperCase()); return s ? c.json(s.truth) : c.json({ error: "No imported ground truth for that id." }, 404); });
+  qa.post("/import/remove", async (c) => { const id = String((await c.req.json().catch(() => ({})))?.id ?? "").toUpperCase(); const ok = await removeImported(id); const u = ok ? await userOf(id) : null; if (u) await wipe(u); return c.json({ ok, removed: ok ? id : null }); });
+
+  // ---------- the independent evaluation: no model call, nothing taken from the product's own checks ----------
+  async function gather(id: string) {
+    const st = await getImported(id); const u = await userOf(id); if (!st) return { error: `No ground truth has been imported for ${id}. The built-in ${id} has no ground truth to evaluate against.`, code: 404 as const };
+    const source = (await resumeBytes(id).then((r) => (r ? extractText(r.buf, `${id}.pdf`) : null)).catch(() => null))?.text ?? "";
+    const jobs = await allJobs(); if (!u) return { st, source, jobs, user: null, record: null, radar: null, sharpens: [] as SharpenIn[], journeys: [], previews: [] };
+    const { data: res } = await db.from("resumes").select("id, filename, created_at, parsed").eq("user_id", u.id).eq("is_current", true).maybeSingle();
+    const run = await store.get<any>(`radar:run:${u.id}`); const tk = (await db.from("reader_control").select("value").like("key", `radar:targets:v3:${u.id}:%`).order("updated_at", { ascending: false }).limit(1)).data?.[0]?.value as any;
+    const { data: shots } = await db.from("shots").select("id, created_at, status, error, input, output").eq("user_id", u.id).order("created_at", { ascending: false }).limit(12);
+    const sharpens: SharpenIn[] = []; for (const s of (shots ?? []) as any[]) { let pdf = null; const path = s.output?.pdf_path;
+      if (path) try { const d = await db.storage.from("outputs").download(path); if (d.data) { const x = await extractText(Buffer.from(await d.data.arrayBuffer()), "out.pdf"); pdf = { text: x.text, pages: x.pages }; } } catch { /* reported as not_run */ }
+      sharpens.push({ id: s.id, status: s.status, error: s.error, job_url: s.input?.posting_url ?? null, before: s.output?.before, after: s.output?.after, rewrite: s.output?.rewrite ?? null, pdf, self_report: { gate: s.output?.gate ?? null, verification: s.output?.verification ?? null } }); }
+    const { data: previews } = await db.from("previews").select("id, created_at, score_before, score_after").eq("user_id", u.id).order("created_at", { ascending: false }).limit(12);
+    const journeys = (await store.list<any>("qa:http:", 600)).filter((r) => r.user === u.id).map((r) => ({ at: r.at, what: `${r.method} ${r.path} → ${r.status}`, detail: `${r.error ?? ""} (request ${r.rid})`, refusal: r.status < 500 }) as { at: string; what: string; detail: string; refusal?: boolean });
+    for (const s of (shots ?? []) as any[]) if (["failed", "error"].includes(s.status)) journeys.push({ at: s.created_at, what: `Sharpen ${s.id.slice(0, 8)} ${s.status}`, detail: String(s.error ?? "") });
+    if (run?.status === "error") journeys.push({ at: run.finished ?? run.started, what: "Radar run ended in an error", detail: String(run.error ?? "") });
+    return { st, source, jobs, user: u, record: (res?.parsed as any) ?? null, resume: res ? { filename: res.filename, uploaded: res.created_at } : null, radar: run ? { status: run.status, error: run.error ?? null, items: run.items ?? [], targets: tk?.targets ?? tk ?? null } : null, sharpens, journeys, previews: previews ?? [] };
+  }
+  qa.get("/eval", async (c) => { const out: any[] = []; for (const s of await listImported()) { const g = await gather(s.truth.id); if ("error" in g) continue; const e = evaluate({ truth: g.st.truth, source: g.source, record: g.record, radar: g.radar as any, jobs: g.jobs, sharpens: g.sharpens, journeys: g.journeys });
+      out.push({ id: e.candidate, name: e.name, verdict: e.verdict, record: e.record.verdict, radar: e.radar.verdict, sharpen: e.sharpen.map((x) => `${x.job}: ${x.verdict}`), failed_steps: g.journeys.length, fails: [e.record, e.radar, ...e.sharpen].flatMap((x) => x.checks.filter((k) => k.status === "fail").map((k) => k.check)) }); }
+    return c.json({ at: now(), model_calls_made: 0, candidates: out, without_ground_truth: (await db.from("users").select("phone").like("phone", "+9100000%")).data?.map((u: any) => qaIdOf(u.phone)).filter((id: any) => !out.some((o) => o.id === id)) ?? [] }); });
+  qa.get("/eval/meter", async (c) => { const log = await store.list<any>("qa:check:", 800); const by = new Map<string, MeterResult[]>(); for (const r of log) { const k = String(r.url ?? ""); by.set(k, [...(by.get(k) ?? []), { at: r.at, status: r.status, verdict: r.verdict ?? null, score: r.score ?? null, signals: r.signals ?? [], error: r.error ?? null }]); }
+    return c.json({ at: now(), model_calls_made: 0, ...evalMeter(await meterCases(), by) }); });
+  qa.get("/eval/:id", async (c) => { const g = await gather(c.req.param("id").toUpperCase()); if ("error" in g) return c.json({ error: g.error }, g.code);
+    return c.json({ at: now(), model_calls_made: 0, resume_on_file: (g as any).resume ?? null, ...evaluate({ truth: g.st.truth, source: g.source, record: g.record, radar: g.radar as any, jobs: g.jobs, sharpens: g.sharpens, journeys: g.journeys }) }); });
+  /** everything an outside judge needs for one candidate, side by side: the résumé's text, the ground truth, the Record, Radar's list, each Sharpen */
+  qa.get("/eval/:id/bundle", async (c) => { const g = await gather(c.req.param("id").toUpperCase()); if ("error" in g) return c.json({ error: g.error }, g.code); const by = new Map(g.jobs.map((j) => [j.url, j]));
+    return c.json({ candidate: g.st.truth.id, original: { file: `${PUBLIC()}/qa/files/${g.st.truth.id}.pdf`, sha256: g.st.sha256, pages: g.st.pages, text: g.source }, ground_truth: g.st.truth, record: g.record, radar: g.radar ? { ...g.radar, items: (g.radar.items as any[]).filter((i) => i.label).map((i) => ({ slug: by.get(i.url)?.slug ?? null, label: i.label, title: i.title, company: i.company, why: i.why, near: i.near ?? null, posting: by.get(i.url)?.text ?? null })) } : null,
+      sharpen: g.sharpens.map((s) => ({ shot: s.id, status: s.status, error: s.error, job: by.get(s.job_url ?? "")?.slug ?? s.job_url, posting: by.get(s.job_url ?? "")?.text ?? null, product_score: { before: s.before, after: s.after }, document: s.rewrite, delivered_pdf_text: s.pdf?.text ?? null, delivered_pdf_pages: s.pdf?.pages ?? null, product_self_report: s.self_report })), failed_steps: g.journeys }); });
+
   /** the fixture catalogue with expected outcomes */
   qa.get("/fixtures", (c) => c.json({
+    how: "GET /qa/import lists imported candidates and job fixtures; an imported candidate replaces the built-in one with the same id",
     candidates: CANDIDATES.map((x) => ({ id: `QA${String(x.n).padStart(3, "0")}`, name: x.name, function: FUNCTIONS.find((f) => f.key === x.fn)?.name, level: x.level, years: x.years, covers: x.covers, resume: `${PUBLIC()}/qa/files/QA${String(x.n).padStart(3, "0")}.pdf`, expected_radar: { for_you: x.expect.for_you.map(jobUrl), must_not_appear: x.expect.never.map(jobUrl), notes: x.expect.notes } })),
     employers: EMPLOYERS.map((e) => ({ name: e.name, careers: `${PUBLIC()}/qa/company/${e.slug}`, hiring_system: e.feed })),
     roles: JOBS.map((j) => ({ url: jobUrl(j.slug), title: j.title, employer: j.employer, function: j.fn, level: j.level, years: `${j.band[0]}–${j.band[1]}`, pay: j.pay, state: j.state })),

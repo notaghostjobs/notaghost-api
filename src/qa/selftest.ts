@@ -12,7 +12,8 @@ import { sendOtp, verifyOtp, createSession } from "../lib/auth.js";
 import { PROD_SUPABASE_REFS, QA_PHONE, qaPhone, supabaseRef } from "./guard.js";
 import { store, now } from "./state.js";
 import { qaSpend } from "./budget.js";
-import { CANDIDATES, GM, JOBS } from "./fixtures.js";
+import { JOBS } from "./fixtures.js";
+import { expectedFor, meterCases, resumeBytes } from "./catalog.js";
 
 type Line = { check: string; ok: boolean | null; detail: string };
 const PUBLIC = () => (process.env.QA_PUBLIC_URL ?? "").replace(/\/$/, "");
@@ -71,31 +72,31 @@ export const pilotBusy = () => pilotRunning;
 export async function runPilot(app: App, ids: number[], opts: { sharpen: boolean; meter: boolean }) {
   if (pilotRunning) return; pilotRunning = true;
   const started = now(); const spend0 = (await qaSpend()).paise; const people: any[] = []; const meter: any[] = []; let stopped: string | null = null;
-  const save = async (done = false) => store.set("qa:report:pilot", { started, finished: done ? now() : null, build: commit(), real_model_calls: true, note: "Every score, list and verdict below came from the product running against the real model. Expected values are the fixture catalogue's; a mismatch is a finding for QA to judge, not something this report hides.", spend_inr: (((await qaSpend()).paise - spend0) / 100).toFixed(2), stopped, candidates: people, ghost_meter: meter });
+  const save = async (done = false) => store.set("qa:report:pilot", { started, finished: done ? now() : null, build: commit(), real_model_calls: true, note: "This is a run log: what the product produced with the real model. It does not judge quality. The independent evaluation of each candidate against ground truth is at /qa/eval/<id>, and of Ghost Meter at /qa/eval/meter.", spend_inr: (((await qaSpend()).paise - spend0) / 100).toFixed(2), stopped, candidates: people, ghost_meter: meter });
   const call = async (token: string | null, method: string, path: string, body?: unknown) => { const r = await app.request(path, { method, headers: { ...(token ? { authorization: `Bearer ${token}` } : { "x-qa-access": process.env.QA_ACCESS_TOKEN ?? "" }), ...(body instanceof FormData ? {} : { "content-type": "application/json" }) }, body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body) }); const j: any = await r.json().catch(() => ({})); if (j?.code === "qa_budget" || /QA AI budget/.test(String(j?.error))) throw Object.assign(new Error("budget"), { budget: true }); return { status: r.status, j }; };
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   try {
     for (const n of ids) {
-      const cand = CANDIDATES.find((c) => c.n === n); const id = `QA${String(n).padStart(3, "0")}`; const row: any = { id, covers: cand?.covers ?? null, steps: [] as any[] }; people.push(row);
+      const cand = await expectedFor(n); const id = `QA${String(n).padStart(3, "0")}`; const row: any = { id, covers: cand.covers, ground_truth: cand.source, steps: [] as any[] }; people.push(row);
       const step = (name: string, ok: boolean | null, detail: unknown) => row.steps.push({ step: name, ok, detail });
       try {
         const { data: u } = await db.from("users").select("id").eq("phone", qaPhone(n)).maybeSingle(); if (!u) { step("identity", false, "not seeded"); continue; }
         const token = await createSession(u.id);
         // 1 · the résumé, through the same upload a person uses
-        const file = await readFile(join(process.cwd(), "seed", "qa", "resumes", `${id}.pdf`)); const form = new FormData(); form.append("file", new File([new Uint8Array(file)], `${id}.pdf`, { type: "application/pdf" }));
+        const rb = await resumeBytes(id); if (!rb) { step("résumé file", false, "no résumé file for this identity: import one"); continue; } const file = rb.buf; const form = new FormData(); form.append("file", new File([new Uint8Array(file)], `${id}.pdf`, { type: "application/pdf" }));
         const up = await call(token, "POST", "/resumes", form); step("résumé read", up.status < 300, up.status < 300 ? { roles: (up.j?.resume?.parsed?.roles ?? up.j?.parsed?.roles ?? []).map((r: any) => `${r.title} — ${r.company} (${r.start}–${r.end})`) } : up.j);
         if (up.status >= 300) continue;
         // 2 · Radar: the Record, then the run, then the list against the fixture's expectations
         const tg = await call(token, "GET", "/radar/test/targets"); const t = tg.j?.targets ?? {};
-        step("Record", tg.status < 300, tg.status < 300 ? { functions: t.functions, level: t.level, years: t.years, titles: t.titles, one_line: t.one_line, catalogue: cand ? { level: cand.level, years: cand.years } : null } : tg.j);
+        step("Record", tg.status < 300, tg.status < 300 ? { functions: t.functions, level: t.level, years: t.years, titles: t.titles, one_line: t.one_line, catalogue: cand.source ? { level: cand.level, years: cand.years, function: cand.fn } : null } : tg.j);
         await call(null, "POST", "/qa/entitlement", { id, state: "paid", product: "radar" });
         const st = await call(token, "POST", "/radar/test/start", {}); let res: any = null;
         if (st.status < 300) for (let i = 0; i < 90; i++) { await wait(5000); const r = await call(token, "GET", "/radar/test/result"); res = r.j; if (["done", "error"].includes(res?.status)) break; }
         const items: any[] = res?.items ?? []; const shown = (label: string) => items.filter((i) => i.label === label).map((i) => i.url);
-        const want = (cand?.expect.for_you ?? []).map(jobUrl), never = (cand?.expect.never ?? []).map(jobUrl), fy = shown("for_you"), all = items.filter((i) => i.label).map((i) => i.url);
+        const want = cand.for_you.map(jobUrl), never = cand.never.map(jobUrl), fy = shown("for_you"), all = items.filter((i) => i.label).map((i) => i.url);
         step("Radar list", res?.status === "done" ? want.every((w) => fy.includes(w)) && !never.some((x) => all.includes(x)) : false, { status: res?.status ?? st.j, error: res?.error ?? null, for_you: fy, adjacent: shown("adjacent"), stretch: shown("stretch"), expected_for_you_missing: want.filter((w) => !fy.includes(w)), must_not_appear_but_did: never.filter((x) => all.includes(x)) });
         // 3 · Sharpen against the first role the fixture says is theirs: the fit, then (if asked) the document
-        const target = want[0] ?? fy[0]; if (!target) { step("Sharpen fit", null, "no target role for this candidate"); await save(); continue; }
+        const target = cand.sharpen_target ? jobUrl(cand.sharpen_target) : fy[0]; if (!target) { step("Sharpen fit", null, "no target role for this candidate"); await save(); continue; }
         const pv = await call(token, "POST", "/preview", { posting_url: target }); step("Sharpen fit", pv.status < 300, pv.status < 300 ? { job: target, before: pv.j?.score_before, after: pv.j?.score_after, can_lift: pv.j?.can_lift ?? null, counts: pv.j?.counts ?? null } : pv.j);
         if (opts.sharpen && pv.status < 300 && pv.j?.preview_id) {
           await call(null, "POST", "/qa/entitlement", { id, state: "paid", product: "sharpen" });
@@ -111,9 +112,9 @@ export async function runPilot(app: App, ids: number[], opts: { sharpen: boolean
       // Ghost Meter is asked as a signed-in candidate with a plan, so the daily free-check limit does not cut the list short
       const first = `QA${String(ids[0]).padStart(3, "0")}`; await call(null, "POST", "/qa/entitlement", { id: first, state: "paid", product: "sharpen" });
       const { data: u } = await db.from("users").select("id").eq("phone", qaPhone(ids[0])).maybeSingle(); const token = u ? await createSession(u.id) : null;
-      for (const g of GM) {
+      for (const g of await meterCases()) {
         try { const r = await call(token, "POST", "/check", { url: jobUrl(g.slug) }); const got = r.status >= 400 ? "error" : String(r.j?.verdict ?? "none");
-          meter.push({ page: jobUrl(g.slug), what: g.what, expected: g.expect, acceptable: g.verdicts, got, ok: g.verdicts.map((x) => x.toLowerCase()).includes(got.toLowerCase()), score: r.j?.score ?? null, signals: (r.j?.signals ?? []).map((x: any) => x.label ?? x.title ?? x.id ?? x), said: r.status >= 400 ? r.j?.error : undefined }); }
+          meter.push({ page: jobUrl(g.slug), what: g.what, expected: g.expected, acceptable: g.verdicts, got, ok: g.verdicts.map((x) => x.toLowerCase()).includes(got.toLowerCase()), score: r.j?.score ?? null, signals: (r.j?.signals ?? []).map((x: any) => x.label ?? x.title ?? x.id ?? x), said: r.status >= 400 ? r.j?.error : undefined }); }
         catch (e: any) { if (e?.budget) { stopped = "AI budget reached during Ghost Meter"; break; } meter.push({ page: jobUrl(g.slug), ok: false, error: String(e?.message ?? e).slice(0, 200) }); }
         await save();
       }

@@ -1,4 +1,5 @@
 import "./qa/boot.js";   // FIRST: in QA, an unsafe configuration stops the process here, before any client exists
+import { createHash } from "node:crypto";
 import { QA, supabaseRef, QA_PHONE } from "./qa/guard.js";
 import { qaCtx, rid } from "./qa/state.js";
 import { qaRoutes, hasQaAccess } from "./qa/routes.js";
@@ -33,6 +34,17 @@ if (QA) {
     const signed = (c.req.header("authorization") ?? "").startsWith("Bearer ");   // a session: the route's own check decides
     if (!open && !signed && !hasQaAccess(c.req.header("x-qa-access"))) return c.json({ error: "This is the Ghosted QA environment. QA access is required, or it has expired.", request_id: id }, 401);
     await qaCtx.run({ rid: id }, next);
+    // QA keeps a record of every failed product request, and of every Ghost Meter answer, whoever made it and however
+    // (the site or a tool). The evaluation reads these; it never assumes a quiet log means success.
+    const st = c.res.status; const isCheck = path === "/check" && c.req.method === "POST";
+    if (!path.startsWith("/qa/") && c.req.method !== "OPTIONS" && (st >= 400 || isCheck) && !(st === 401 && !signed)) {
+      try { const body: any = await c.res.clone().json().catch(() => ({})); const tok = (c.req.header("authorization") ?? "").slice(7);
+        const user = tok ? ((await db.from("sessions").select("user_id").eq("token", createHash("sha256").update(tok).digest("hex")).maybeSingle()).data?.user_id ?? null) : null;
+        const { store } = await import("./qa/state.js"); const req: any = isCheck ? await c.req.json().catch(() => ({})) : {};
+        if (isCheck) await store.log("check", { rid: id, user, url: String(req?.url ?? body?.url ?? "").split(/[?#]/)[0], status: st, verdict: st < 400 ? body?.verdict ?? null : null, score: body?.score ?? null, signals: (body?.signals ?? []).map((x: any) => ({ n: x?.n, kind: x?.kind, text: x?.text })), error: st >= 400 ? String(body?.error ?? "") : null });
+        if (st >= 400) await store.log("http", { rid: id, user, method: c.req.method, path, status: st, error: String(body?.error ?? "").slice(0, 300) });
+      } catch { /* the record is best-effort; the request itself is unaffected */ }
+    }
   });
 }
 const origins = QA ? env.appOrigin.split(",").map((o) => o.trim()).filter(Boolean)   // QA answers its own front end only, never production's

@@ -75,6 +75,7 @@ What the script contains: `create table / index / type / sequence / function` fr
 | `QA_AI_KEY_IS_SEPARATE` | `yes` |
 | `QA_AI_BUDGET_INR` | `1000` |
 | `QA_AI_CONCURRENCY` | `3` |
+| `QA_PAID_RUNS` | leave unset. Set to `on` only when you approve the automated paid run (the pilot button). |
 | `WA_TOKEN` | `qa-simulated` |
 | `WA_PHONE_ID` | `qa-simulated` |
 | `OTP_PROVIDER` | `whatsapp` |
@@ -127,6 +128,7 @@ Do **not** set: `ADMIN_SECRET`, `RADAR_TESTERS`, `OTP_DEV_CODE`, `OTP_TEST_PHONE
 | `POST /qa/pay {id, product, scenario}` | `success` `failed` `cancelled` `pending` `duplicate_webhook` `delayed_webhook`, through the real webhook handler with a real signature |
 | `POST /qa/clock {id, action, days}` | `radar_morning` `expire_plan` `plan_days_left` `expire_session` `expire_otp` |
 | `POST /qa/fault {kind, times}` | `ai_timeout` `ai_rate_limit` `ai_malformed` `parse_fail` `page_unavailable` `wa_fail` — faults produce errors, never results |
+| `POST /qa/import…` · `GET /qa/eval…` | import synthetic candidates and job fixtures · the independent evaluation (see `docs/QA-IMPORT.md`) |
 | `POST /qa/selftest` · `POST /qa/pilot {from, to, sharpen, meter}` | run the isolation checks · run candidates through the real product |
 
 The AI log and total are never reset: the budget is cumulative.
@@ -138,6 +140,10 @@ The AI log and total are never reset: the budget is cumulative.
 - **17 Ghost Meter pages** — live and strong, legitimate but thin, contradictory dates, stale, not on the employer's system, closed, duplicate text, scam tells, pages that fail to load, and others; each with the acceptable verdicts.
 
 Ghost Meter signals, as numbered in the product: 2 templated description · 3 catch-all location · 4 evergreen language · 5 kitchen-sink requirements · 6 apply route off the employer's system · 7 same description under another employer · 8 first seen long ago · 9 not on the employer's own hiring system · 10 many copies of one title · 11 stale in their system · 12 requisition closed and reopened · 13 reposted · 14 open more than 60/90 days · 15 posted by an agency · 16 many applicants and still open · 17 public "never heard back" record · 18 layoffs or hiring freeze in the last 90 days · 19 openings out of proportion · 20 asks for money or documents · 21 disappeared then returned with a fresh date · 22 reply rate. Signals 2, 5 and 7 are currently switched off in the product; the duplicate-text fixture documents that.
+
+## 5a. Importing candidates and the independent evaluation
+
+See `docs/QA-IMPORT.md`: the package format, what the import refuses, how to test through the normal product, and how each evaluation check is decided. An imported candidate replaces the built-in one with the same id. The built-in QA001–QA010 have no ground truth and cannot be evaluated.
 
 ## 6. Known limitations
 
