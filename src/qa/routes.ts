@@ -12,7 +12,8 @@ import { createSession } from "../lib/auth.js";
 import { companyKey } from "../engine/ghost/canon.js";
 import { refreshRadar } from "../routes/radar.js";
 import { notifyRadarMorning } from "../routes/whatsapp.js";
-import { QA, qaPhone, qaNumber, qaIdOf, QA_PHONE, supabaseRef } from "./guard.js";
+import { QA, qaPhone, qaNumber, qaIdOf, QA_PHONE, supabaseRef, isRealPhone } from "./guard.js";
+import { realRoutes, sweepReal } from "./real.js";
 import { store, setFault, faultState, now, type FaultKind } from "./state.js";
 import { qaSpend, promptVersion } from "./budget.js";
 import { EMPLOYERS, FUNCTIONS, JOBS, GM, CANDIDATES, BAND } from "./fixtures.js";
@@ -41,6 +42,9 @@ const html = (title: string, body: string) => `<!doctype html><html lang="en"><h
 
 export function qaRoutes(app: App) {
   const qa = new Hono();
+  // real résumés (only when authorised): their own area, their own code. Mounted first so no other tool can answer for it.
+  qa.route("/real", realRoutes(app, hasQaAccess));
+  setTimeout(() => void sweepReal().catch(() => {}), 20e3); setInterval(() => void sweepReal().catch(() => {}), 3600e3).unref();
 
   // ---------- public inside QA: the synthetic pages a tester (and our own reader) opens ----------
   qa.get("/jobs/:slug", async (c) => {
@@ -88,7 +92,7 @@ export function qaRoutes(app: App) {
   qa.get("/identities", async (c) => {
     const { data } = await db.from("users").select("id, phone, name").like("phone", "+9100000%").order("phone");
     const out = [];
-    for (const u of data ?? []) { const ex = await expectedFor(qaNumber(qaIdOf(u.phone) ?? "") ?? 0); const cand = ex.source ? { fn: ex.fn, level: ex.level, years: ex.years, covers: ex.covers } : null; const { data: r } = await db.from("resumes").select("filename").eq("user_id", u.id).eq("is_current", true).maybeSingle(); const { data: p } = await db.from("plans").select("product, shots_total, shots_used, expires_at").eq("user_id", u.id).gt("expires_at", now());
+    for (const u of (data ?? []).filter((x: any) => !isRealPhone(x.phone))) { const ex = await expectedFor(qaNumber(qaIdOf(u.phone) ?? "") ?? 0); const cand = ex.source ? { fn: ex.fn, level: ex.level, years: ex.years, covers: ex.covers } : null; const { data: r } = await db.from("resumes").select("filename").eq("user_id", u.id).eq("is_current", true).maybeSingle(); const { data: p } = await db.from("plans").select("product, shots_total, shots_used, expires_at").eq("user_id", u.id).gt("expires_at", now());
       out.push({ id: qaIdOf(u.phone), phone: u.phone, name: u.name, profile: cand ? { function: cand.fn, level: cand.level, years: cand.years, covers: cand.covers, ground_truth: ex.source === "imported" } : null, resume_file: `${PUBLIC()}/qa/files/${qaIdOf(u.phone)}.pdf`, resume_on_file: r?.filename ?? null, plans: p ?? [] }); }
     return c.json({ identities: out });
   });
@@ -108,7 +112,8 @@ export function qaRoutes(app: App) {
     const { data: codes } = await db.from("otp_codes").select("created_at, expires_at, used_at, attempts").eq("phone", phone).order("created_at", { ascending: false }).limit(5);
     return c.json({ phone, messages: rows.slice(0, 5).map((r) => ({ at: r.at, code: r.params?.[0] ?? null, status: r.status, delivered: false })), codes: codes ?? [] });
   });
-  qa.get("/outbox", async (c) => { const id = (c.req.query("id") ?? "").toUpperCase(); const rows = await store.list<any>("qa:outbox:", Number(c.req.query("limit") ?? 100)); return c.json({ messages: id ? rows.filter((r) => r.identity === id) : rows }); });
+  qa.get("/outbox", async (c) => { const id = (c.req.query("id") ?? "").toUpperCase(); const rows = await store.list<any>("qa:outbox:", Number(c.req.query("limit") ?? 100)); const mine = rows.filter((r) => !isRealPhone(`+${String(r.to ?? "").replace(/\D/g, "")}`));   // messages simulated for a real-résumé placeholder are not shown here
+    return c.json({ messages: id ? mine.filter((r) => r.identity === id) : mine }); });
   qa.get("/blocked", async (c) => c.json({ calls: await store.list<any>("qa:blocked:", 100) }));
   qa.get("/ai", async (c) => { const calls = await store.list<any>("qa:ai:2", Number(c.req.query("limit") ?? 100)); return c.json({ spend: await qaSpend(), note: "Every call listed is a real model call. There is no mocked-output mode; simulated faults produce errors, never results.", calls }); });
 
@@ -160,7 +165,7 @@ export function qaRoutes(app: App) {
   qa.post("/reset", async (c) => {
     const b = z.object({ id: z.string().optional(), all: z.boolean().optional(), records: z.boolean().optional() }).safeParse(await c.req.json().catch(() => ({}))); if (!b.success) return c.json({ error: "id or all" }, 400);
     const { data: users } = await db.from("users").select("id, phone").like("phone", "+9100000%");
-    const targets = b.data.all ? users ?? [] : (users ?? []).filter((u: any) => qaIdOf(u.phone) === String(b.data.id ?? "").toUpperCase());
+    const targets = b.data.all ? (users ?? []).filter((u: any) => !isRealPhone(u.phone)) : (users ?? []).filter((u: any) => qaIdOf(u.phone) === String(b.data.id ?? "").toUpperCase());
     for (const u of targets) await wipe(u as any);
     if (b.data.records) for (const p of ["qa:outbox:", "qa:blocked:"]) await store.del(p);   // the AI log and spend are never reset: the budget is cumulative
     return c.json({ ok: true, reset: targets.map((u: any) => qaIdOf(u.phone)) });
@@ -280,7 +285,7 @@ export function qaRoutes(app: App) {
   }
   qa.get("/eval", async (c) => { const out: any[] = []; for (const s of await listImported()) { const g = await gather(s.truth.id); if ("error" in g) continue; const e = evaluate({ truth: g.st.truth, source: g.source, record: g.record, radar: g.radar as any, jobs: g.jobs, sharpens: g.sharpens, journeys: g.journeys });
       out.push({ id: e.candidate, name: e.name, verdict: e.verdict, record: e.record.verdict, radar: e.radar.verdict, sharpen: e.sharpen.map((x) => `${x.job}: ${x.verdict}`), failed_steps: g.journeys.length, fails: [e.record, e.radar, ...e.sharpen].flatMap((x) => x.checks.filter((k) => k.status === "fail").map((k) => k.check)) }); }
-    return c.json({ at: now(), model_calls_made: 0, candidates: out, without_ground_truth: (await db.from("users").select("phone").like("phone", "+9100000%")).data?.map((u: any) => qaIdOf(u.phone)).filter((id: any) => !out.some((o) => o.id === id)) ?? [] }); });
+    return c.json({ at: now(), model_calls_made: 0, candidates: out, without_ground_truth: (await db.from("users").select("phone").like("phone", "+9100000%")).data?.filter((u: any) => !isRealPhone(u.phone)).map((u: any) => qaIdOf(u.phone)).filter((id: any) => !out.some((o) => o.id === id)) ?? [] }); });
   qa.get("/eval/meter", async (c) => { const log = await store.list<any>("qa:check:", 800); const by = new Map<string, MeterResult[]>(); for (const r of log) { const k = String(r.url ?? ""); by.set(k, [...(by.get(k) ?? []), { at: r.at, status: r.status, verdict: r.verdict ?? null, score: r.score ?? null, signals: r.signals ?? [], error: r.error ?? null }]); }
     return c.json({ at: now(), model_calls_made: 0, ...evalMeter(await meterCases(), by) }); });
   qa.get("/eval/:id", async (c) => { const g = await gather(c.req.param("id").toUpperCase()); if ("error" in g) return c.json({ error: g.error }, g.code);
