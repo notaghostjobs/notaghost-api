@@ -11,6 +11,8 @@ import { refileBullets, sanitizeProfile } from "../engine/refile.js";
 import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck, keepProfileFigures, dedupeProfile, polishTense, figures } from "../engine/gate.js";
 import { isOwnDocument } from "../engine/own.js";
 import { cleanTitle } from "../radar/v2.js";
+import { clean } from "../engine/pdftext.js";
+import { healWraps } from "../engine/refile.js";
 import { bandGate } from "../radar/gates.js";
 import { flagOwnership, acceptInto, withdrawFrom, gapsOf } from "../engine/told.js";
 import { resumePdf } from "../engine/pdf.js";
@@ -187,11 +189,18 @@ async function main() {
     ok("a glued title is cut to the title", cleanTitle("Director of Strategy & Operations39 days agoBengaluru (Korma") === "Director of Strategy & Operations" && cleanTitle("Performance / Growth Marketing ManagerBangalore - Head Offic") === "Performance / Growth Marketing Manager", cleanTitle("Performance / Growth Marketing ManagerBangalore - Head Offic"));
     ok("a glued years range is kept as the band", cleanTitle("Backend Developer (Golang)176 days agoBangalore2-5 Full Time") === "Backend Developer (Golang) · 2–5 years" && bandGate(0.25, "", cleanTitle("Backend Developer (Golang)176 days agoBangalore2-5 Full Time")) !== null, String(bandGate(0.25, "", "Backend Developer (Golang) · 2–5 years")));
     ok("an ordinary title is untouched", cleanTitle("Senior Manager, Category Management — Bengaluru") === "Senior Manager, Category Management — Bengaluru" && cleanTitle("Program Manager, Bangalore") === "Program Manager, Bangalore");
+    // a re-read of our own page: letter-spaced headings are one word, a wrapped ending comes back
+    ok("a letter-spaced heading is one word", clean("PR O F I L E\nSome line here\nE X PE R I E N CE\nA B testing on 4 pages") === "PROFILE\nSome line here\nEXPERIENCE\nA B testing on 4 pages", clean("PR O F I L E\nx\nE X PE R I E N CE"));
+    const hw = healWraps({ roles: [{ bullets: ["Data-led decisions: daily price benchmarking using SQL, Tableau and", "Ran weekly reviews with the plant team."] }] }, "PROFILE\nData-led decisions: daily price benchmarking using SQL, Tableau and\nAmplitude.\nRan weekly reviews with the plant team.\nSKILLS");
+    ok("a wrapped ending is restored", hw.profile.roles![0].bullets![0].endsWith("Tableau and Amplitude.") && hw.profile.roles![0].bullets![1] === "Ran weekly reviews with the plant team." && hw.log.length === 1, JSON.stringify(hw.profile.roles));
     // our own document, uploaded again
     const up = JSON.parse(JSON.stringify(o2)); up.roles = pol.rewrite.roles; up.summary = pol.rewrite.summary + " " + pol.rewrite.relevant.join(" ");
     ok("an upload of the document we delivered is recognised", isOwnDocument(up, pol.rewrite));
     const told = JSON.parse(JSON.stringify(pol.rewrite)); told.roles[0].bullets.push("Launched two private label lines with overseas suppliers.", "Owned the annual operating plan for the region."); told.roles[1].bullets.push("Set up a vendor scorecard used by forty suppliers.");
     ok("their original résumé is not mistaken for it", !isOwnDocument(o2, told));
+    // the profile block filed as bullets, a line cut at a wrap: still our document
+    const filed = JSON.parse(JSON.stringify(up)); filed.summary = ""; filed.roles[0].bullets = [pol.rewrite.summary, ...pol.rewrite.relevant, ...filed.roles[0].bullets]; filed.roles[1].bullets = filed.roles[1].bullets.map((b: string, i: number) => i === 0 ? b.split(" ").slice(0, -1).join(" ") : b);
+    ok("our document is recognised however the profile block was filed", isOwnDocument(filed, pol.rewrite));
   }
   if (failed) { console.error(`résumé self-check: ${failed} failed`); process.exit(1); }
   console.log("résumé self-check: all passed");

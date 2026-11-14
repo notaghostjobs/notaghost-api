@@ -3,22 +3,30 @@
 import { db } from "../lib/db.js";
 
 const norm = (s: string) => (s ?? "").toLowerCase().replace(/&amp;/g, "&").replace(/[^a-z0-9]+/g, " ").trim();
-const toks = (s: string) => new Set(norm(s).split(" ").filter((w) => w.length > 2));
 const linesOf = (p: any): string[] => ((p?.roles ?? []) as any[]).flatMap((r) => (r?.bullets ?? []) as string[]).map(norm).filter((l) => l.length > 12);
-/** share of a's lines that are in b */
-const share = (a: string[], b: string[]) => { if (!a.length) return 0; const set = new Set(b); return a.filter((l) => set.has(l)).length / a.length; };
-const contained = (a: string, b: string) => { const A = [...toks(a)], B = toks(b); return A.length ? A.filter((w) => B.has(w)).length / A.length : 0; };
+const shingles = (t: string, n = 5) => { const w = norm(t).split(" ").filter(Boolean); const out: string[] = []; for (let i = 0; i + n <= w.length; i++) out.push(w.slice(i, i + n).join(" ")); return out; };
 
-/** true when the profile read from an upload is the document `rewrite` (same lines both ways, same summary) */
+/** True when the profile read from an upload is the document `rewrite`. Three things must hold, and they are written for
+ *  how a re-read really comes back (13 Nov: our profile block was filed as bullets under a role, and a wrapped line lost
+ *  its last word):
+ *   1. every line we delivered is in the upload — whole, or cut short at a line wrap;
+ *   2. the profile WE wrote (summary and its block) is in the upload, phrase for phrase, wherever the reader filed it —
+ *      this is what their original résumé never has;
+ *   3. the upload has next to nothing else: its lines are ours, or pieces of our profile. */
 export function isOwnDocument(profile: any, rewrite: any): boolean {
   const up = linesOf(profile), ours = linesOf(rewrite);
   if (up.length < 4 || ours.length < 4) return false;
-  if (share(up, ours) < 0.9 || share(ours, up) < 0.9) return false;
-  const sum = String(rewrite?.summary ?? "");
-  if (sum.trim().length < 30) return true;
-  // our summary must be in the upload — in its summary, or wherever the reader filed it
-  const hay = [profile?.summary, profile?.headline, JSON.stringify(profile?.extra_sections ?? [])].filter(Boolean).join(" ");
-  return contained(sum, hay) >= 0.75;
+  const upSet = new Set(up);
+  const cut = (o: string) => up.some((u) => u.length >= 25 && o.startsWith(u));
+  const delivered = ours.filter((o) => upSet.has(o) || cut(o)).length / ours.length;
+  if (delivered < 0.9) return false;
+  const whole = " " + [profile?.headline, profile?.summary, JSON.stringify(profile?.extra_sections ?? []), ...up].map((x) => norm(String(x ?? ""))).join(" | ") + " ";
+  const mine = [String(rewrite?.summary ?? ""), ...((rewrite?.relevant ?? []) as string[])].join(" . ");
+  const sh = shingles(mine);
+  if (sh.length >= 6 && sh.filter((x) => whole.includes(x)).length / sh.length < 0.6) return false;
+  const ourSet = new Set(ours); const mineN = " " + norm(mine) + " ";
+  const explained = up.filter((u) => ourSet.has(u) || ours.some((o) => u.length >= 25 && o.startsWith(u)) || (() => { const s = shingles(u, 4); return s.length > 0 && s.filter((x) => mineN.includes(x)).length / s.length >= 0.6; })()).length / up.length;
+  return explained >= 0.85;
 }
 const same = (a?: string, b?: string) => !!norm(a ?? "") && norm(a ?? "") === norm(b ?? "");
 

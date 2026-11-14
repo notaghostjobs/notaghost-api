@@ -3,7 +3,7 @@ import { notifyDocumentReady } from "../routes/whatsapp.js";
 import { db } from "../lib/db.js";
 import { extractText, fetchPosting } from "./extract.js";
 import { parseResume, runSharpen, type ResumeProfile, type PostingProfile, type Match } from "./sharpen.js";
-import { sanitizeProfile } from "./refile.js";
+import { sanitizeProfile, healWraps } from "./refile.js";
 import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck, keepProfileFigures, dedupeProfile, polishTense } from "./gate.js";
 import { readingOrder, pdfPages } from "./pdftext.js";
 import { resumePdf } from "./pdf.js";
@@ -147,6 +147,13 @@ export async function checkedProfile(resumeId: string, tag = "shot"): Promise<Re
     if (!(profile as any).parse_check.verified) console.error(`[${tag}] PARSE UNVERIFIED`, resumeId, (profile as any).parse_check);
     if (refiled.log.length) console.error(`[${tag}] REFILED`, resumeId, refiled.log);
     await db.from("resumes").update({ parsed: profile, text }).eq("id", resumeId).then(() => {}, () => {});
+  }
+  // a reading made before wrapped endings were restored gets them back from the text on record: no model, once
+  if (res.text && (profile as any).healed !== 1 && !(profile as any).read_from_page) {
+    const h = healWraps(profile, res.text);
+    profile = { ...h.profile, healed: 1 } as ResumeProfile;
+    if (h.log.length) console.error(`[${tag}] HEALED`, resumeId, h.log);
+    await db.from("resumes").update({ parsed: profile }).eq("id", resumeId).then(() => {}, () => {});
   }
   return profile;
 }

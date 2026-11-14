@@ -3,7 +3,8 @@
 export function clean(s: string) {
   // a résumé font's own bullet comes out as a private-use character (\ue12c and the like): no other font can draw it,
   // and it would ride into the document as a box
-  return s.replace(/[\ue000-\uf8ff\ufffd]/g, " ").replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  // a heading set with wide letter-spacing comes out of the page as "PR O F I L E" / "E X PE R I E N CE": it is one word
+  return s.replace(/[\ue000-\uf8ff\ufffd]/g, " ").replace(/\r/g, "").replace(/^[ \t]*(?:[A-Z&]{1,3} ){2,}[A-Z&]{1,4}[ \t]*$/gm, (l) => l.replace(/[ \t]/g, "")).replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** The page's text in reading order — lines rebuilt from glyph positions, top to bottom, left to right. A page laid out

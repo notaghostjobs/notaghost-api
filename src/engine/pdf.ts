@@ -104,7 +104,7 @@ h2{ break-after:avoid; }
 .role-h, li{ break-inside:avoid; }
 .role-h{ break-after:avoid; }
 .role ul li:first-child{ break-before:avoid; }
-h2{ font-size:calc(8.2pt * var(--s)); font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:var(--mid);
+h2{ font-size:calc(8.2pt * var(--s)); font-weight:600; letter-spacing:0.05em; text-transform:uppercase; color:var(--mid);
     padding-bottom:calc(3pt * var(--s)); border-bottom:0.9pt solid var(--rule); margin-bottom:calc(7pt * var(--s)); }
 p.sum{ color:var(--ink); }
 .role + .role{ margin-top:calc(9pt * var(--s) * var(--g)); }
@@ -116,7 +116,8 @@ ul{ list-style:none; margin-top:calc(4pt * var(--s)); }
 ul.rel{ margin-top:calc(6pt * var(--s)); }
 ul.rel li{ font-weight:500; }
 li{ position:relative; padding-left:calc(11pt * var(--s)); margin-top:calc(2.2pt * var(--s) * var(--g)); }
-li::before{ content:""; position:absolute; left:2pt; top:calc(0.58em - 1.2pt); width:3.2pt; height:3.2pt; border-radius:50%; background:var(--accent); }
+/* a real bullet character, in the text itself: screening software and any re-read see where each line starts */
+li::before{ content:"•"; position:absolute; left:1.5pt; top:0; color:var(--accent); font-weight:700; }
 .chips{ display:flex; flex-wrap:wrap; gap:calc(5pt * var(--s)) calc(6pt * var(--s)); }
 .chips span{ background:var(--chip); padding:calc(3pt * var(--s)) calc(8pt * var(--s)); border-radius:3pt; font-size:calc(9.2pt * var(--s)); font-weight:500; color:var(--ink); }
 .skgroups{ display:grid; gap:calc(3pt * var(--s) * var(--g)); }

@@ -66,6 +66,31 @@ export const LABEL = /^(?:key\s+)?(?:responsibilities|highlights|achievements|ac
 /** Deterministic tidy of a parse, before anything reads it: private-use glyphs and leading bullet marks gone, sub-heading
  *  labels stripped off the front of a line (or the line dropped if that is all it was), education lines out of the roles,
  *  exact duplicates within a role kept once. Nothing reworded. */
+/** A line that wrapped on the page and lost its tail in the reading ("…using SQL, Tableau and" / "Amplitude.") gets the
+ *  tail back: the reading's line ends exactly where a page line ends without a full stop, and the page's next line is a
+ *  short ending (one to three words and a full stop) that no other line of the reading starts with. */
+export function healWraps<T extends { roles?: { bullets?: string[] }[] }>(profile: T, text: string): { profile: T; log: string[] } {
+  const log: string[] = [];
+  const lines = String(text ?? "").split("\n").map((l) => l.replace(/^[\s•▪●◦·\-–]+/, "").trim()).filter(Boolean);
+  const nl = lines.map(norm);
+  const next: T = JSON.parse(JSON.stringify(profile));
+  const all = (next.roles ?? []).flatMap((r) => r.bullets ?? []).map(norm);
+  for (const r of next.roles ?? []) r.bullets = (r.bullets ?? []).map((b) => {
+    if (/[.!?]$/.test(b.trim())) return b;
+    const nb = norm(b);
+    for (let i = 0; i + 1 < lines.length; i++) {
+      if (nl[i].split(" ").length < 4 || /[.!?:;]$/.test(lines[i]) || !nb.endsWith(nl[i])) continue;
+      const tail = lines[i + 1], w = nl[i + 1].split(" ").filter(Boolean);
+      if (w.length < 1 || w.length > 3 || !/[.!?]$/.test(tail) || /^[A-Z][A-Z&\/ ]+$/.test(tail)) continue;
+      if (all.some((x) => x !== nb && x.startsWith(nl[i + 1]))) continue;
+      log.push(`wrapped ending restored: …${b.slice(-30)} + ${tail}`);
+      return `${b.trim()} ${tail}`;
+    }
+    return b;
+  });
+  return { profile: next, log };
+}
+
 export function sanitizeProfile(profile: ResumeProfile): { profile: ResumeProfile; log: string[] } {
   const log: string[] = [];
   const next: ResumeProfile = JSON.parse(JSON.stringify(profile));
