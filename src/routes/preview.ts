@@ -16,6 +16,15 @@ import { ownDocumentFor } from "../engine/own.js";
 import { gapsOf, flagOwnership, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, type Facts } from "../engine/told.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(canonicalPostingUrl(u).trim().toLowerCase()).digest("hex");
+/** The description on file for a role Radar follows, by its link: the employer's own words, as the reader took them. */
+async function knownPosting(url: string): Promise<string | null> {
+  const bare = url.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+  const { data } = await db.from("sightings").select("title, company_name, location, description").in("url", [url.trim(), bare, bare + "/"]).not("description", "is", null).limit(1);
+  const s: any = data?.[0];
+  if (!s || String(s.description ?? "").length < 200) return null;
+  return `${s.title ?? ""}\n${s.company_name ?? ""}${s.location ? ` · ${s.location}` : ""}\n\n${s.description}`;
+}
+
 export const preview = new Hono<{ Variables: { user: User } }>();
 preview.use("*", requireUser);
 
@@ -67,14 +76,20 @@ preview.post("/", async (c) => {
   if (body.data.posting_url) {
     const url_hash = hashUrl(body.data.posting_url);
     const { data: cached } = await db.from("postings").select("id, raw_text, parsed").eq("url_hash", url_hash).maybeSingle();
-    if (cached) { postingId = cached.id; postingText = cached.raw_text; parsed = cached.parsed; }
+    // a page that came back as a shell ("Career Portal", 13 characters) is not a posting: it is not kept, and not reused
+    if (cached && (cached.raw_text ?? "").length >= 200) { postingId = cached.id; postingText = cached.raw_text; parsed = cached.parsed; }
     else {
-      postingText = await fetchPosting(body.data.posting_url);
-      const { data: p } = await db.from("postings").insert({ url: body.data.posting_url, url_hash, raw_text: postingText }).select("id").single();
-      postingId = p?.id ?? null;
+      postingText = await fetchPosting(body.data.posting_url).catch(() => "");
+      // a careers portal that draws the job with script gives the fetch nothing. If this is a role we already follow
+      // (it is on Radar, with the employer's own description on file), that description is the posting.
+      if (postingText.length < 200) { const known = await knownPosting(body.data.posting_url); if (known) postingText = known; }
+      if (postingText.length >= 200) {
+        if (cached) { await db.from("postings").update({ raw_text: postingText, parsed: null }).eq("id", cached.id); postingId = cached.id; }
+        else { const { data: p } = await db.from("postings").insert({ url: body.data.posting_url, url_hash, raw_text: postingText }).select("id").single(); postingId = p?.id ?? null; }
+      }
     }
   }
-  if (postingText.length < 80) return c.json({ error: "That posting is too short to work with. Paste the full description." }, 400);
+  if (postingText.length < 80) return c.json({ error: body.data.posting_url ? "That page didn’t give us the job’s text — some career sites only show it inside the browser. Use “change” and paste the job description instead." : "That posting is too short to work with. Paste the full description." }, 400);
 
   let posting = parsed ?? (await parsePosting(postingText));
   // A cached row can hold a page that wasn't the job (a search page or a login wall read before today's fixes): it parses to
