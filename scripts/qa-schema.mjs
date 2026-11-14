@@ -15,8 +15,9 @@ if (/\b(drop|truncate|delete\s+from)\b/i.test(body.replace(/--.*$/gm, ""))) { co
 const out = `-- GHOSTED QA DATABASE · run ONCE, in the NEW QA Supabase project's SQL editor. Never in production.
 -- Generated from this repository's migrations (${files[0]} … ${files.at(-1)}) by scripts/qa-schema.mjs. Nothing comes from production.
 --
--- BEFORE RUNNING: replace PASTE_QA_PROJECT_REF below with the QA project's reference — the 20 letters in its address
+-- BEFORE RUNNING: replace PASTE_QA_PROJECT_REF (it appears in two statements: step 1 and step 5) with the QA project's reference — the 20 letters in its address
 -- (https://<these 20 letters>.supabase.co, also under Project Settings → General → Reference ID).
+-- Or let the script do it: node scripts/qa-schema.mjs --ref=<reference> writes a filled-in copy.
 --
 -- Everything runs in one transaction. The identity check comes first; if it fails, or anything after it fails,
 -- nothing at all is changed.
@@ -48,8 +49,6 @@ begin
      or not exists (select 1 from pg_roles where rolname = 'anon') or not exists (select 1 from pg_roles where rolname = 'authenticated') then
     raise exception 'STOP: this does not look like a Supabase project (its standard roles are missing). Nothing was changed.';
   end if;
-  -- remembered for the last step of this same transaction
-  perform set_config('ghosted.qa_ref', qa_ref, true);
 end
 $check$;
 
@@ -86,14 +85,28 @@ grant execute on all functions in schema public to service_role;
 
 -- ═════════ 5 · MARK THIS DATABASE AS QA ═════════
 -- The QA service starts only if this mark names the same project as its own settings. Production refuses to run on a marked database.
-insert into public.reader_control (key, value)
-values ('qa:environment', jsonb_build_object('name', 'qa', 'database', current_setting('ghosted.qa_ref'), 'created', now()));
+do $mark$
+declare qa_ref text := 'PASTE_QA_PROJECT_REF';
+begin
+  if qa_ref !~ '^[a-z]{20}$' or qa_ref = '${PROD}' then raise exception 'STOP: the project reference in step 5 is not filled in correctly.'; end if;
+  insert into public.reader_control (key, value) values ('qa:environment', jsonb_build_object('name', 'qa', 'database', qa_ref, 'created', now()));
+end
+$mark$;
 
 commit;
 
 select 'QA database ready: ' || count(*) || ' tables, marked for project ' || (select value->>'database' from public.reader_control where key = 'qa:environment') as result
 from pg_tables where schemaname = 'public';
 `;
+const refArg = (process.argv.find((x) => x.startsWith("--ref=")) ?? "").slice(6);
+if (refArg) {
+  if (!/^[a-z]{20}$/.test(refArg) || refArg === PROD) { console.error("--ref must be the QA project's 20-letter reference, and not production's"); process.exit(1); }
+  const places = out.split("'PASTE_QA_PROJECT_REF'").length - 1;
+  if (places !== 2) { console.error(`expected the reference in 2 statements, found ${places}`); process.exit(1); }
+  const filled = out.replaceAll("'PASTE_QA_PROJECT_REF'", `'${refArg}'`).replace(/^-- BEFORE RUNNING:[\s\S]*?\n--\n/m, `-- Filled in for QA project ${refArg}. Run it only in that project: the address bar must show /project/${refArg}/.\n--\n`);
+  writeFileSync(new URL(`../supabase/qa/qa-database.${refArg}.sql`, import.meta.url), filled);
+  console.log(`supabase/qa/qa-database.${refArg}.sql written (reference set in ${places} statements)`); process.exit(0);
+}
 if (process.argv.includes("--check")) { let cur = ""; try { cur = readFileSync(new URL("../supabase/qa/qa-database.sql", import.meta.url), "utf8"); } catch { /* missing */ } if (cur !== out) { console.error("supabase/qa/qa-database.sql is out of date with the migrations: run node scripts/qa-schema.mjs"); process.exit(1); } console.log("supabase/qa/qa-database.sql matches the migrations"); process.exit(0); }
 writeFileSync(new URL("../supabase/qa/qa-database.sql", import.meta.url), out);
 console.log(`supabase/qa/qa-database.sql written from ${files.length} migrations (${out.split("\n").length} lines)`);

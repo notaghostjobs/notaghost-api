@@ -1,8 +1,9 @@
 -- GHOSTED QA DATABASE · run ONCE, in the NEW QA Supabase project's SQL editor. Never in production.
 -- Generated from this repository's migrations (0001_init.sql … 0010_sources.sql) by scripts/qa-schema.mjs. Nothing comes from production.
 --
--- BEFORE RUNNING: replace PASTE_QA_PROJECT_REF below with the QA project's reference — the 20 letters in its address
+-- BEFORE RUNNING: replace PASTE_QA_PROJECT_REF (it appears in two statements: step 1 and step 5) with the QA project's reference — the 20 letters in its address
 -- (https://<these 20 letters>.supabase.co, also under Project Settings → General → Reference ID).
+-- Or let the script do it: node scripts/qa-schema.mjs --ref=<reference> writes a filled-in copy.
 --
 -- Everything runs in one transaction. The identity check comes first; if it fails, or anything after it fails,
 -- nothing at all is changed.
@@ -34,8 +35,6 @@ begin
      or not exists (select 1 from pg_roles where rolname = 'anon') or not exists (select 1 from pg_roles where rolname = 'authenticated') then
     raise exception 'STOP: this does not look like a Supabase project (its standard roles are missing). Nothing was changed.';
   end if;
-  -- remembered for the last step of this same transaction
-  perform set_config('ghosted.qa_ref', qa_ref, true);
 end
 $check$;
 
@@ -431,8 +430,13 @@ grant execute on all functions in schema public to service_role;
 
 -- ═════════ 5 · MARK THIS DATABASE AS QA ═════════
 -- The QA service starts only if this mark names the same project as its own settings. Production refuses to run on a marked database.
-insert into public.reader_control (key, value)
-values ('qa:environment', jsonb_build_object('name', 'qa', 'database', current_setting('ghosted.qa_ref'), 'created', now()));
+do $mark$
+declare qa_ref text := 'PASTE_QA_PROJECT_REF';
+begin
+  if qa_ref !~ '^[a-z]{20}$' or qa_ref = 'vviporiiqwykfcetusta' then raise exception 'STOP: the project reference in step 5 is not filled in correctly.'; end if;
+  insert into public.reader_control (key, value) values ('qa:environment', jsonb_build_object('name', 'qa', 'database', qa_ref, 'created', now()));
+end
+$mark$;
 
 commit;
 

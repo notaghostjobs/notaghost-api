@@ -44,16 +44,15 @@ Checks that run without infrastructure (already run on this branch):
 
 Nothing here touches production. Secrets go into the dashboards only — never into chat or Git.
 
-### A. Supabase — new project
+### A. Supabase — the existing `ghosted-qa` project (reference `hlkdwqkvhrbrkyydaxxt`, Sydney)
 Nothing is run in production. The QA structure comes from this repository's migrations.
-1. supabase.com → **New project**. Name `ghosted-qa`. Region: Mumbai. Generate a database password and keep it in your password manager.
-2. Project Settings → General → copy the **Reference ID** (20 letters). It is not a secret.
-3. Open `supabase/qa/qa-database.sql`. Replace `PASTE_QA_PROJECT_REF` (one place, near the top) with that Reference ID.
-4. In the **QA** project → SQL Editor → paste the whole file → Run. Expect `QA database ready: 16 tables, marked for project <your reference>`.
-   - It checks first that the project is new and empty (no tables, no types, no storage buckets, no sign-in users) and that the reference is not production's. If any check fails it says `STOP: …` and nothing is changed.
-   - It is one transaction: if anything fails part-way, nothing is kept.
-   - It can only be run once. A second run stops at the first check.
-5. Project Settings → API: note the **Project URL** and the **service_role** key for step C.
+1. Open the `ghosted-qa` project → SQL Editor. Check the address bar contains `/project/hlkdwqkvhrbrkyydaxxt/`.
+2. Paste `supabase/qa/preflight.sql` → Run. It is one read-only `SELECT`. The `verdict` column must say `EMPTY — ready for qa-database.sql`.
+3. New query → paste the whole of `supabase/qa/qa-database.hlkdwqkvhrbrkyydaxxt.sql` (the reference is already filled in) → Run. Expect `QA database ready: 16 tables, marked for project hlkdwqkvhrbrkyydaxxt`.
+   - If the editor asks about row level security on new tables, run the query as written: the script turns it on for every table itself.
+   - It checks first that the project is new and empty and that the reference is not production's. If a check fails it says `STOP: …` and nothing is changed.
+   - It is one transaction: if anything fails part-way, nothing is kept. It can only be run once.
+4. Project Settings → API: the **Project URL** (`https://hlkdwqkvhrbrkyydaxxt.supabase.co`) and the **service_role** key go into Render in step C. `QA_SUPABASE_REF` is `hlkdwqkvhrbrkyydaxxt`.
 
 What the script contains: `create table / index / type / sequence / function` from migrations 0001–0010; one added column (`postings.created_at`); a rule that phone numbers must be QA identities; three private storage buckets; row-level security on every table; removal of the public keys' access; the QA mark. It contains no `drop`, `truncate`, `delete` or `update` of existing data (`scripts/qa-schema.mjs` fails if one appears). 0011 (Open's tables) is left out because production has not applied it.
 
