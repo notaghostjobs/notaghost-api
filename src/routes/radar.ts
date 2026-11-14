@@ -428,9 +428,36 @@ export async function unstickRuns(): Promise<{ finished: number; failed: number 
   for (const r of data ?? []) {
     const run = r.value as Run;
     if (run.status === "questions" && run.items?.length >= 0) { run.pq = run.pq ?? []; tally(run); run.status = "done"; run.finished = run.finished ?? new Date().toISOString(); await kv.set(r.key, run); finished++; }
-    else if (isLiveStatus(run.status) && !running.has(r.key.slice("radar:run:".length))) { run.status = "error"; run.error = "The check was interrupted. Run it again — it costs you nothing."; await kv.set(r.key, run); failed++; }
+    else if (isLiveStatus(run.status) && !running.has(r.key.slice("radar:run:".length))) {
+      // a restart cut this run off. If it began in the last half hour the person may still be watching: start it again
+      // with the same answers. Older than that, it is closed and says so.
+      const userId = r.key.slice("radar:run:".length);
+      const recent = Date.now() - Date.parse(run.started ?? "") < 30 * 60e3;
+      const again = recent ? await restartRun(userId, run.answers).catch(() => false) : false;
+      if (again) { finished++; continue; }
+      run.status = "error"; run.error = "This run was interrupted on our side. Run it again — it costs you nothing."; await kv.set(r.key, run); failed++;
+    }
   }
   return { finished, failed };
+}
+async function restartRun(userId: string, a: Answers): Promise<boolean> {
+  const { data: u } = await db.from("users").select("*").eq("id", userId).maybeSingle();
+  const resume = await currentResume(userId);
+  if (!u || !resume || running.has(userId)) return false;
+  const tkey = `radar:targets:v3:${userId}:${resume.id}`;
+  let t = await kv.get<Targets>(tkey); if (!t) { t = await deriveTargets(resume.parsed); await kv.set(tkey, t); }
+  running.add(userId);
+  void runRadar(u as User, resume, t, a);
+  return true;
+}
+/** The master résumé changed: the list built on the old one no longer describes this person. It is cleared, so the next
+ *  visit starts from the new Record. Whether Radar is unlocked is kept. */
+export async function masterChanged(userId: string, resumeId: string): Promise<boolean> {
+  const run = await kv.get<Run>(runKey(userId));
+  if (!run || run.resume_id === resumeId || running.has(userId)) return false;
+  await db.from("reader_control").delete().in("key", [runKey(userId), `radar:seen:${userId}`]);
+  await db.from("reader_control").delete().like("key", `radar:m:${userId}:%`);
+  return true;
 }
 const isLiveStatus = (s: Run["status"]) => s === "targets" || s === "shortlist" || s === "picking" || s === "scoring";
 
@@ -798,6 +825,14 @@ radar.post("/test/unlock", async (c) => {
   const u = c.get("user");
   if (!isTester(u)) return c.json({ error: "Not available on this account." }, 403);
   await kv.set(`radar:unlock:${u.id}`, { at: new Date().toISOString() });
+  // Radar comes with ten Sharpens. A tester gets them too (no money moves), unless they already hold a plan with some left.
+  const nowIso = new Date().toISOString();
+  const { data: plans } = await db.from("plans").select("shots_total, shots_used").eq("user_id", u.id).gt("expires_at", nowIso);
+  if (!(plans ?? []).some((p: any) => p.shots_total > p.shots_used)) {
+    const { data: pay } = await db.from("payments").insert({ user_id: u.id, product: "sharpen", amount_paise: 0, status: "paid", razorpay_order_id: `test_${Date.now()}`, paid_at: nowIso }).select("id").single();
+    const cur = await currentResume(u.id);
+    if (pay) await db.from("plans").insert({ user_id: u.id, product: "sharpen", shots_total: 10, resume_name: (cur?.parsed as any)?.name ?? null, expires_at: new Date(Date.now() + 30 * 86400e3).toISOString(), payment_id: pay.id });
+  }
   return c.json({ ok: true });
 });
 

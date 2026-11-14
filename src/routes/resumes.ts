@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { db, currentResume, type User } from "../lib/db.js";
+import { isOwnDocument } from "../engine/own.js";
+import { masterChanged } from "./radar.js";
 import { currentParsedResume } from "../lib/resumeReady.js";
 import { requireUser } from "../lib/auth.js";
 import { processResume } from "../engine/worker.js";
@@ -24,6 +26,7 @@ resumes.post("/", async (c) => {
   const up = await db.storage.from("resumes").upload(path, buf, { contentType: file.type });
   if (up.error) return c.json({ error: up.error.message }, 500);
 
+  const prev = await currentResume<{ id: string }>(user.id, "id");
   await db.from("resumes").update({ is_current: false }).eq("user_id", user.id);
   const { data, error } = await db
     .from("resumes")
@@ -44,9 +47,23 @@ resumes.post("/", async (c) => {
         return c.json({ error: `This plan is for ${held[0]}’s résumé. A different person needs their own plan.` }, 403);
       }
     }
-    return c.json({ resume: { ...data, parsed } });
+    // A document we wrote for a job is not this person's résumé: it never replaces the one on file (their master, which
+    // Radar and every Sharpen work from). With nothing else on file, it is accepted — there is nothing better to use.
+    if (prev) {
+      const { data: done } = await db.from("shots").select("id, output").eq("user_id", user.id).eq("status", "done").order("done_at", { ascending: false }).limit(25);
+      const mine = (done ?? []).find((sh: any) => sh.output?.rewrite && isOwnDocument(parsed, sh.output.rewrite));
+      if (mine) {
+        await db.from("resumes").delete().eq("id", id);
+        await db.from("resumes").update({ is_current: true }).eq("id", prev.id);
+        const o: any = mine.output;
+        return c.json({ error: `This is the résumé we sharpened for ${o.posting?.company ?? "a role"}${o.posting?.title ? ` · ${o.posting.title}` : ""}. It’s already done, at ${Math.min(97, o.after)}%. Your own résumé stays on file, and we work from that one.`, code: "own_document", shot_id: mine.id, after: Math.min(97, o.after) }, 409);
+      }
+    }
+    const radar_reset = await masterChanged(user.id, id).catch(() => false);
+    return c.json({ resume: { ...data, parsed }, radar_reset });
   } catch (e) {
     await db.from("resumes").delete().eq("id", id);
+    if (prev) await db.from("resumes").update({ is_current: true }).eq("id", prev.id);   // a file that could not be read does not cost them the résumé they had
     throw e;
   }
 });

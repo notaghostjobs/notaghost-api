@@ -36,6 +36,15 @@ async function observe(postingId: string, page: { posted_text?: string; applican
 }
 
 /** Check a link (or pasted text). Returns the stored score if it's current; computes and stores otherwise. */
+/** The role on file for a link Radar follows: title, employer and the employer's own description, while it is still up. */
+async function knownSighting(url: string): Promise<{ title: string; company: string; location: string; description: string } | null> {
+  const bare = url.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
+  const { data } = await db.from("sightings").select("title, company_name, location, description").in("url", [url.trim(), bare, bare + "/"]).is("gone_at", null).not("description", "is", null).limit(1);
+  const s: any = data?.[0];
+  if (!s || String(s.description ?? "").length < 200) return null;
+  return { title: String(s.title ?? ""), company: String(s.company_name ?? ""), location: String(s.location ?? ""), description: String(s.description) };
+}
+
 export async function ghostCheck(input: { url?: string; text?: string; page?: { title?: string; company?: string; location?: string; posted_text?: string; applicants?: number; apply_url?: string; closed?: boolean; source?: string } }, opts: { force?: boolean; quick?: boolean } = {}): Promise<CheckResult> {
   const url = input.url ? (/^https?:\/\//i.test(input.url) ? input.url.trim() : `https://${input.url.trim()}`) : null;
   const NOT_A_JOB = "That link isn’t a job posting. Open the job itself — LinkedIn, Naukri or the company’s careers page — and paste the link from its own page.";
@@ -75,6 +84,17 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
     ? { text: input.text, source: jobKey(url).source, title: input.page?.title ?? null, company: input.page?.company ?? null, location: input.page?.location ?? null, posted_text: input.page?.posted_text ?? null, applicants: input.page?.applicants ?? null, apply_url: input.page?.apply_url ?? null, posted_days: daysFromText(input.page?.posted_text ?? null) }
     : url ? await readPosting(url) : { text: input.text!, source: "pasted" as const };
   raw.text = stripFurniture(raw.text);   // the job, not the job board's panels around it
+  // A careers portal that draws the job with script hands a fetch a shell: no title, no employer, a few words. When the
+  // link is a role we already follow, what the reader took from the employer's own feed is the posting — its title, its
+  // employer, its text — so the verdict is about the job and not about an empty page.
+  if (url && !input.text) {
+    const known = await knownSighting(url).catch(() => null);
+    if (known) {
+      const r: any = raw;
+      if (!readable(raw.text).ok || raw.text.length < 400) raw.text = stripFurniture(`${known.title}\n${known.company}${known.location ? ` · ${known.location}` : ""}\n\n${known.description}`);
+      r.title = r.title || known.title; r.company = r.company || known.company; r.location = r.location || known.location;
+    }
+  }
   let check = readable(raw.text);
   let recovered = false;
   if (!check.ok && url && input.text) {
@@ -101,6 +121,11 @@ export async function ghostCheck(input: { url?: string; text?: string; page?: { 
   const quick = opts.quick !== false;
   const a = quick ? extractFactsRules(raw, url ?? "pasted") : await extractFacts(raw, url ?? "pasted");
   const facts: PostingFacts = { ...a, read_at: new Date().toISOString(), source: raw.source, url: url ?? "", job_key: key, description: raw.text.slice(0, 20000) };
+// a page we could take neither a title nor an employer from was not seen well enough to judge: no verdict, and no check used
+  if (url && !input.text && !String(facts.title ?? "").trim() && !String(facts.company ?? "").trim()) {
+    if (existing?.id) await db.from("postings").delete().eq("id", existing.id).then(() => {}, () => {});
+    throw Object.assign(new Error("We couldn’t see enough of this posting to judge it — some career sites only show the job inside the browser. Open it with the Ghost Meter extension, or paste the posting text."), { status: 422 });
+  }
   if (facts.posted_days == null && facts.posted_text) facts.posted_days = daysFromText(facts.posted_text);
   const ckey = companyKey(facts.company || "");
   const fp = fingerprint(facts.description);

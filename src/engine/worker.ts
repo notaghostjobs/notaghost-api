@@ -70,10 +70,21 @@ export async function runShot(shotId: string) {
   if (plan?.product === "radar") { await charge(shot.user_id, plan.created_at ?? new Date().toISOString(), "sharpen:radar", () => runShotInner(shotId, shot)); return; }
   await withMeter({ tag: `sharpen:${shot.product ?? "sharpen"}`, user: shot.user_id }, () => runShotInner(shotId, shot));
 }
+/** At boot: a Sharpen the restart cut off is picked up again from the start (the person's screen is still waiting on it),
+ *  as long as it began in the last twenty minutes. Nothing is charged twice: the Sharpen was already counted once. */
+export async function resumeShots(): Promise<number> {
+  const since = new Date(Date.now() - 20 * 60e3).toISOString();
+  const { data } = await db.from("shots").select("id").in("status", ["running", "queued"]).gte("created_at", since).limit(20);
+  for (const s of data ?? []) {
+    await db.from("shots").update({ status: "queued" }).eq("id", s.id);
+    void runShot(s.id).catch((e) => console.error("[shots] resume", s.id, (e as Error).message));
+  }
+  return (data ?? []).length;
+}
 /** Shots a restart left behind: "running" or "queued" for more than ten minutes will never finish. They are closed as
  *  failed and the Sharpen returned, so nobody watches a timer that cannot end. Runs at boot. */
 export async function unstickShots(): Promise<number> {
-  const cutoff = new Date(Date.now() - 10 * 60e3).toISOString();
+  const cutoff = new Date(Date.now() - 21 * 60e3).toISOString();   // younger ones were picked up again at boot (resumeShots) and are running
   const { data } = await db.from("shots").select("id, plan_id").in("status", ["running", "queued"]).lt("created_at", cutoff).limit(50);
   for (const s of data ?? []) {
     await db.from("shots").update({ status: "failed", error: "We were interrupted while working on this one. Nothing was used — try again.", output: { detail: "closed at boot: left running by a restart" } }).eq("id", s.id);

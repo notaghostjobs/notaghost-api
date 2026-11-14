@@ -68,8 +68,10 @@ serve({ fetch: app.fetch, port: env.port }, () => console.log(`notaghost-api on 
 // WhatsApp nudges for people who said hello and never sent a link: what is due goes out every 5 minutes; templates are created once at boot
 import { runNudges, ensureTemplates, notifyRadarMorning } from "./routes/whatsapp.js";
 import { radarMorning, panelTick, unstickRuns } from "./routes/radar.js";
-unstickRuns().then((r) => (r.finished || r.failed) && console.log(`[radar] unstuck runs: ${r.finished} finished, ${r.failed} failed`)).catch((e) => console.error("[radar] unstick", e?.message ?? e));
-import { unstickShots } from "./engine/worker.js";
+setTimeout(() => unstickRuns().then((r) => (r.finished || r.failed) && console.log(`[radar] unstuck runs: ${r.finished} finished, ${r.failed} failed`)).catch((e) => console.error("[radar] unstick", e?.message ?? e)), 75e3);
+import { unstickShots, resumeShots } from "./engine/worker.js";
+// 75 seconds after boot: by then the instance this one replaced has stopped, so what is still marked running is truly cut off
+setTimeout(() => resumeShots().then((n) => n && console.log(`[shots] picked up ${n} cut off by a restart`)).catch((e) => console.error("[shots] resume", e?.message ?? e)), 75e3);
 setTimeout(() => unstickShots().then((n) => n && console.log(`[shots] closed ${n} left running by a restart`)).catch((e) => console.error("[shots] unstick", e?.message ?? e)), 60e3);
 setInterval(() => unstickShots().catch(() => {}), 10 * 60e3);
 import { experienceTick } from "./reader/experience.js";
