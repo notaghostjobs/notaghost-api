@@ -51,7 +51,7 @@ const origins = QA ? env.appOrigin.split(",").map((o) => o.trim()).filter(Boolea
   : [...env.appOrigin.split(",").map((o) => o.trim()).filter(Boolean), "https://notaghost.jobs", "https://www.notaghost.jobs", "https://notaghost-web.onrender.com", "http://localhost:5173"];
 app.use("/admin/*", cors({ origin: "*", allowHeaders: ["x-admin", "content-type"], allowMethods: ["GET", "POST", "OPTIONS"] }));  // secret header is the gate
 // the browser extension calls /check from chrome-extension:// origins
-app.use("*", cors({ origin: (o) => (o && (origins.includes(o) || /^(chrome|moz)-extension:\/\//.test(o)) ? o : origins[0]), allowHeaders: ["authorization", "content-type", "x-admin", "x-qa-access", "x-ghosted-anon", "x-ghosted-src-first", "x-ghosted-src-last"] }));
+app.use("*", cors({ origin: (o) => (o && (origins.includes(o) || /^(chrome|moz)-extension:\/\//.test(o)) ? o : origins[0]), allowHeaders: ["authorization", "content-type", "x-admin", "x-qa-access", "x-qa-real-access", "x-qa-tester", "x-ghosted-anon", "x-ghosted-src-first", "x-ghosted-src-last"] }));
 
 app.get("/health", async (c) => {
   const { error } = await db.from("users").select("id", { count: "exact", head: true });

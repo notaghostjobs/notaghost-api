@@ -40,9 +40,46 @@ export function qaProblems(e: Record<string, string | undefined>, now = Date.now
   if (e.QA_AI_KEY_IS_SEPARATE !== "yes") p.push('QA_AI_KEY_IS_SEPARATE must be "yes": confirm ANTHROPIC_API_KEY is a dedicated QA key, not production\'s');
   const cap = Number(e.QA_AI_BUDGET_INR ?? "1000");
   if (!(cap > 0) || cap > 1000) p.push("QA_AI_BUDGET_INR must be between 1 and 1000");
+  // real résumés: off unless the founder has authorised it, in which case it needs its own code, a named authoriser and a short retention
+  if (set("QA_REAL_RESUMES")) {
+    if (e.QA_REAL_RESUMES !== "authorised") p.push('QA_REAL_RESUMES must be empty, or exactly "authorised" once the founder has authorised the use of real résumés');
+    if ((e.QA_REAL_ACCESS_TOKEN ?? "").length < 32) p.push("QA_REAL_ACCESS_TOKEN must be at least 32 characters when real résumés are authorised");
+    if (set("QA_REAL_ACCESS_TOKEN") && e.QA_REAL_ACCESS_TOKEN === e.QA_ACCESS_TOKEN) p.push("QA_REAL_ACCESS_TOKEN must be different from QA_ACCESS_TOKEN: real résumés need their own code");
+    if ((e.QA_REAL_AUTHORISED_BY ?? "").trim().length < 3) p.push("QA_REAL_AUTHORISED_BY must name the person who authorised the use of real résumés");
+    const on = Date.parse(e.QA_REAL_AUTHORISED_ON ?? ""); if (!Number.isFinite(on) || on > now + 86400e3) p.push("QA_REAL_AUTHORISED_ON must be the date of that authorisation (e.g. 2026-11-14)");
+    const days = Number(e.QA_REAL_RETENTION_DAYS ?? ""); if (!Number.isInteger(days) || days < 1 || days > 14) p.push("QA_REAL_RETENTION_DAYS must be a whole number from 1 to 14: real résumés are deleted automatically after that many days");
+  }
+  // reading real public job listings: off unless authorised by a named person
+  if (set("QA_DISCOVERY")) {
+    if (e.QA_DISCOVERY !== "authorised") p.push('QA_DISCOVERY must be empty, or exactly "authorised" to let QA read public hiring-system listings');
+    if ((e.QA_DISCOVERY_AUTHORISED_BY ?? "").trim().length < 3) p.push("QA_DISCOVERY_AUTHORISED_BY must name the person who authorised reading public job listings from QA");
+    const on = Date.parse(e.QA_DISCOVERY_AUTHORISED_ON ?? ""); if (!Number.isFinite(on) || on > now + 86400e3) p.push("QA_DISCOVERY_AUTHORISED_ON must be the date of that authorisation (e.g. 2026-11-14)");
+  }
   // where it lives
   if (!/^https:\/\/[a-z0-9.-]+$/.test(e.QA_PUBLIC_URL ?? "")) p.push("QA_PUBLIC_URL must be this service's own https address (no trailing slash)");
   for (const k of ["QA_PUBLIC_URL", "APP_ORIGIN"]) if (/notaghost\.jobs|notaghost-api\.onrender\.com/i.test(e[k] ?? "")) p.push(`${k} points at production`);
   if (!set("APP_ORIGIN")) p.push("APP_ORIGIN must be the QA front end's address");
   return p;
 }
+
+// ---- real résumés (only when authorised): their own identity range, apart from the synthetic QA001–QA100 ----
+export const REAL_ON = isQa() && process.env.QA_REAL_RESUMES === "authorised";
+export const REAL_MAX = 30;
+export const realPhone = (n: number) => `+9100000${String(2000 + n).padStart(5, "0")}`;           // R001 → +910000002001 (still a number no phone can have)
+export const realNumber = (id: string) => { const m = /^R(\d{3})$/.exec(String(id).toUpperCase()); const n = m ? Number(m[1]) : 0; return n >= 1 && n <= REAL_MAX ? n : 0; };
+export const realId = (n: number) => `R${String(n).padStart(3, "0")}`;
+export const isRealPhone = (phone: string | null | undefined) => /^\+91000000[2]\d{3}$/.test(String(phone ?? ""));
+
+// ---- real job discovery (only when authorised): which outside hosts QA may read, and how ----
+export const DISCOVERY_ON = isQa() && process.env.QA_DISCOVERY === "authorised";
+/** The public hiring systems QA may read. Fixed here, not configurable: five systems, their own hosts only. */
+export const DISCOVERY_SYSTEMS = ["greenhouse", "lever", "ashby", "smartrecruiters", "workday"] as const;
+const DISCOVERY_HOSTS = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|smartrecruiters\.com|myworkdayjobs\.com)$/;
+/** May this request leave QA for a public hiring system? Reading only: GET and HEAD, and the one POST Workday's own job
+ *  search uses. Never anything else — no applying, no sign-in, no form. */
+export function discoveryAllows(host: string, method: string, path: string, on = DISCOVERY_ON): boolean {
+  const h = host.toLowerCase().replace(/:\d+$/, ""); if (!on || !DISCOVERY_HOSTS.test(h)) return false;
+  const m = (method || "GET").toUpperCase(); if (m === "GET" || m === "HEAD") return !/\/(apply|application|login|signin|sign-in|candidate)(\/|$|\?)/i.test(path);
+  return m === "POST" && /myworkdayjobs\.com$/.test(h) && /^\/wday\/cxs\/[^/]+\/[^/]+\/jobs\/?$/.test(path.split("?")[0]);
+}
+export const isDiscoveryHost = (host: string) => DISCOVERY_HOSTS.test(host.toLowerCase().replace(/:\d+$/, ""));
