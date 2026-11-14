@@ -1,5 +1,6 @@
 // Orchestrates the ghost check. Rule: a posting's score only changes when a FACT changes, and every change is logged.
 const GATE_SINCE = "2026-11-06T11:45:00Z";
+import { cleanTitle } from "../../radar/v2.js";
 import { db } from "../../lib/db.js";
 import { readPosting, extractFacts, extractFactsRules, daysFromText } from "./read.js";
 import { findAts, matchTitle } from "./ats.js";
@@ -42,7 +43,9 @@ async function knownSighting(url: string): Promise<{ title: string; company: str
   const { data } = await db.from("sightings").select("title, company_name, location, description").in("url", [url.trim(), bare, bare + "/"]).is("gone_at", null).not("description", "is", null).limit(1);
   const s: any = data?.[0];
   if (!s || String(s.description ?? "").length < 200) return null;
-  return { title: String(s.title ?? ""), company: String(s.company_name ?? ""), location: String(s.location ?? ""), description: String(s.description) };
+  // some boards hand over the title with the city and the listing's age glued on, and repeat it as the location
+  const loc = String(s.location ?? ""); const place = /bengaluru|bangalore/i.test(loc) ? "Bengaluru" : loc.length <= 60 && loc !== s.title ? loc : "";
+  return { title: cleanTitle(s.title).replace(/ · \d+–\d+ years$/, ""), company: String(s.company_name ?? ""), location: place, description: String(s.description) };
 }
 
 export async function ghostCheck(input: { url?: string; text?: string; page?: { title?: string; company?: string; location?: string; posted_text?: string; applicants?: number; apply_url?: string; closed?: boolean; source?: string } }, opts: { force?: boolean; quick?: boolean } = {}): Promise<CheckResult> {

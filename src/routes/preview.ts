@@ -13,6 +13,7 @@ import { parsePosting, matchAndGrade, type ResumeProfile, type Match } from "../
 import { radarMatchesFor } from "./radar.js";
 import { withMeter } from "../engine/meter.js";
 import { ownDocumentFor } from "../engine/own.js";
+import { cleanTitle } from "../radar/v2.js";
 import { gapsOf, flagOwnership, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, type Facts } from "../engine/told.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(canonicalPostingUrl(u).trim().toLowerCase()).digest("hex");
@@ -22,7 +23,7 @@ async function knownPosting(url: string): Promise<string | null> {
   const { data } = await db.from("sightings").select("title, company_name, location, description").in("url", [url.trim(), bare, bare + "/"]).not("description", "is", null).limit(1);
   const s: any = data?.[0];
   if (!s || String(s.description ?? "").length < 200) return null;
-  return `${s.title ?? ""}\n${s.company_name ?? ""}${s.location ? ` · ${s.location}` : ""}\n\n${s.description}`;
+  return `${cleanTitle(s.title)}\n${s.company_name ?? ""}${/bengaluru|bangalore/i.test(s.location ?? "") ? " · Bengaluru" : ""}\n\n${s.description}`;
 }
 
 export const preview = new Hono<{ Variables: { user: User } }>();
