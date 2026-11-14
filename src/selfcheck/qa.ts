@@ -132,5 +132,33 @@ ok("the access token is needed, exact, and expires", hasQaAccess("a".repeat(40))
   ok("Radar for a real résumé: a closed role recommended and an explanation with a figure from nowhere are failures", st(br, /No closed role/) === "fail" && st(br, /Relevance explanations: present/) === "fail");
   ok("a Radar run that errored is a failure", checkRadar(text, { status: "error", error: "boom", items: [] }, tg, jobs as any, null).verdict === "fail");
 }
+
+// ---------- real discovery: off by default, read-only when on; the budget across a restart; Sharpen against a real résumé ----------
+{
+  console.log("QA discovery, budget and Sharpen-comparison self-check");
+  const D = { QA_DISCOVERY: "authorised", QA_DISCOVERY_AUTHORISED_BY: "Founder Name", QA_DISCOVERY_AUTHORISED_ON: "2026-11-14" };
+  ok("discovery: a complete authorisation is accepted; a partial one is refused", qaProblems({ ...good, ...D }, NOW).length === 0 && bad({ ...D, QA_DISCOVERY: "on" }, /QA_DISCOVERY/) && bad({ ...D, QA_DISCOVERY_AUTHORISED_BY: "" }, /AUTHORISED_BY/) && bad({ ...D, QA_DISCOVERY_AUTHORISED_ON: "" }, /AUTHORISED_ON/));
+  const { discoveryAllows } = await import("../qa/guard.js"); const A = (h: string, m: string, p: string, on = true) => discoveryAllows(h, m, p, on);
+  ok("discovery off: no hiring-system host may be read", !A("boards-api.greenhouse.io", "GET", "/v1/boards/x/jobs", false) && !A("api.lever.co", "GET", "/v0/postings/x", false));
+  ok("discovery on: the five systems' own hosts may be read", A("boards-api.greenhouse.io", "GET", "/v1/boards/x/jobs") && A("job-boards.eu.greenhouse.io", "GET", "/x/jobs/1") && A("api.lever.co", "GET", "/v0/postings/x?mode=json") && A("api.ashbyhq.com", "GET", "/posting-api/job-board/x") && A("jobs.smartrecruiters.com", "GET", "/X/1-title") && A("visa.wd5.myworkdayjobs.com", "POST", "/wday/cxs/visa/Visa/jobs") && A("visa.wd5.myworkdayjobs.com", "GET", "/wday/cxs/visa/Visa/job/Bengaluru/Engineer_R1"));
+  ok("discovery on: nothing but reading — no POST elsewhere, no apply or sign-in page, no other site", !A("api.lever.co", "POST", "/v0/postings/x/1") && !A("boards-api.greenhouse.io", "POST", "/v1/boards/x/jobs/1") && !A("visa.wd5.myworkdayjobs.com", "POST", "/wday/cxs/visa/Visa/job/x/apply") && !A("jobs.lever.co", "GET", "/x/1/apply") && !A("visa.wd5.myworkdayjobs.com", "GET", "/en-US/Visa/login") && !A("api.lever.co", "DELETE", "/v0/postings/x") && !A("www.linkedin.com", "GET", "/jobs") && !A("www.naukri.com", "GET", "/") && !A("evilgreenhouse.io", "GET", "/") && !A("greenhouse.io.evil.com", "GET", "/"));
+  const { isFixtureUrl } = await import("../qa/pool.js"); ok("a QA fixture is never mistaken for a real listing", isFixtureUrl("https://ghosted-qa-api.example/qa/jobs/cat-head") && !isFixtureUrl("https://jobs.lever.co/cred/abc"));
+  // a fresh process with the cap already recorded in the database refuses the next model call
+  const { store } = await import("../qa/state.js"); const realGet = store.get; (store as any).get = async (k: string) => (k === "qa:ai:total" ? { paise: 100000, calls: 412 } : null);
+  const { qaBefore, qaSpend } = await import("../qa/budget.js"); const sp = await qaSpend(); let stopped = ""; try { await qaBefore(); } catch (e: any) { stopped = e?.code ?? String(e?.message); } (store as any).get = realGet;
+  ok("AI budget: a process that starts with ₹1,000 already recorded reads it from the database and refuses the next call", sp.paise === 100000 && sp.left_paise === 0 && stopped === "qa_budget", `${sp.paise} · ${stopped}`);
+  const { checkSharpen } = await import("../qa/realcheck.js"); const st = (s: any, re: RegExp) => s.checks.find((k: any) => re.test(k.check))?.status;
+  const text = "Asha Rao\nExperience\nSenior Product Manager, Finch Pay\nApr 2021 - Present\nGrew merchants from 8,000 to 25,000. Ran 12 experiments on onboarding.\nProduct Analyst, Larkspur Consulting\nJul 2018 - Mar 2021\nBuilt 12 dashboards in SQL.\nEducation\nB.E., PES University, 2014 - 2018\nSkills: SQL, experimentation, payments";
+  const rec = { name: "Asha Rao", roles: [{ company: "Finch Pay", title: "Senior Product Manager", start: "Apr 2021", end: "Present", bullets: ["Grew merchants from 8,000 to 25,000.", "Ran 12 experiments on onboarding."] }, { company: "Larkspur Consulting", title: "Product Analyst", start: "Jul 2018", end: "Mar 2021", bullets: ["Built 12 dashboards in SQL."] }], education: [{ school: "PES University", degree: "B.E." }] };
+  const jd = "Group Product Manager. Own merchant growth and experimentation. Kubernetes experience preferred. 8+ years.";
+  const rwOk = { headline: "Senior Product Manager", summary: "Product manager in payments who grew merchants from 8,000 to 25,000.", roles: structuredClone(rec.roles), skills: ["SQL", "experimentation", "payments"], education: [{ school: "PES University", degree: "B.E." }], relevant: ["Ran 12 experiments on onboarding."] };
+  const pdfOf = (rw: any) => ({ pages: 1, text: ["Asha Rao", "Experience", ...rw.roles.flatMap((r: any) => [r.title, r.company, `${r.start} - ${r.end}`, ...r.bullets]), "Education", "PES University", "Skills", "SQL, experimentation, payments. ".repeat(12)].join("\n") });
+  const good2 = checkSharpen(text, rec, { status: "done", rewrite: rwOk, pdf: pdfOf(rwOk), before: 55, after: 78 }, jd);
+  ok("Sharpen of a real résumé: a faithful document has no failure and is still left for a person to judge", good2.counts.fail === 0 && good2.verdict === "needs_review", JSON.stringify(good2.checks.filter((k: any) => k.status === "fail")));
+  const rwBad = structuredClone(rwOk); rwBad.roles[0].title = "Group Product Manager"; rwBad.roles[1].end = "Dec 2021"; rwBad.roles[0].bullets = ["Grew merchants 300% to 40,000."]; rwBad.skills.push("Kubernetes"); rwBad.education.push({ school: "Stanford University", degree: "MBA" });
+  const b2 = checkSharpen(text, rec, { status: "done", rewrite: rwBad, pdf: { pages: 1, text: "E X P E R I E N C E" } }, jd);
+  ok("Sharpen of a real résumé: a promoted title, a moved date, an invented figure, a skill lifted from the posting, added education and an unreadable PDF are each caught", [/job titles unchanged/, /dates unchanged/, /Numerical/, /skills/, /education unchanged/, /Delivered PDF: text/].every((re) => st(b2, re) === "fail"), JSON.stringify(b2.checks.map((k: any) => `${k.check}:${k.status}`)));
+  ok("a Sharpen that failed is a failure; one with no document is not a pass", checkSharpen(text, rec, { status: "failed", error: "x" }, jd).verdict === "fail" && checkSharpen(text, rec, { status: "done", rewrite: null }, jd).verdict !== "pass");
+}
 if (failed) { console.error(`QA safety self-check: ${failed} failed`); process.exit(1); }
 console.log("QA safety self-check: all passed"); process.exit(0);

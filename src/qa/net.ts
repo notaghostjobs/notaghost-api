@@ -2,12 +2,14 @@
 // a simulator that writes to the QA outbox; SMS and email providers are refused; anything that is not QA's own database,
 // QA's own pages, or the AI provider is refused unless its host was explicitly allowed for a bounded real-listing check.
 // This is what makes "no real message" and "not the production database" true for background jobs too, not only routes.
-import { QA, SIMULATED, supabaseRef, qaIdOf, PROD_SUPABASE_REFS } from "./guard.js";
+import { QA, SIMULATED, supabaseRef, qaIdOf, PROD_SUPABASE_REFS, DISCOVERY_ON, discoveryAllows, isDiscoveryHost } from "./guard.js";
 import { store, takeFault } from "./state.js";
 import http from "node:http";
 import https from "node:https";
 import { chromium } from "playwright-core";
 
+/** how many requests have gone to each outside hiring-system host since this process started */
+export const outside = new Map<string, number>();
 const hostOf = (u: string) => { try { return new URL(u).host.toLowerCase(); } catch { return ""; } };
 export function installQaNetwork() {
   if (!QA) return;
@@ -21,6 +23,13 @@ export function installQaNetwork() {
     if (PROD_SUPABASE_REFS.some((r) => h.startsWith(r))) { await store.log("blocked", { host: h, why: "production database" }); throw new Error("QA: a call to the production database was refused"); }
     if (h === "graph.facebook.com") return simulateWhatsApp(url, init);
     if (/msg91\.com$|resend\.com$|twilio\.com$|sendgrid\.(com|net)$/.test(h)) { await store.log("outbox", { channel: /msg91/.test(h) ? "sms" : "email", status: "blocked", host: h, body: String(init?.body ?? "").slice(0, 2000) }); throw new Error(`QA: sending through ${h} is not allowed`); }
+    if (!allowed(h) && isDiscoveryHost(h)) {
+      // a public hiring system: read-only, and only while discovery is authorised. Counted per host; refusals are recorded.
+      const method = String(init?.method ?? (typeof input === "object" ? input?.method : "") ?? "GET"); let path = "/"; try { const u = new URL(url); path = u.pathname + u.search; } catch { /* refused below */ }
+      if (discoveryAllows(h, method, path)) { outside.set(h, (outside.get(h) ?? 0) + 1); return real(input, { ...(init ?? {}), credentials: "omit" }); }
+      await store.log("blocked", { host: h, url: url.slice(0, 300), why: DISCOVERY_ON ? `only reading is allowed on a hiring system (${method.toUpperCase()} ${path.slice(0, 80)})` : "reading public job listings is not authorised in this QA environment" });
+      return new Response("QA: not allowed", { status: 599 });
+    }
     if (!allowed(h)) {
       await store.log("blocked", { host: h, url: url.slice(0, 300), why: "not an allowed host in QA" });
       return new Response("QA: this host is not reachable from the QA environment", { status: 599 });
@@ -44,13 +53,13 @@ export function installQaNetwork() {
   // resolve inside the browser, so a page cannot be opened on the real internet from QA unless its host was allowed.
   const names = [own, ...extra, "localhost", "127.0.0.1"].filter(Boolean).map((h) => h.replace(/:\d+$/, ""));
   const launch = chromium.launch.bind(chromium);
-  const inside = (u: string) => /^(data|about|blob):/.test(u) || names.includes(hostOf(u).replace(/:\d+$/, ""));
+  const inside = (u: string, method = "GET") => /^(data|about|blob):/.test(u) || names.includes(hostOf(u).replace(/:\d+$/, "")) || (() => { try { const x = new URL(u); return discoveryAllows(x.host, method, x.pathname + x.search); } catch { return false; } })();
   (chromium as any).launch = async (o: any = {}) => {
-    const b: any = await launch({ ...o, args: [...(o.args ?? []), `--host-resolver-rules=MAP * ~NOTFOUND, ${names.map((n) => `EXCLUDE ${n}`).join(", ")}`] });
+    const b: any = await launch(o);
     // and, whatever the machine's network settings are, every request a page makes is checked against the same list
     const newContext = b.newContext.bind(b);
     b.newContext = async (...a: any[]) => { const ctx = await newContext(...a);
-      await ctx.route("**/*", (route: any) => { const u = route.request().url(); if (inside(u)) return route.continue();
+      await ctx.route("**/*", (route: any) => { const u = route.request().url(); if (inside(u, route.request().method())) return route.continue();
         if (route.request().isNavigationRequest()) void store.log("blocked", { host: hostOf(u), why: "the page-opening browser may only open QA's own pages" }).catch(() => {});
         return route.abort("namenotresolved"); });
       return ctx; };

@@ -14,6 +14,9 @@ import { refreshRadar } from "../routes/radar.js";
 import { notifyRadarMorning } from "../routes/whatsapp.js";
 import { QA, qaPhone, qaNumber, qaIdOf, QA_PHONE, supabaseRef, isRealPhone } from "./guard.js";
 import { realRoutes, sweepReal } from "./real.js";
+import { discoveryRoutes, realPool, SOURCES } from "./discovery.js";
+import { qaPoolMode } from "./pool.js";
+import { DISCOVERY_ON, REAL_ON } from "./guard.js";
 import { store, setFault, faultState, now, type FaultKind } from "./state.js";
 import { qaSpend, promptVersion } from "./budget.js";
 import { EMPLOYERS, FUNCTIONS, JOBS, GM, CANDIDATES, BAND } from "./fixtures.js";
@@ -44,6 +47,7 @@ export function qaRoutes(app: App) {
   const qa = new Hono();
   // real résumés (only when authorised): their own area, their own code. Mounted first so no other tool can answer for it.
   qa.route("/real", realRoutes(app, hasQaAccess));
+  qa.route("/discovery", discoveryRoutes());
   setTimeout(() => void sweepReal().catch(() => {}), 20e3); setInterval(() => void sweepReal().catch(() => {}), 3600e3).unref();
 
   // ---------- public inside QA: the synthetic pages a tester (and our own reader) opens ----------
@@ -118,6 +122,25 @@ export function qaRoutes(app: App) {
   qa.get("/ai", async (c) => { const calls = await store.list<any>("qa:ai:2", Number(c.req.query("limit") ?? 100)); return c.json({ spend: await qaSpend(), note: "Every call listed is a real model call. There is no mocked-output mode; simulated faults produce errors, never results.", calls }); });
 
   qa.post("/selftest", async (c) => c.json(await isolationReport(app)));
+  /** Is QA ready for the real-résumé run? One line per condition, each read from the running service. No résumé content. */
+  qa.get("/readiness", async (c) => {
+    const iso = await store.get<any>("qa:report:isolation"); const spend = await qaSpend(); const stored = await store.get<{ paise: number; calls: number }>("qa:ai:total"); const pool = await realPool().catch(() => null); const mode = await qaPoolMode(); const disc = await store.get<any>("qa:discovery:state");
+    const line = (check: string, ready: boolean, detail: string) => ({ check, ready, detail }); const build = (process.env.RENDER_GIT_COMMIT ?? "local").slice(0, 7);
+    const lines = [
+      line("Isolation self-test on this build passes", !!iso && iso.build === build && iso.failed === 0, iso ? `build ${iso.build}: ${iso.passed} passed, ${iso.failed} failed, ${iso.not_run} not run (${iso.at})` : "not run yet"),
+      line("No real message, SMS, e-mail or payment is possible", !!iso && ["WhatsApp is simulated", "SMS provider is refused", "Email provider is refused", "Payments are test mode only"].every((k) => iso.checks?.some((x: any) => x.check.startsWith(k) && x.ok === true)), "from the self-test above"),
+      line("AI budget: the total is held in the database and survives a restart", (stored?.paise ?? 0) === spend.paise, `database ₹${((stored?.paise ?? 0) / 100).toFixed(2)}, this process ₹${(spend.paise / 100).toFixed(2)} of ₹${(spend.cap_paise / 100).toFixed(0)}; ${spend.calls} call(s) recorded`),
+      line("AI budget has room", spend.left_paise > 0, `₹${(spend.left_paise / 100).toFixed(2)} left; calls are refused at the cap`),
+      line("Real résumés are authorised and separately protected", REAL_ON, REAL_ON ? `authorised by ${process.env.QA_REAL_AUTHORISED_BY} on ${process.env.QA_REAL_AUTHORISED_ON}; deleted after ${process.env.QA_REAL_RETENTION_DAYS} day(s); second code required` : "not authorised: nothing can be uploaded"),
+      line("Reading public job listings is authorised", DISCOVERY_ON, DISCOVERY_ON ? `authorised by ${process.env.QA_DISCOVERY_AUTHORISED_BY} on ${process.env.QA_DISCOVERY_AUTHORISED_ON}; five hiring systems, read-only` : "not authorised: no outside host can be read"),
+      line("Real listings have been read", (disc?.read ?? []).filter((x: any) => x.ok).length > 0, `${(disc?.read ?? []).filter((x: any) => x.ok).length} of ${SOURCES.length} employers read, ${(disc?.read ?? []).filter((x: any) => !x.ok).length} failed`),
+      line("Real Bengaluru roles with descriptions are held", (pool?.live_bengaluru_with_description ?? 0) > 0, pool ? `${pool.live_bengaluru} live Bengaluru roles, ${pool.live_bengaluru_with_description} with their description; last read ${pool.last_read ?? "never"}` : "could not be counted"),
+      line("The real listings are fresh", !!pool?.last_read && Date.now() - Date.parse(pool.last_read) < 24 * 3600e3, pool?.last_read ? `last read ${Math.round((Date.now() - Date.parse(pool.last_read)) / 3600e3)} hour(s) ago` : "never read"),
+      line("Radar is looking at real listings, not fixtures", mode === "real", `pool is “${mode}”`),
+      line("The automated synthetic pilot is off", process.env.QA_PAID_RUNS !== "on", process.env.QA_PAID_RUNS === "on" ? "QA_PAID_RUNS is on" : "off"),
+    ];
+    return c.json({ at: now(), build, ready_for_real_resume_run: lines.every((l) => l.ready), not_ready: lines.filter((l) => !l.ready).map((l) => l.check), lines });
+  });
   /** the pilot: the synthetic candidates through the real product with the real model. Runs in the background; read /qa/report. */
   qa.post("/pilot", async (c) => {
     const b = z.object({ from: z.number().int().min(1).max(100).default(1), to: z.number().int().min(1).max(100).default(10), sharpen: z.boolean().default(true), meter: z.boolean().default(true) }).safeParse(await c.req.json().catch(() => ({})));

@@ -27,10 +27,10 @@ export function when(s: string | undefined | null): { y: number; m: number } | n
   const mi = MONTHS.findIndex((m) => new RegExp(`\\b${m}`).test(rest)); const num = rest.match(/\b(0?[1-9]|1[0-2])\b/)?.[1];
   return { y: Number(y), m: mi >= 0 ? mi + 1 : num ? Number(num) : 0 };
 }
-const sameWhen = (truth: string, got: string) => { const a = when(truth), b = when(got); if (!a || !b) return false; return a.y === b.y && (a.m === 0 || b.m === 0 || a.m === b.m); };
+export const sameWhen = (truth: string, got: string) => { const a = when(truth), b = when(got); if (!a || !b) return false; return a.y === b.y && (a.m === 0 || b.m === 0 || a.m === b.m); };
 const STOP = new Set("a an and the of for in on at to with by from as is are was were be been it its this that or per into across over under via our their his her my we i".split(" "));
 const words = (s: string) => norm(s).split(" ").filter((w) => w.length > 2 && !STOP.has(w));
-const alike = (a: string, b: string) => { const x = norm(a), y = norm(b); if (!x || !y) return false; if (x === y || x.includes(y) || y.includes(x)) return true; const wa = new Set(words(a)), wb = words(b); const hit = wb.filter((w) => wa.has(w)).length; return wb.length > 0 && hit / Math.max(wa.size, wb.length) >= 0.75; };
+export const alike = (a: string, b: string) => { const x = norm(a), y = norm(b); if (!x || !y) return false; if (x === y || x.includes(y) || y.includes(x)) return true; const wa = new Set(words(a)), wb = words(b); const hit = wb.filter((w) => wa.has(w)).length; return wb.length > 0 && hit / Math.max(wa.size, wb.length) >= 0.75; };
 const has = (hay: string, needle: string) => mentions(hay, needle);
 /** is a statement still there? by its figures when it has any, otherwise by most of its distinctive words */
 export function stated(hay: string, fact: string): boolean { const f = figures(fact); const got = new Set(figures(hay)); if (f.length) return f.every((n) => got.has(n)); const w = words(fact); const h = new Set(words(hay)); return w.length > 0 && w.filter((x) => h.has(x)).length / w.length >= 0.7; }

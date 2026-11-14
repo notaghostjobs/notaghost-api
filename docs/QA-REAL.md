@@ -1,7 +1,7 @@
 # Ghosted QA — Radar test with original résumés (restricted)
 
 This is a separate, switched-off area of the QA environment for running real, unmodified résumés through Radar.
-It is on the branch `qa-real-radar`. It is **not** on `qa`, not deployed, and does nothing until the founder authorises it.
+It is on `qa` (never `main`). It does nothing until the QA API is deployed with the founder's authorisation set.
 
 ## What it does
 
@@ -41,14 +41,39 @@ There is no ground truth for a real résumé. The rules catch definite errors; w
 ## Limits
 - Not yet run against the live QA service. The checks and the authorisation rules are tested in the build; the upload, run and report routes are not.
 - The cost of one Radar run in QA is not known yet. Run two first.
-- QA holds 60 invented roles in ten functions (plus anything imported). A person outside those functions will get no recommendation; that is a gap in the fixtures, not a Radar miss.
+- With the pool on fixtures, QA holds only invented roles; a real-résumé run is refused in that state unless forced.
 - Radar leaves out the person's current employer by design.
 - Image-only PDFs: the product may or may not read them; the page shows the error if it cannot.
 
-## Deploying (only after authorisation)
+## Real job discovery
 
-1. Tell Claude the authorisation is given. Claude merges `qa-real-radar` into `qa` in both repositories (never into `main`). The QA site rebuilds by itself.
-2. Render → `ghosted-qa-api` → Environment → add:
+Radar in QA can look at real, current Bengaluru listings instead of invented fixtures. Off unless `QA_DISCOVERY=authorised`.
+
+- **Sources**: the employers in `src/reader/data/known.ts` (hiring-system references verified by hand on 9 Nov 2026) that are on Greenhouse, Lever, Ashby, SmartRecruiters or Workday — listed at `GET /qa/discovery/sources`. Read with the product's own reader.
+- **Rule at the network boundary** (fixed in code, not configurable): hosts `*.greenhouse.io`, `*.lever.co`, `*.ashbyhq.com`, `*.smartrecruiters.com`, `*.myworkdayjobs.com`; `GET`/`HEAD` only, plus the one `POST` Workday's own job search uses; never an apply, sign-in or candidate path; no cookies. `robots.txt` is honoured by the reader. Every other outside host stays refused.
+- **No model call** in reading listings or their descriptions.
+- **Stored for every listing**: source system, the system's own job id, address, the system's posted date, first and last time QA read it, the description and when it was read.
+- **Fixtures and real listings never mix**: one switch (`pool`) decides which Radar sees. A real-résumé run is refused while the switch is on fixtures. Every recommendation that is a fixture is reported as `invented_fixture` and fails.
+- **Verification**: when a run finishes, and again on request, each recommended listing is asked for at its own source at that moment: `verified_active` (Greenhouse/Lever job API or Workday posting answers for that id; SmartRecruiters/Ashby board re-read and the id is in it), `closed` (the source answers 404/410 or the id is gone from the board), `unverifiable` (the source could not be asked), `invented_fixture`. A role the source dates over 90 days, or "30+ days", is flagged as open but old.
+- **Coverage**: this is not everything production reads. Employers on other systems or their own portals are not read in QA. A role QA never read cannot be recommended and is not a Radar miss.
+
+## Sharpen against a Radar role
+
+On a résumé's page, each recommendation confirmed open has **Sharpen against this role**. It runs the product's own fit step and Sharpen, then shows:
+- backend status, error, times, the product's own before/after score and its own gate/verification output (shown, not relied on)
+- the delivered PDF (restricted route) and the text extracted from it
+- the comparison: roles, titles, dates and education against the Record; every figure against the original file; skills not in the résumé and whether they came from the posting; lines whose substance is not in the résumé; the PDF's readability
+
+Sharpen refuses a role that is not `verified_active` unless forced. No money moves: the entitlement is a QA database row.
+
+## AI budget
+The running total is a database row (`qa:ai:total`), read when the process starts, so it survives restarts. A call is refused once the total reaches the cap. Tested in the build: a process starting with ₹1,000 recorded refuses the next call. Shown live in the readiness report (database total = process total). Calls already in flight when the cap is reached (at most 3) finish.
+
+## Deployment configuration (nothing is deployed until you do this)
+
+`qa-real-radar` is merged into `qa` (not `main`). The QA site rebuilt itself from `qa`; its new pages answer "not authorised" until the API is deployed and configured.
+
+Render → `ghosted-qa-api` → Environment. Add these eight; change nothing else:
 
 | Name | Value |
 |---|---|
@@ -57,16 +82,30 @@ There is no ground truth for a real résumé. The rules catch definite errors; w
 | `QA_REAL_AUTHORISED_BY` | the founder's name |
 | `QA_REAL_AUTHORISED_ON` | the date, e.g. `2026-11-14` |
 | `QA_REAL_RETENTION_DAYS` | `7` (1–14) |
+| `QA_DISCOVERY` | `authorised` |
+| `QA_DISCOVERY_AUTHORISED_BY` | the founder's name |
+| `QA_DISCOVERY_AUTHORISED_ON` | the date |
 
-3. Render → **Manual Deploy → Deploy latest commit**. If a value is wrong the log shows `[qa] REFUSING TO START` and why.
-4. QA start page → **Run the isolation self-test**. The line "Real résumés: closed unless authorised…" must pass and name the authoriser.
+Do not set `QA_PAID_RUNS`. Then **Manual Deploy → Deploy latest commit**. A wrong value shows `[qa] REFUSING TO START` in the log with the reason.
+
+To deploy the code without switching anything on, deploy with none of the eight set: both areas stay closed.
+
+## Readiness checks (in this order; each is a button on the QA start page)
+
+1. **Run the isolation self-test** — 0 failed. New lines: real résumés closed unless authorised and never opened by the ordinary code; outside hiring systems read-only; AI budget read from the database; automated paid run off.
+2. **Real job discovery → Read 5 employers (trial)** → **Status**. Each feed shows jobs read or the error. If Workday feeds fail from Render, see the blockers.
+3. **Read every employer**, then **Read job descriptions**. Status shows live Bengaluru roles and how many have descriptions.
+4. **Point Radar at real listings**.
+5. **Readiness for the real-résumé run** — `ready_for_real_resume_run: true`, or the list of what is not.
 
 ## Running the 21
 
-1. QA site → **Real résumés (restricted)** → enter the second code.
-2. **Upload**: choose all 21 PDFs → Upload. Each gets an id R001–R021.
-3. **Run**: type `R001, R002` → Run. Read both pages and the spend. Then leave the box empty → Run for the rest.
-4. The table refreshes by itself. Open each id for its page; record a verdict at the bottom.
-5. When finished: **Delete everything**. To close the area, remove `QA_REAL_RESUMES` in Render and deploy.
+1. QA site → **Real résumés (restricted)** → second code → choose the 21 PDFs → **Upload** (R001–R021).
+2. Type `R001, R002` → **Run**. Read both pages and the spend.
+3. Empty box → **Run** for the rest.
+4. On each page: recommendations with source, job id, read times, description and status at source; rejected roles with Radar's reason; possibly missed roles. **Ask every source again, now** repeats the check.
+5. Choose a role confirmed open → **Sharpen against this role**. The result appears on the same page.
+6. Record the tester's verdict. The consolidated table links every page.
+7. Finish: **Delete everything**; **Point Radar back at fixtures**; remove the eight settings and deploy.
 
-Tool equivalents (headers `x-qa-access` and `x-qa-real-access`): `GET /qa/real/status` · `POST /qa/real/upload` (form field `files`, repeated) · `POST /qa/real/run {ids?, rerun?}` · `GET /qa/real/report` · `GET /qa/real/R001` · `GET /qa/real/R001/original` · `POST /qa/real/R001/review` · `POST /qa/real/delete {id | all}` · `GET /qa/real/audit`.
+Tool equivalents (headers `x-qa-access`, plus `x-qa-real-access` for `/qa/real/*`): `GET /qa/readiness` · `GET /qa/discovery/status` · `GET /qa/discovery/sources` · `POST /qa/discovery/read {systems?, limit?, only_unread?}` · `POST /qa/discovery/descriptions {limit}` · `POST /qa/discovery/pool {mode}` · `GET /qa/real/status` · `POST /qa/real/upload` · `POST /qa/real/run {ids?, rerun?}` · `GET /qa/real/report` · `GET /qa/real/R001` · `GET /qa/real/R001/original` · `POST /qa/real/R001/verify` · `POST /qa/real/R001/sharpen {url}` · `GET /qa/real/R001/sharpen/<shot>/pdf` · `POST /qa/real/R001/review` · `POST /qa/real/delete {id | all}` · `GET /qa/real/audit`.
