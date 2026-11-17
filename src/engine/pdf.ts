@@ -53,7 +53,9 @@ const ICON: Record<string, string> = {
   in: '<svg viewBox="0 0 24 24"><path d="M4 3h16a1 1 0 011 1v16a1 1 0 01-1 1H4a1 1 0 01-1-1V4a1 1 0 011-1zm3.5 6.5v8h2.6v-8zm1.3-4a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM11.5 9.5v8h2.6v-4.2c0-1.2.5-1.9 1.6-1.9s1.5.7 1.5 1.9v4.2h2.6v-4.9c0-2.4-1.3-3.4-3-3.4-1.3 0-2.2.6-2.7 1.4v-1.1z" fill="currentColor"/></svg>',
   link: '<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1.5 1.5M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1.5-1.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
 };
-const iconFor = (v: string) => /@/.test(v) ? "mail" : /^\+?\d[\d\s-]{7,}$/.test(v) ? "phone" : /linkedin/i.test(v) ? "in" : /\.[a-z]{2,}(\/|$)/i.test(v) ? "link" : "pin";
+// a phone line may hold two numbers, brackets or dots ("9480339212, 9538438314", "(080) 4123-4567"): digits and separators only, 8+ digits
+const isPhone = (v: string) => /^[+\d][\d\s().,\/|-]*$/.test(v) && v.replace(/\D/g, "").length >= 8;
+const iconFor = (v: string) => /@/.test(v) ? "mail" : isPhone(v) ? "phone" : /linkedin/i.test(v) ? "in" : /\.[a-z]{2,}(\/|$)/i.test(v) ? "link" : "pin";
 
 const esc = (s: string) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
@@ -128,7 +130,7 @@ li::before{ content:"•"; position:absolute; left:1.5pt; top:0; color:var(--acc
   <div class="name">${esc(o.name === o.name.toUpperCase() ? o.name.toLowerCase().replace(/(^|\s|-)\S/g, (c) => c.toUpperCase()) : o.name)}</div>
   <div class="head">${esc(r.headline)}</div>
   <div class="bar"></div>
-  <div class="contact">${contact.map((c) => { const v = String(c); const href = /@/.test(v) && !/\s/.test(v) ? `mailto:${v}` : /^\+?\d[\d\s-]{7,}$/.test(v) ? `tel:${v.replace(/[\s-]/g, "")}` : /^(https?:\/\/|www\.)|\.[a-z]{2,}\//i.test(v) ? (/^https?:\/\//i.test(v) ? v : `https://${v}`) : ""; const label = esc(v.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")); return `<span><i>${ICON[iconFor(v)]}</i>${href ? `<a href="${esc(href)}">${label}</a>` : label}</span>`; }).join("")}</div>
+  <div class="contact">${contact.map((c) => { const v = String(c); const href = /@/.test(v) && !/\s/.test(v) ? `mailto:${v}` : isPhone(v) ? `tel:${v.split(/[,\/|]/)[0].replace(/[^\d+]/g, "")}` : /^(https?:\/\/|www\.)|\.[a-z]{2,}\//i.test(v) ? (/^https?:\/\//i.test(v) ? v : `https://${v}`) : ""; const label = esc(v.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")); return `<span><i>${ICON[iconFor(v)]}</i>${href ? `<a href="${esc(href)}">${label}</a>` : label}</span>`; }).join("")}</div>
 </header>
 ${sec("Profile", `<p class="sum">${esc(r.summary)}</p>${relevant}`)}
 ${sec("Experience", roles)}
