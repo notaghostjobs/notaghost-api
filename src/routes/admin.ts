@@ -71,8 +71,25 @@ on.get("/reader/experience", async (c) => {
 });
 
 /** The truth, in numbers. */
+// 17 Nov: this page asks the database for about 85 exact counts. An admin page refreshing it every 8 seconds started a new
+// set before the last had finished; they piled up, took every connection the API has to the database, and every other
+// request (sign-in, health, Radar) waited behind them. So: one computation at a time, however many callers; the answer is
+// kept for a minute; and the counts go to the database four at a time, not all at once.
+let statsKept: { at: number; body: Record<string, unknown> } | null = null; let statsRunning: Promise<Record<string, unknown>> | null = null;
 on.get("/reader/stats", async (c) => {
-  const count = async (table: string, f: (q: any) => any) => { const { count } = await f(db.from(table).select("*", { count: "exact", head: true })); return count ?? 0; };
+  // The follow-on links carry the full admin secret in their path. They go only to a caller who already presented that
+  // secret — never to the read-only audit key, which until 17 Nov was handed the full secret this way.
+  const k = c.req.header("x-admin") ?? c.req.query("key") ?? c.req.path.match(/\/admin\/r\/([^/]+)\//)?.[1]; const full = !!process.env.ADMIN_SECRET && k === process.env.ADMIN_SECRET;
+  const out = (body: Record<string, unknown>, at: number) => { const { links, ...rest } = body; return c.json({ ...rest, ...(full ? { links } : {}), counted_at: new Date(at).toISOString() }); };
+  if (statsKept && Date.now() - statsKept.at < 60e3) return out(statsKept.body, statsKept.at);
+  if (!statsRunning) statsRunning = readerStats(c.req.url).then((body) => { statsKept = { at: Date.now(), body }; return body; }).finally(() => { statsRunning = null; });
+  return out(await statsRunning, Date.now());
+});
+async function readerStats(url: string): Promise<Record<string, unknown>> {
+  // every number is still an exact count, but at most four are asked of the database at a time
+  let active = 0; const waiting: (() => void)[] = [];
+  const count = async (table: string, f: (q: any) => any) => { if (active >= 4) await new Promise<void>((go) => waiting.push(go)); active++;
+    try { const { count } = await f(db.from(table).select("*", { count: "exact", head: true })); return count ?? 0; } finally { active--; waiting.shift()?.(); } };
   const [employers, unresolved, none, withFeed, sightings, live, blr, enriched, ctl] = await Promise.all([
     count("employers", (q) => q), count("employers", (q) => q.is("resolved_at", null)), count("employers", (q) => q.eq("ats", "none")),
     count("employers", (q) => q.not("ats", "is", null).neq("ats", "none")),   // the same definition the public pulse uses: an employer whose system we have a feed for, queued or not
@@ -107,13 +124,13 @@ on.get("/reader/stats", async (c) => {
   if (recent.length) { const { data: ops } = await db.from("reader_control").select("key, value").in("key", recent.map((id) => `ops:${id}`)); control.ops = Object.fromEntries((ops ?? []).map((o) => [o.key.slice(4), o.value])); }
   for (const k of Object.keys(control)) if (k.startsWith("ops:") || k.startsWith("once:")) delete control[k];
   // links a fetch-only client can follow (it may only open URLs it has already seen)
-  const base = new URL(c.req.url); const key = c.req.query("key") ?? ""; const self = `${base.protocol}//${base.host}/admin/r/${process.env.ADMIN_SECRET}`;
+  const base = new URL(url); const key = ""; const self = `${base.protocol}//${base.host}/admin/r/${process.env.ADMIN_SECRET}`;
   const probeTargets: Record<string, string> = { infosys: "https://career.infosys.com/jobs?companyhiringtype=IL&countrycode=IN&location=Bangalore", tcs: "https://ibegin.tcs.com/iBegin/jobs/search", wipro: "https://careers.wipro.com/careers-home/jobs?location=Bengaluru", hcltech: "https://www.hcltech.com/careers/careers-in-india", ibm: "https://www.ibm.com/careers/search?field_keyword_18[0]=India", google: "https://www.google.com/about/careers/applications/jobs/results/?location=Bengaluru%2C%20Karnataka%2C%20India", microsoft: "https://jobs.careers.microsoft.com/global/en/search?lc=Bengaluru%2C%20Karnataka%2C%20India", flipkart: "https://www.flipkartcareers.com/#!/joblist", techmahindra: "https://careers.techmahindra.com/", goldman: "https://higher.gs.com/roles?LOCATION=Bengaluru", dell: "https://jobs.dell.com/en/search-jobs/Bengaluru", capgemini: "https://www.capgemini.com/in-en/careers/join-capgemini/job-search/?location=Bengaluru", sap: "https://jobs.sap.com", siemens: "https://jobs.siemens.com", ltimindtree: "https://careers.ltimindtree.com", oracle: "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/requisitions?keyword=Bengaluru" };
   void key;
   const links: Record<string, string> = { status: `${self}/status`, probe_result: `${self}/probe`, employers: `${self}/employers?limit=100`, sightings: `${self}/sightings?limit=50`, tier1: `${self}/run?step=tier1`, selftest: `${self}/run?step=selftest`, resolve20: `${self}/run?step=resolve&n=20`, enrich60: `${self}/run?step=enrich&n=60` };
   for (const [k, u] of Object.entries(probeTargets)) links[`probe_${k}`] = `${self}/run?step=probe&url=${encodeURIComponent(u)}`;
-  return c.json({ employers: { total: employers, unresolved, resolved: employers - unresolved, with_feed: withFeed, none, systems, confidence }, sightings: { total: sightings, live, blr, enriched, by_source: sources, enrich: { done: enriched, failed, pending, failed_by_reason, failed_by_source } }, worker: control, links });
-});
+  return { employers: { total: employers, unresolved, resolved: employers - unresolved, with_feed: withFeed, none, systems, confidence }, sightings: { total: sightings, live, blr, enriched, by_source: sources, enrich: { done: enriched, failed, pending, failed_by_reason, failed_by_source } }, worker: control, links };
+}
 
 /** Employers with what we decided and why; filter by system. */
 // Roles marked gone since a time, grouped by employer and system — the read-only answer to "where did the count go?"
