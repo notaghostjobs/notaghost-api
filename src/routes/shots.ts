@@ -10,7 +10,7 @@ import { z } from "zod";
 import { deliveryGate, repairForGate, evidenceRecord, pdfCheck, type EvidenceLine, keepProfileFigures } from "../engine/gate.js";
 import { readingOrder, pdfPages } from "../engine/pdftext.js";
 import { resumePdf } from "../engine/pdf.js";
-import { db, activePlan, currentResume, type User, type Product } from "../lib/db.js";
+import { db, activePlan, currentResume, type User, type Product, type Plan } from "../lib/db.js";
 import { currentParsedResume } from "../lib/resumeReady.js";
 import { srcOf, logEvent } from "../lib/src.js";
 import { requireUser } from "../lib/auth.js";
@@ -80,17 +80,40 @@ shots.post("/", async (c) => {
   const resume = await currentParsedResume<{ id: string; parsed: any }>(u.id, "id, parsed");
   if (!resume?.parsed) return c.json({ error: "Upload your résumé first." }, 400);
 
+  // One Sharpen is spent once (17 Nov). Until now the count was read, the run started, and "count + 1" written from the
+  // value read earlier: two requests arriving together both read the same count, so two runs cost one Sharpen — and a
+  // double tap started two runs. Now:
+  //  · the same person asking for the same job while that run is still going gets that run back, not a second one;
+  //  · the count is taken with a conditional write — "set to n+1 only if it is still n and below the total" — so only one
+  //    of two simultaneous requests can take a given Sharpen; the other re-reads and takes the next, or is told there is none;
+  //  · the count is taken BEFORE the run exists, and given back if the run cannot be created.
+  const same = (i: any) => (body.data.preview_id && i?.preview_id === body.data.preview_id) || (!!body.data.posting_url && i?.posting_url === body.data.posting_url) || (!!body.data.posting_text && i?.posting_text === body.data.posting_text);
+  const inFlight = async (before?: string) => { const { data } = await db.from("shots").select("id, status, created_at, input").eq("user_id", u.id).eq("product", product).in("status", ["queued", "running"]).gt("created_at", new Date(Date.now() - 15 * 60e3).toISOString()).order("created_at", { ascending: true }).limit(10);
+    return ((data ?? []) as any[]).find((x) => same(x.input) && (!before || x.created_at < before)) ?? null; };
+  if (!body.data.fresh) { const going = await inFlight(); if (going) return c.json({ shot: { id: going.id, status: going.status, created_at: going.created_at }, remaining: plan.shots_total - plan.shots_used, duplicate: true }); }
+
+  let took: Plan | null = null;
+  for (let attempt = 0, p: Plan | null = plan; attempt < 4 && p && !took; attempt++) {
+    const { data: won } = await db.from("plans").update({ shots_used: p.shots_used + 1 }).eq("id", p.id).eq("shots_used", p.shots_used).lt("shots_used", p.shots_total).select("id");
+    if (won?.length) took = { ...p, shots_used: p.shots_used + 1 };
+    else p = (await activePlan(u.id, product)) ?? (product === "sharpen" ? await activePlan(u.id, "radar") : null);   // someone else took that one: look again
+  }
+  if (!took) return c.json({ error: "No active plan.", pay: product }, 402);
+  const giveBack = () => db.rpc("refund_shot", { p_plan: took!.id }).then(() => {}, () => {});
+
   const { data: shot, error } = await db
     .from("shots")
-    .insert({ user_id: u.id, plan_id: plan.id, product, resume_id: resume.id, input: body.data })
+    .insert({ user_id: u.id, plan_id: took.id, product, resume_id: resume.id, input: body.data })
     .select("id, status, created_at")
     .single();
-  if (error) return c.json({ error: error.message }, 500);
+  if (error) { await giveBack(); return c.json({ error: error.message }, 500); }
 
-  await db.from("plans").update({ shots_used: plan.shots_used + 1 }).eq("id", plan.id);
+  // two taps that arrived in the same instant both got this far: the later run stands down and its Sharpen goes back
+  if (!body.data.fresh) { const earlier = await inFlight(shot.created_at); if (earlier && earlier.id !== shot.id) { await db.from("shots").delete().eq("id", shot.id); await giveBack(); return c.json({ shot: { id: earlier.id, status: earlier.status, created_at: earlier.created_at }, remaining: took.shots_total - took.shots_used + 1, duplicate: true }); } }
+
   void logEvent("shot", { src: srcOf(c), userId: u.id, meta: { shot_id: shot.id, product } });
   void runShot(shot.id);
-  return c.json({ shot, remaining: plan.shots_total - plan.shots_used - 1 });
+  return c.json({ shot, remaining: took.shots_total - took.shots_used });
 });
 
 

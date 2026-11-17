@@ -30,7 +30,9 @@ radar.use("*", requireUser);
 
 type Targets = { titles: string[]; level: "ic" | "lead" | "manager" | "head"; functions: string[]; strengths: string[]; years: number; one_line: string };
 type Answers = { titles: string[]; level: Targets["level"]; stretch: boolean; avoid: string[]; notes?: string };
-type Item = { sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string; new_at?: string;
+/** `live`: what the employer's own page said the last time we opened it — "confirmed" (it opened and the role is on it) or
+ *  "not_confirmed" (the page could not be opened; the role is still on the employer's feed, but we did not see it today). */
+type Item = { live?: "confirmed" | "not_confirmed"; live_at?: string; sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string; new_at?: string;
   label?: Label;                // for_you · adjacent · stretch — built from facts (v2)
   band_text?: string | null;    // the posting's own years line, e.g. "3–5 years"
   near?: string | null;         // the one near-miss that made it adjacent/stretch, in words
@@ -297,7 +299,8 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   const liveWorker = async () => {
     while (li < final.length) {
       const it = final[li++];
-      let txt = ""; try { txt = await readPostingText(it.url); } catch { /* unreachable today: the stored copy stands */ }
+      let txt = ""; try { txt = await readPostingText(it.url); } catch { /* unreachable today: the stored copy stands, and the line says so */ }
+      it.live = txt && txt.length >= 200 ? "confirmed" : "not_confirmed"; it.live_at = new Date().toISOString();
       if (txt && txt.length >= 200) {
         if (DEAD_PAGE.test(txt.slice(0, 3000))) { trail.push({ id: it.sighting_id, title: it.title, company: it.company, rank: -1, fit: 0, dropped: "page says the job is closed" }); void db.from("sightings").update({ gone_at: new Date().toISOString(), enrich_error: "page says the job is closed" }).eq("id", it.sighting_id).is("gone_at", null); continue; }
         const gate = screenGate(it.title, txt, { years, level, stretch, blob, company: it.company });
@@ -522,7 +525,9 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
       let n = 0;
       for (const it of run.items) {
         if (n++ >= 40) break;
-        try { const txt = await readPostingText(it.url); if (txt && DEAD_PAGE.test(txt.slice(0, 3000))) dead.push(it); } catch { /* unreachable today: keep it, the feed decides */ }
+        let txt = ""; try { txt = await readPostingText(it.url); } catch { /* unreachable today: keep it, the feed decides — and the line says it was not seen today */ }
+        it.live = txt && txt.length >= 200 ? "confirmed" : "not_confirmed"; it.live_at = now;
+        if (txt && DEAD_PAGE.test(txt.slice(0, 3000))) dead.push(it);
       }
       if (dead.length) {
         const ids = dead.map((d) => d.sighting_id);
