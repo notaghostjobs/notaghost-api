@@ -54,7 +54,7 @@ const ICON: Record<string, string> = {
   link: '<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1.5 1.5M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1.5-1.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
 };
 // a phone line may hold two numbers, brackets or dots ("9480339212, 9538438314", "(080) 4123-4567"): digits and separators only, 8+ digits
-const isPhone = (v: string) => /^[+\d][\d\s().,\/|-]*$/.test(v) && v.replace(/\D/g, "").length >= 8;
+const isPhone = (v: string) => /^[+(\d][\d\s().,\/|-]*$/.test(v) && v.replace(/\D/g, "").length >= 8;
 const iconFor = (v: string) => /@/.test(v) ? "mail" : isPhone(v) ? "phone" : /linkedin/i.test(v) ? "in" : /\.[a-z]{2,}(\/|$)/i.test(v) ? "link" : "pin";
 
 const esc = (s: string) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
