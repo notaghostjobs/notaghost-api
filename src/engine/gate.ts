@@ -226,6 +226,17 @@ export function figures(t: string): string[] {
 const sentences = (t: string) => String(t ?? "").split(/(?<=[.!?])\s+(?=[A-Z0-9“"(])|\n+|\s*[•▪●◦]\s*/).map((s) => s.replace(/^[\s\-–•▪●◦]+/, "").trim()).filter((s) => s.length > 12);
 const docText = (rw: Rewrite) => JSON.stringify({ h: rw.headline, s: rw.summary, r: rw.relevant, roles: rw.roles, x: rw.extra_sections });
 
+/** A sentence from an old "objective" carried into the new profile: what they are looking for is not a fact about them
+ *  ("… and now targeting similar roles"), and the profile opens on what they are, not on an adjective. Facts and figures stay. */
+export function profileSentence(s: string): string {
+  let k = String(s ?? "").trim()
+    .replace(/,?\s*(?:and\s+)?(?:(?:am|is)\s+)?(?:now\s+|currently\s+)?(?:targeting|seeking|looking\s+for|pursuing)\b[^.]*\.?$/i, "")
+    .replace(/^(?:results?|detail|goal|outcome)[- ](?:driven|oriented|focused)\s+(?=[a-z])/i, "").trim();
+  if (k.split(/\s+/).length < 6) return String(s ?? "").trim();   // nothing left worth keeping: their sentence stands as written
+  k = k.charAt(0).toUpperCase() + k.slice(1);
+  return /[.!?]$/.test(k) ? k : k + ".";
+}
+
 /** A figure the candidate put in their own profile ("30% YoY growth") that the finished document says nowhere: the sentence
  *  that carried it goes into the profile block, in their words. At most two; a figure is theirs to keep. */
 export function keepProfileFigures(rw: Rewrite, orig: ResumeProfile): string[] {
@@ -237,8 +248,9 @@ export function keepProfileFigures(rw: Rewrite, orig: ResumeProfile): string[] {
     const gone = figures(s).filter((f) => !have.has(f));
     if (!gone.length) continue;
     // the profile block holds three lines; past that the sentence joins the summary
-    if ((rw.relevant ?? []).length < 3) rw.relevant = [...(rw.relevant ?? []), s]; else rw.summary = `${String(rw.summary ?? "").trim()} ${s}`.trim();
-    log.push(`figure kept (${gone.join(", ")}): ${s.slice(0, 70)}`);
+    const k = profileSentence(s);
+    if ((rw.relevant ?? []).length < 3) rw.relevant = [...(rw.relevant ?? []), k]; else rw.summary = `${String(rw.summary ?? "").trim()} ${k}`.trim();
+    log.push(`figure kept (${gone.join(", ")}): ${k.slice(0, 70)}`);
   }
   return log;
 }
@@ -262,4 +274,57 @@ export function polishTense(rw: Rewrite): { rewrite: Rewrite; changed: number } 
   const fix = (b: string) => b.replace(/(^|[.;]\s+)([A-Z][a-z]+ing)\b(?=\s+(?!of\b|and\b|&|or\b)[a-z0-9(“"$₹])/g, (m, pre, w) => { const p = PAST[w.toLowerCase()]; if (!p) return m; changed++; return pre + p; });
   for (const r of next.roles ?? []) if (ENDED(r.end)) r.bullets = r.bullets.map(fix);
   return { rewrite: next, changed };
+}
+
+// ---------- tidying the lines WE added: nothing the candidate wrote changes ----------
+const reEsc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const DATE = "[A-Za-z]{3,9}\\.?\\s?[’'ʼ]?\\d{2,4}";
+/** Two things a reader trips on, both in lines that are not the candidate's own wording:
+ *   1. a line that sits under an employer and ends by naming that employer and its dates again ("… at Unacademy,
+ *      Feb’22–Jan’24.") — the role's heading already says both, so the ending goes;
+ *   2. a line that ends "… as part of <a list another line of the same role already gives>" — the list is said once.
+ *  A line that is theirs, word for word, is never touched. */
+export function tidyAdded(rw: Rewrite, orig: ResumeProfile): { rewrite: Rewrite; log: string[] } {
+  const next: Rewrite = JSON.parse(JSON.stringify(rw)); const log: string[] = [];
+  for (const r of next.roles ?? []) {
+    const own = new Set((((orig.roles ?? []).find((o) => roleKey(o) === roleKey(r)) ?? (orig.roles ?? []).find((o) => norm(o.company) === norm(r.company) && norm(o.start) === norm(r.start)))?.bullets ?? []).map(norm));
+    const core = String(r.company ?? "").replace(/\s*\(.*\)\s*$/, "").trim();
+    if (!core) continue;
+    const tail = new RegExp(`,?\\s+at\\s+${reEsc(core)}(?:\\s*\\([^)]*\\))?(?:,\\s*${DATE}\\s*[–—-]\\s*(?:${DATE}|present|current|now|till date))?\\s*\\.?$`, "i");
+    r.bullets = r.bullets.map((b, i) => {
+      if (own.has(norm(b))) return b;
+      let x = b;
+      const cut = x.replace(tail, "");
+      if (cut !== x && cut.trim().split(/\s+/).length >= 3) { x = cut.trim().replace(/[,;:\s]+$/, "") + "."; log.push(`employer and dates dropped from a line under ${core}: ${b.slice(0, 60)}`); }
+      const at = x.search(/,?\s+as part of\s+/i);
+      if (at > 0) {
+        const head = x.slice(0, at).trim(), rest = x.slice(at).replace(/^,?\s+as part of\s+/i, "");
+        if (head.split(/\s+/).length >= 3 && r.bullets.some((o, j) => j !== i && covered(rest, o) >= 0.8)) { x = head.replace(/[,;:\s]+$/, "") + "."; log.push(`list said twice in ${core}, kept once: ${b.slice(0, 60)}`); }
+      }
+      return x;
+    });
+  }
+  return { rewrite: next, log };
+}
+
+// ---------- a correction changes the score: a line taken out no longer counts ----------
+type ScoreMatch = { requirement: string; bucket?: string; line?: string; evidence?: string; told?: boolean };
+/** After the candidate puts their own line back or takes one of ours out: every requirement that only counted as said
+ *  because of that line goes back to what it was before the document was written — unless another line still in the
+ *  document carries it. No model; the number can only stay or fall. */
+export function rescoreAfterCorrection<M extends ScoreMatch>(after: M[], before: M[], e: EvidenceLine, fixed: Rewrite): { matches: M[]; reverted: string[] } {
+  const lines = [...(fixed.roles ?? []).flatMap((r) => r.bullets ?? []), ...(fixed.relevant ?? []), ...sentences(String(fixed.summary ?? ""))];
+  const was = new Map(before.map((m) => [m.requirement, m]));
+  const reverted: string[] = [];
+  const matches = after.map((m) => {
+    const b = was.get(m.requirement);
+    if (m.bucket !== "said" || !b || b.bucket === "said") return m;
+    const L = String(m.line ?? b.line ?? "").trim();
+    const tied = e.requirement === m.requirement || (L.length > 8 && (covered(L, e.line) >= 0.7 || covered(e.line, L) >= 0.7));
+    if (!tied) return m;
+    if (L.length > 8 && lines.some((x) => covered(L, x) >= 0.7)) return m;   // said somewhere else in the document too
+    reverted.push(m.requirement);
+    return b;
+  });
+  return { matches, reverted };
 }

@@ -7,7 +7,8 @@ import { rewriteResume, type ResumeProfile, type PostingProfile, type Match } fr
 import { MODEL } from "../engine/claude.js";
 import { addedFacts } from "../engine/told.js";
 import { z } from "zod";
-import { deliveryGate, repairForGate, evidenceRecord, pdfCheck, type EvidenceLine, keepProfileFigures } from "../engine/gate.js";
+import { deliveryGate, repairForGate, evidenceRecord, pdfCheck, type EvidenceLine, keepProfileFigures, rescoreAfterCorrection } from "../engine/gate.js";
+import { fit } from "../engine/fit.js";
 import { readingOrder, pdfPages } from "../engine/pdftext.js";
 import { resumePdf } from "../engine/pdf.js";
 import { db, activePlan, currentResume, type User, type Product, type Plan } from "../lib/db.js";
@@ -184,9 +185,17 @@ shots.post("/:id/correct", async (c) => {
   if (up.error) return c.json({ error: "Couldn’t save the corrected document. Try again." }, 500);
   const corrections = [...(out.corrections ?? []), { at: new Date().toISOString(), role: e.role, line: e.line, kind: e.kind, action: body.data.action, original: e.original ?? null, note: body.data.note ?? null }];
   const evidence = evidenceRecord(fixed, profile, out.matches ?? []);
-  await db.from("shots").update({ output: { ...out, rewrite: fixed, evidence, corrections } }).eq("id", shot.id);
+  // the score follows the document: a requirement that only counted because of this line no longer counts. It can only
+  // stay or fall, and the number first delivered is kept beside it (delivered_after) so the page can say why it moved.
+  let after = out.after as number, after_matches = out.after_matches as Match[] | undefined;
+  if (Array.isArray(after_matches) && Array.isArray(out.matches)) {
+    const rs = rescoreAfterCorrection(after_matches, out.matches as Match[], e, fixed);
+    if (rs.reverted.length) { after_matches = rs.matches; after = Math.min(after, fit(after_matches)); }
+  }
+  const delivered_after = (out.delivered_after ?? out.after) as number;
+  await db.from("shots").update({ output: { ...out, rewrite: fixed, evidence, corrections, after, after_matches, delivered_after } }).eq("id", shot.id);
   await db.from("reader_control").upsert({ key: `sharpen_correction:${shot.id}:${corrections.length}`, value: corrections[corrections.length - 1], updated_at: new Date().toISOString() }).then(() => {}, () => {});
-  return c.json({ ok: true, evidence, rewrite: fixed });
+  return c.json({ ok: true, evidence, rewrite: fixed, after, after_matches, delivered_after, corrections: corrections.length });
 });
 
 /** "How does it read?" — one tap on the delivered page. "Not quite" opens the line-by-line view for them; here it makes us

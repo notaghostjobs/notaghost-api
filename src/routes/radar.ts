@@ -21,7 +21,7 @@ import { screenGate, resumeBlob, yearsFromRoles, levelFromRoles, settleLevel } f
 import { cleanTitle } from "../radar/v2.js";
 import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict, cleanSame, sharesFunction } from "../radar/v2.js";
 import { readPostingText, DEAD_PAGE } from "../reader/enrich.js";
-import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, type Facts, type Gap } from "../engine/told.js";
+import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, nameSubject, type Facts, type Gap } from "../engine/told.js";
 
 export const radar = new Hono<{ Variables: { user: User } }>();
 /** Public: the market's pulse — roles that came in and went quiet per day, across every employer we read. No sign-in. */
@@ -359,7 +359,7 @@ async function profileQuestions(resume: ResumeProfile, reqs: { requirement: stri
 - NEVER ask about soft skills or qualities (communication, analytical, problem-solving, ownership, leadership style, 'voice'). Drop those requirements.
 - NEVER ask what the résumé already states: if education lists a bachelor's, do not ask for a degree; if skills list SQL, do not ask about SQL.
 - Group requirements that are the same fact in different words into ONE question (e.g. '3+ years of Excel', 'advanced Excel', 'Excel modelling' → one Excel question). 'covers' lists every requirement string the question answers, verbatim.
-- Each question: 'ask' is one plain question about the person's career (not a job); 'answers' are three mutually exclusive choices from strongest to none, each a complete clause a résumé could carry (e.g. 'Advanced — pivots, lookups, models, most days for 8+ years' / 'Working use — reports and tracking' / 'Not really'); 'hint' is an example of the one optional line in their own words.
+- Each question: 'ask' is one plain question about the person's career (not a job); 'answers' are three mutually exclusive choices from strongest to none, each a complete clause a résumé could carry ON ITS OWN, so every answer except the 'no' NAMES the tool, function, domain or credential it is about (e.g. 'Advanced Excel — pivots, lookups, models, most days for 8+ years' / 'Working use of Excel — reports and tracking' / 'Not really'); never an answer like 'Advanced — pivots, lookups' that does not say what; 'hint' is an example of the one optional line in their own words.
 - At most 6 questions, most-asked requirements first. If nothing qualifies, return an empty list.`,
     `CANDIDATE:\n${JSON.stringify(brief)}\n\nREQUIREMENTS (with how many roles ask):\n${JSON.stringify(reqs.slice(0, 30))}\n\nReturn: {questions:[{id, kind, ask, covers[], answers[3], hint}]}`,
     2500
@@ -903,7 +903,7 @@ radar.post("/test/prime", async (c) => {
   const choice = (body.data.choice ?? "").trim(), free = (body.data.free ?? "").trim();
   if (!choice && !free) return c.json({ error: "Pick one of the three, or say it your way." }, 400);
   if (/^(no|not really|none|never)\b/i.test(choice) && !free) return c.json({ ok: true, line: "" });   // a 'no' is remembered as nothing to add
-  const line = free ? await withMeter({ tag: "radar:prime", user: u.id }, () => shapeFree(body.data.covers[0], free)) : choice.replace(/[.。]+$/, "") + ".";
+  const line = free ? await withMeter({ tag: "radar:prime", user: u.id }, () => shapeFree(body.data.covers[0], free)) : nameSubject(choice.replace(/[.。]+$/, "") + ".", body.data.covers.join(" · "));
   const facts = free || choice;
   for (const req of body.data.covers) {
     await rememberAnswer(u.id, { requirement: req, fact: facts, line }).catch(() => {});
