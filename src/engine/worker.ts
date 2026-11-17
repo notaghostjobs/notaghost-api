@@ -301,10 +301,17 @@ async function runShotBody(shotId: string, shot: any) {
 
     // one scorer for all three numbers: what the résumé scored, what we promised, what the document scores now
     const before = fit(out.matches), after = fit(out.after_matches), promised = shownPromise ?? target(out.matches);
-    // a shot spent is a promise kept: every promised line is in the document by construction (placeLines), so after ≥ promised.
-    // If it is ever not, that is an engine fault to be fixed, not a refund to be given — it is logged loudly and shown as delivered.
+    // A document below its promise is never delivered (17 Nov; 0 of the 49 delivered so far were). Every promised line is in
+    // the document by construction (placeLines), so after ≥ promised. If it is ever not, that is an engine fault: the
+    // document is held back exactly as one that fails the accuracy gate is — not shown, the PDF removed, the Sharpen
+    // returned, and the case kept for us with everything needed to find the fault. Until today this was logged and shipped.
     const short = after < promised;
-    if (short) console.error("[shot] PROMISE NOT MET", shotId, { before, after, promised, timing: out.timing, problems: out.verification?.problems, broken: out.broken });
+    if (short) {
+      console.error("[shot] PROMISE NOT MET — held back", shotId, { before, after, promised, timing: out.timing, problems: out.verification?.problems, broken: out.broken });
+      await db.from("reader_control").upsert({ key: `sharpen_fail:promise:${shotId}`, value: { at: new Date().toISOString(), user: shot.user_id, resume: shot.resume_id, url: input.posting_url ?? null, before, after, promised, unsaid: out.after_matches.filter((m: any) => m.bucket === "have_not_said" && m.sayable).map((m: any) => ({ requirement: m.requirement, line: m.line })) }, updated_at: new Date().toISOString() }, { onConflict: "key" }).then(() => {}, () => {});
+      if (pdf_path) await db.storage.from("outputs").remove([pdf_path]).then(() => {}, () => {});
+      throw Object.assign(new Error("We held this one back: the finished résumé did not reach the number we showed you, and we don’t send a document that falls short of it. Your Sharpen has been returned, and we’ve been told. Try again — or write to human@notaghost.jobs and we’ll look at it today."), { status: 422 });
+    }
     await db.from("shots").update({
       status: "done", posting_id: postingId, done_at: new Date().toISOString(),
       output: { ...out, before, after, promised, pdf_path, told: told.length ? pre!.matches.filter((m) => m.told).map((m) => ({ requirement: m.requirement, line: m.line, fact: m.evidence })) : undefined },
