@@ -140,6 +140,18 @@ export async function forgetAnswer(userId: string, requirement: string): Promise
   const items = (await recallAnswers(userId)).filter((x) => !sameRequirement(x.requirement, requirement));
   await db.from("reader_control").upsert({ key: `told:${userId}`, value: { items }, updated_at: new Date().toISOString() }, { onConflict: "key" });
 }
+/** A level answer that never says what it is a level OF ("Advanced — pivots, lookups, models, most days for 5+ years")
+ *  cannot stand as a résumé line. When the requirement it answers names a tool, the tool goes in: "Advanced Excel — …".
+ *  Nothing else is added; a line we cannot name is left as it is. */
+const TOOL = /\b(Microsoft Excel|MS Excel|Excel|Google Sheets|SQL|Tableau|Power ?BI|Looker|SAP|Python|Salesforce|Google Analytics|Amplitude|Mixpanel|Jira|Figma|PowerPoint|Photoshop|AutoCAD|Tally|QuickBooks|HubSpot|Zoho)\b/i;
+export function nameSubject(line: string, requirement: string): string {
+  const m = /^(Advanced|Expert|Proficient|Intermediate|Basic|Working use|Daily use|Hands-on)(\s*[—–-]\s)/i.exec(line || "");
+  if (!m) return line;
+  const tool = TOOL.exec(requirement || "")?.[1];
+  if (!tool || new RegExp(`\\b${tool.replace(/ /g, "\\s?")}\\b`, "i").test(line)) return line;
+  const name = /^(ms|microsoft) excel$/i.test(tool) ? "Excel" : tool;
+  return /use$/i.test(m[1]) ? `${m[1]} of ${name}${m[2]}${line.slice(m[0].length)}` : `${m[1]} ${name}${m[2]}${line.slice(m[0].length)}`;
+}
 /** Pre-answers a fresh match list from the bank: a missing requirement the person answered before comes back already told,
  *  marked remembered so the card says so ("you told us earlier") and they can still take it out. */
 export function applyRemembered(matches: Match[], bank: Remembered[]): { matches: Match[]; n: number } {
@@ -150,7 +162,7 @@ export function applyRemembered(matches: Match[], bank: Remembered[]): { matches
     if (m.told || !(m.bucket === "missing" || (m.bucket === "have_not_said" && !m.sayable))) return m;
     const r = bank.find((x) => sameRequirement(x.requirement, m.requirement) && x.line);
     if (!r) return m; n++;
-    return { ...m, bucket: "have_not_said" as const, evidence: r.fact, evidence_kind: "line" as const, line: r.line, sayable: true, told: true, remembered: true, vet_reason: "told · remembered from an earlier answer" };
+    return { ...m, bucket: "have_not_said" as const, evidence: r.fact, evidence_kind: "line" as const, line: nameSubject(r.line, m.requirement), sayable: true, told: true, remembered: true, vet_reason: "told · remembered from an earlier answer" };
   });
   return { matches: out, n };
 }

@@ -4,7 +4,7 @@ import { db } from "../lib/db.js";
 import { extractText, fetchPosting } from "./extract.js";
 import { parseResume, runSharpen, type ResumeProfile, type PostingProfile, type Match } from "./sharpen.js";
 import { sanitizeProfile, healWraps } from "./refile.js";
-import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck, keepProfileFigures, dedupeProfile, polishTense } from "./gate.js";
+import { deliveryGate, repairForGate, evidenceRecord, orderByRelevance, pdfCheck, keepProfileFigures, dedupeProfile, polishTense, tidyAdded } from "./gate.js";
 import { readingOrder, pdfPages } from "./pdftext.js";
 import { resumePdf } from "./pdf.js";
 import { createHash } from "node:crypto";
@@ -274,6 +274,9 @@ async function runShotBody(shotId: string, shot: any) {
     // wording that changes no fact (a finished role in the past tense), kept only if the document still passes the same gate
     let polished = 0;
     { const pol = polishTense(out.rewrite); if (pol.changed && deliveryGate(pol.rewrite, profile, [], toldLines).ok) { out.rewrite = pol.rewrite; polished = pol.changed; } }
+    // the lines we added, tidied (an employer and dates repeated at the end of a line under that employer; a list said twice) —
+    // kept only if the document still passes the same gate
+    { const td = tidyAdded(out.rewrite, profile); if (td.log.length && deliveryGate(td.rewrite, profile, [], toldLines).ok) { out.rewrite = td.rewrite; console.error("[shot] TIDIED", shotId, td.log); } }
     // what the verifier flagged has been taken out by the gate (it would have held the document otherwise): the record says so
     if (gateLog.length && out.verification && out.verification.ok === false) out.verification = { ...out.verification, ok: true, problems: [], settled: out.verification.problems } as any;
     (out as any).gate = { ok: true, repaired: [...gateLog, ...profileLog], reordered: ordered.moved, polished };
