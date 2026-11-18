@@ -90,6 +90,13 @@ export const TEMPLATES = [
       { type: "BODY", text: "Ghosted Open: Candidate {{1}} has agreed to talk about *{{2}}*. Pay ₹499 on your desk to be connected.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
       { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my desk", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
     ] },
+  // 18 Nov: Meta filed ghosted_open_accepted under MARKETING because it named the price. A notice that can be capped or
+  // switched off is the wrong one to carry "they said yes", so this one says only what happened. The price is on the desk.
+  { name: "ghosted_open_agreed", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Ghosted Open: Candidate {{1}} has agreed to talk about *{{2}}*. The next step is waiting on your desk.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my desk", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
   { name: "ghosted_open_declined", category: "UTILITY", language: "en",
     components: [
       { type: "BODY", text: "Ghosted Open: Candidate {{1}} has declined a conversation about *{{2}}*. Their identity stays private, and nothing is charged.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
@@ -383,14 +390,16 @@ export async function notifyOpen(userId: string, kind: OpenNote, d: { company?: 
       closed: { params: [company, title], text: `Ghosted Open: *${company}* has closed the role *${title}*. See how it ended and how far your answer went.`, button: "See how it ended", url: `${base}/q/${d.id ?? ""}`, btn: String(d.id ?? "") },
       answer: { params: [title, String(d.count ?? 1)], text: `Ghosted Open: a new answer has arrived for *${title}*. Answers so far: ${d.count ?? 1}. No names are attached to them.`, button: "Read the answers", url: `${base}/desk` },
       reply: { params: [n, title], text: `Ghosted Open: Candidate ${n} has replied to your follow-up for *${title}*. Their reply is on your desk.`, button: "Read the reply", url: `${base}/desk` },
-      accepted: { params: [n, title], text: `Ghosted Open: Candidate ${n} has agreed to talk about *${title}*. Pay ₹499 on your desk to be connected.`, button: "Open my desk", url: `${base}/desk` },
+      accepted: { params: [n, title], text: `Ghosted Open: Candidate ${n} has agreed to talk about *${title}*. The next step is waiting on your desk.`, button: "Open my desk", url: `${base}/desk` },
       declined: { params: [n, title], text: `Ghosted Open: Candidate ${n} has declined a conversation about *${title}*. Their identity stays private, and nothing is charged.`, button: "Open my desk", url: `${base}/desk` },
     };
     const m = M[kind];
-    const ok = await graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name: `ghosted_open_${kind}`, language: { code: "en" }, components: [
+    const send = (name: string) => graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name, language: { code: "en" }, components: [
       { type: "body", parameters: m.params.map((t) => ({ type: "text", text: t || "-" })) },
       ...(m.btn ? [{ type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: m.btn }] }] : []),
     ] } });
+    // "accepted" goes out as the plain notice once Meta has approved it; until then the earlier one (same two blanks) still lands
+    const ok = kind === "accepted" ? (await send("ghosted_open_agreed")) || (await send("ghosted_open_accepted")) : await send(`ghosted_open_${kind}`);
     if (!ok) await sendCard(to, { body: m.text, button: m.button, url: m.url });
   } catch (e: any) { console.error("[whatsapp] open", kind, e?.message ?? e); }
 }
