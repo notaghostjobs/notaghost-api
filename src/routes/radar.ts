@@ -139,10 +139,10 @@ export async function livePool(): Promise<Sighting[]> {
  *  The pulse shows nothing for days before this. */
 const PULSE_SINCE = "2026-10-28";
 
-type Gone = { id: number; title: string; company_name: string | null; employer_key: string | null; gone_at: string };
+export type Gone = { id: number; title: string; company_name: string | null; employer_key: string | null; gone_at: string };
 let goneCache: { at: number; rows: Gone[] } | null = null;
 /** Bengaluru sightings that went quiet in the last 15 days (title, employer, when). Cached 30 minutes. */
-async function gonePool(): Promise<Gone[]> {
+export async function gonePool(): Promise<Gone[]> {
   if (goneCache && Date.now() - goneCache.at < 30 * 60e3) return goneCache.rows;
   const since = new Date(Date.now() - 15 * 86400e3).toISOString();
   const rows: Gone[] = [];
