@@ -14,6 +14,7 @@ import { preview } from "./routes/preview.js";
 import { check } from "./routes/check.js";
 import { radar, radarPublic } from "./routes/radar.js";
 import { open, openPublic } from "./routes/open.js";
+import { mcp, openaiChallenge } from "./routes/mcp.js";
 import { events } from "./routes/funnel.js";
 import { admin } from "./routes/admin.js";
 import { snapshotDue } from "./engine/ghost/index.js";
@@ -21,6 +22,10 @@ import { snapshotDue } from "./engine/ghost/index.js";
 const app = new Hono();
 app.use("*", logger());
 const origins = [...env.appOrigin.split(",").map((o) => o.trim()).filter(Boolean), "https://notaghost.jobs", "https://www.notaghost.jobs", "https://notaghost-web.onrender.com", "http://localhost:5173"];
+// The assistants' door (ChatGPT, Claude): public job search over MCP. Mounted before the site's CORS rule because its
+// callers are servers and tools on any origin, and it carries no cookie or session to protect.
+app.route("/mcp", mcp);
+app.get("/.well-known/openai-apps-challenge", openaiChallenge);
 app.use("/admin/*", cors({ origin: "*", allowHeaders: ["x-admin", "content-type"], allowMethods: ["GET", "POST", "OPTIONS"] }));  // secret header is the gate
 // the browser extension calls /check from chrome-extension:// origins
 app.use("*", cors({ origin: (o) => (o && (origins.includes(o) || /^(chrome|moz)-extension:\/\//.test(o)) ? o : origins[0]), allowHeaders: ["authorization", "content-type", "x-admin", "x-ghosted-anon", "x-ghosted-src-first", "x-ghosted-src-last"] }));
