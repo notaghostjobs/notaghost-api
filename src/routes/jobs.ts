@@ -30,6 +30,8 @@ const plural = (n: number, one: string, many: string) => `${n.toLocaleString("en
 const LEVEL = new Set("senior sr jr junior lead principal staff associate assistant asst chief head deputy trainee intern apprentice graduate fresher i ii iii iv v vi l1 l2 l3 l4 l5 l6 level grade".split(" "));
 /** The noun a role name ends on. A phrase that does not end on one of these is a department or a product, not a role. */
 const HEAD = new Set("manager engineer analyst developer designer scientist architect consultant specialist executive representative accountant recruiter administrator tester writer partner officer coordinator technician advisor programmer strategist planner auditor counsel buyer trainer editor researcher director nurse pharmacist teacher lawyer underwriter".split(" "));
+/** Words that turn up between two titles or name a vendor, never part of a role's own name. */
+const GLUE = new Set("google microsoft amazon aws oracle ibm meta apple accenture deloitte projects services service role roles job jobs opening openings hiring required urgent immediate".split(" "));
 const UP: Record<string, string> = { qa: "QA", hr: "HR", ui: "UI", ux: "UX", sre: "SRE", it: "IT", ai: "AI", ml: "ML", sap: "SAP", devops: "DevOps", seo: "SEO", crm: "CRM", erp: "ERP", bi: "BI", sql: "SQL", aws: "AWS", ios: "iOS", api: "API", pmo: "PMO", fp: "FP", ar: "AR", ap: "AP", gtm: "GTM", sdet: "SDET", netsuite: "NetSuite", servicenow: "ServiceNow", salesforce: "Salesforce", java: "Java" };
 const nameOf = (phrase: string) => phrase.split(" ").map((w) => UP[w] ?? w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 const roleTokens = (title: string) => words(title).filter((w) => !LEVEL.has(w) && !/^\d+$/.test(w));
@@ -48,6 +50,7 @@ function build(pool: Sighting[]): Index {
     const t = roleTokens(s.title); const seen = new Set<string>();
     for (let i = 0; i < t.length; i++) for (const n of [2, 3]) {
       if (i + n > t.length || !HEAD.has(t[i + n - 1])) continue;
+      if (t.slice(i, i + n - 1).some((w) => HEAD.has(w) || GLUE.has(w))) continue;   // "manager director", "service google consultant": two titles run together, or an employer's name in the middle
       const g = t.slice(i, i + n).join(" "); if (seen.has(g) || g.length > 48) continue; seen.add(g);
       let a = grams.get(g); if (!a) grams.set(g, a = []); a.push(s.id);
     }
