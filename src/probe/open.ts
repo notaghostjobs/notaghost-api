@@ -33,6 +33,9 @@ export async function openProbe(app: App, candidatePhone: string): Promise<OpenP
     if (!ve.employer?.verified) problems.push("employer not verified"); steps.push("employer verified");
     const ask = { title: "Senior Product Manager, Payments", pay: "₹45–60 LPA", exp_min: 5, exp_max: 10, location: "Bengaluru", question: "Failed payouts to small merchants doubled last month. What would you look at first, and what would you leave alone?" };
     const q = (await E("/open/questions", ask)).question; made.push(q.id); steps.push("question published");
+    // its own readable address, and that address finds it
+    if (!q.path || /[^a-z0-9/-]/.test(q.path)) problems.push(`the question has no readable address: ${q.path}`);
+    else { const at = await P(`/open/public/at/${q.path}`); if (at.id !== q.id) problems.push("the readable address does not lead to the question"); }
     const off = (await E("/open/questions", { ...ask, title: "Head Chef, Banquets", exp_min: 8, exp_max: 14, question: "Our banquet kitchen wastes a fifth of its prep on weekends. How would you rebuild the weekend prep plan?" })).question; made.push(off.id);
     // public: readable without an account, and on the live list
     const pub = await P(`/open/public/q/${q.id}`);
@@ -91,6 +94,7 @@ export async function openProbe(app: App, candidatePhone: string): Promise<OpenP
     await C(`/open/q/${q.id}/answers`, { text }, 409);
     steps.push("closed, outcome visible to all");
   } catch (e) { problems.push(`walk stopped: ${(e as Error).message.slice(0, 200)}`); }
-  finally { for (const id of made) { await db.from("reader_control").delete().eq("key", `open:q:${id}`); await db.from("reader_control").delete().like("key", `open:a:${id}:%`); await db.from("reader_control").delete().like("key", `open:rel:${id}:%`); } }
+  finally { for (const id of made) { await db.from("reader_control").delete().eq("key", `open:q:${id}`); await db.from("reader_control").delete().like("key", `open:a:${id}:%`); await db.from("reader_control").delete().like("key", `open:rel:${id}:%`); }
+    await db.from("reader_control").delete().like("key", "open:path:ghosted-test/%"); }
   return out();
 }

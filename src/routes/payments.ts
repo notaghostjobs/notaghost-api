@@ -9,6 +9,7 @@ import { env, PRICES, receiptItem } from "../lib/env.js";
 import { requireUser } from "../lib/auth.js";
 import { notifyReceipt } from "./whatsapp.js";
 import { readReceiptToken } from "./doc.js";
+import { settleOpenIntro } from "./open.js";
 
 export const payments = new Hono<{ Variables: { user: User } }>();
 
@@ -78,6 +79,17 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
   if (!pay) throw new Error("unknown order");
   if (userId && pay.user_id !== userId) throw new Error("order belongs to another user");
 
+  // Ghosted Open: ₹499 for one accepted conversation. No plan is opened; the answer on the employer's desk becomes "paid".
+  if (pay.product === "open_intro") {
+    if (pay.status !== "paid") {
+      const { data: receipt } = await db.rpc("next_receipt_no");
+      await db.from("payments").update({ status: "paid", razorpay_payment_id: paymentId, razorpay_signature: signature, receipt_no: receipt, paid_at: new Date().toISOString() }).eq("id", pay.id);
+      void logEvent("paid", { src: { first: pay.src_first ?? null, last: pay.src_last ?? null }, userId: pay.user_id, meta: { payment_id: pay.id, order_id: orderId, product: pay.product, amount_paise: pay.amount_paise } });
+      if (receipt) void notifyReceipt(pay.user_id, { id: pay.id, receipt_no: String(receipt), amount_paise: pay.amount_paise, product: pay.product, shots: 1, days: 0 });
+    }
+    await settleOpenIntro(orderId, paymentId);
+    return null;
+  }
   if (pay.status === "paid") {
     const { data } = await db.from("plans").select("*").eq("payment_id", pay.id).maybeSingle();
     return data;

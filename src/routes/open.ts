@@ -8,13 +8,18 @@
 // tables are in supabase/migrations/0011_open.sql; moving to them is a storage swap behind `store` below.
 import { Hono } from "hono";
 import { z } from "zod";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomInt, createHash, createHmac, timingSafeEqual } from "node:crypto";
+import Razorpay from "razorpay";
 import { db, type User } from "../lib/db.js";
 import { requireUser } from "../lib/auth.js";
 import { isRadarTester as isTester } from "../lib/testers.js";
 import { json, HOUSEKEEPING } from "../engine/claude.js";
 import { withMeter } from "../engine/meter.js";
 import { recordFor } from "./radar.js";
+import { env } from "../lib/env.js";
+import { sendMail, mailReady } from "../lib/mail.js";
+import { notifyOpen } from "./whatsapp.js";
+import { srcOf, srcOfUser, logEvent } from "../lib/src.js";
 
 export const open = new Hono<{ Variables: { user: User } }>();
 export const openPublic = new Hono();
@@ -34,21 +39,34 @@ const domainOf = (s: string) => { let d = String(s ?? "").trim().toLowerCase().r
 /** the registrable part, near enough: "careers.acme.co.in" and "acme.co.in" are the same employer */
 const baseDomain = (d: string) => { const p = d.split("."); const two = /^(co|com|org|net|ac|gov|edu)$/.test(p[p.length - 2] ?? "") && (p[p.length - 1] ?? "").length === 2; return p.slice(two ? -3 : -2).join("."); };
 
-type Employer = { user: string; company: string; email: string; site: string; domain: string; verified: boolean; how: string; at: string };
+type Employer = { user: string; company: string; email: string; site: string; domain: string; verified: boolean; how: string; at: string;
+  code?: { hash: string; until: string; tries: number; sent_at: string } };
 type Question = { id: string; owner: string; company: string; domain: string; title: string; pay: string; exp_min: number; exp_max: number; location: string; question: string;
-  status: "live" | "closed"; created: string; closes: string; outcome?: "hired" | "not_hired"; note?: string; closed_at?: string; views: number };
+  status: "live" | "closed"; created: string; closes: string; outcome?: "hired" | "not_hired"; note?: string; closed_at?: string; views: number;
+  path?: string; told_at?: string };
 type Answer = { id: string; q: string; user: string; n: number; label: string; text: string; at: string; how: { ms: number; pasted: boolean };
   status: "in" | "shortlisted" | "requested" | "accepted" | "declined" | "paid";
   followup?: { q: string; suggested: boolean; asked_at: string; opened_at?: string; reply?: string; replied_at?: string; how?: { ms: number; pasted: boolean }; lapsed?: boolean };
-  suggestions?: string[]; share?: { name: boolean; phone: boolean; email: boolean }; requested_at?: string; responded_at?: string; paid_at?: string };
+  suggestions?: string[]; share?: { name: boolean; phone: boolean; email: boolean }; requested_at?: string; responded_at?: string; paid_at?: string; order_id?: string; payment_id?: string };
 
+const slugOf = (t: string) => String(t ?? "").toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+/** A question's own address: <company>/<role>. The company part comes from the verified domain ("amazon.com" → "amazon"),
+ *  so nobody else can take it. The same role posted again takes the city, then the month, then a count — never a random tail. */
+async function claimPath(q: { id: string; domain: string; company: string; title: string; location: string }): Promise<string> {
+  const co = slugOf(q.domain.split(".")[0] ?? "") || slugOf(q.company) || "company";
+  const role = slugOf(q.title) || "role";
+  const mon = new Date().toLocaleDateString("en-GB", { month: "short", timeZone: "Asia/Kolkata" }).toLowerCase();
+  const tries = [role, `${role}-${slugOf(q.location)}`, `${role}-${slugOf(q.location)}-${mon}`, ...[2, 3, 4, 5, 6, 7, 8, 9].map((n) => `${role}-${slugOf(q.location)}-${mon}-${n}`)];
+  for (const r of tries) { const path = `${co}/${r}`; if (!(await store.get<string>(`open:path:${path}`))) { await store.set(`open:path:${path}`, q.id); return path; } }
+  const path = `${co}/${role}-${q.id}`; await store.set(`open:path:${path}`, q.id); return path;
+}
 const qKey = (id: string) => `open:q:${id}`, aKey = (q: string, user: string) => `open:a:${q}:${user}`;
 const answersOf = (q: string) => store.list<Answer>(`open:a:${q}:`);
 const isLive = (q: Question) => q.status === "live" && Date.parse(q.closes) > Date.now();
 const FN = (s: string) => s.replace(/\b\w/g, (m) => m.toUpperCase());
 /** what the employer sees in place of a name: the function and the years, from the Record */
 const labelFor = (t: { functions: string[]; years: number; level: string }) => `${FN((t.functions?.[0] ?? "Experienced").trim())} · ${Math.max(0, Math.round(t.years))} ${Math.round(t.years) === 1 ? "year" : "years"}`;
-const pubQ = (q: Question, n: number) => ({ id: q.id, company: q.company, title: q.title, pay: q.pay, exp_min: q.exp_min, exp_max: q.exp_max, location: q.location, question: q.question, status: isLive(q) ? "live" : "closed", created: q.created, closes: q.closes, outcome: q.outcome ?? null, closed_at: q.closed_at ?? null, answers: n });
+const pubQ = (q: Question, n: number) => ({ id: q.id, company: q.company, title: q.title, pay: q.pay, exp_min: q.exp_min, exp_max: q.exp_max, location: q.location, question: q.question, status: isLive(q) ? "live" : "closed", created: q.created, closes: q.closes, outcome: q.outcome ?? null, closed_at: q.closed_at ?? null, answers: n, path: q.path ?? null });
 const pubA = (a: Answer) => ({ n: a.n, label: a.label, text: a.text, at: a.at });
 const stage = (a: Answer) => ["accepted", "paid"].includes(a.status) ? "conversation" : a.status === "requested" || a.status === "declined" ? "requested" : a.status === "shortlisted" ? "shortlisted" : "in";
 
@@ -57,6 +75,12 @@ openPublic.get("/live", async (c) => {
   const qs = (await store.list<Question>("open:q:")).filter(isLive).slice(0, 40);
   const out = await Promise.all(qs.map(async (q) => pubQ(q, (await answersOf(q.id)).length)));
   return c.json({ questions: out });
+});
+/** the readable address of a question (notaghost.jobs/open/<company>/<role>) → its id */
+openPublic.get("/at/:co/:role", async (c) => {
+  const id = await store.get<string>(`open:path:${slugOf(c.req.param("co"))}/${slugOf(c.req.param("role"))}`);
+  if (!id) return c.json({ error: "This question isn’t on Ghosted Open." }, 404);
+  return c.json({ id });
 });
 openPublic.get("/q/:id", async (c) => {
   const q = await store.get<Question>(qKey(c.req.param("id")));
@@ -69,19 +93,58 @@ openPublic.get("/q/:id", async (c) => {
 });
 
 // ---------------- the employer ----------------
-open.get("/employer", async (c) => c.json({ employer: await store.get<Employer>(`open:emp:${c.get("user").id}`) }));
-/** Verification, first version: a work email on the company's own domain (not a free mailbox), matching the company site.
- *  It proves the address is shaped right, not that the person owns it — an emailed code is the next step (no mail sender yet). */
+const pubE = (e: Employer | null) => e ? { company: e.company, email: e.email, domain: e.domain, verified: e.verified, pending: !e.verified && !!e.code } : null;
+const CODE_MIN = 15, CODE_TRIES = 5, RESEND_GAP_MS = 60e3;
+const codeHash = (user: string, code: string) => createHash("sha256").update(`${user}:${code}`).digest("hex");
+async function mailCode(e: Employer): Promise<boolean> {
+  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  e.code = { hash: codeHash(e.user, code), until: new Date(Date.now() + CODE_MIN * 60e3).toISOString(), tries: 0, sent_at: now() };
+  await store.set(`open:emp:${e.user}`, e);
+  return sendMail({ to: e.email, subject: `${code} is your Ghosted Open code`, code,
+    lines: [`Your code to verify ${e.company} on Ghosted Open:`, `It is good for ${CODE_MIN} minutes. Enter it on the page you have open.`, "If you did not ask for this, ignore this email. Nobody can post as your company without the code."] });
+}
+open.get("/employer", async (c) => c.json({ employer: pubE(await store.get<Employer>(`open:emp:${c.get("user").id}`)) }));
+/** Verification: a work email on the company's own domain (not a free mailbox), matching the company site — and then a
+ *  code sent to that address, which only its owner can read. The automated walk's account and testers skip the code. */
 open.post("/employer", async (c) => {
-  const b = z.object({ company: z.string().trim().min(2).max(80), email: z.string().trim().email().max(120), site: z.string().trim().min(4).max(160) }).safeParse(await c.req.json().catch(() => ({})));
+  const u = c.get("user");
+  const b = z.object({ company: z.string().trim().min(2).max(80), email: z.string().trim().email().max(120), site: z.string().trim().min(4).max(160), real: z.boolean().optional() }).safeParse(await c.req.json().catch(() => ({})));
   if (!b.success) return c.json({ error: "Company name, your work email and the company website." }, 400);
   const ed = domainOf(b.data.email), sd = domainOf(b.data.site);
   if (!ed || !sd) return c.json({ error: "That email or website doesn’t look right." }, 400);
   if (FREE_MAIL.test(ed)) return c.json({ error: "Use your work email, on the company’s own domain. A personal mailbox can’t verify a company." }, 400);
   if (baseDomain(ed) !== baseDomain(sd)) return c.json({ error: `Your email is on ${baseDomain(ed)} and the website is ${baseDomain(sd)}. They need to be the same company domain.` }, 400);
-  const e: Employer = { user: c.get("user").id, company: b.data.company, email: b.data.email.toLowerCase(), site: sd, domain: baseDomain(sd), verified: true, how: "work email on the company domain", at: now() };
-  await store.set(`open:emp:${e.user}`, e);
-  return c.json({ employer: e });
+  const had = await store.get<Employer>(`open:emp:${u.id}`);
+  const email = b.data.email.toLowerCase();
+  if (had?.verified && had.email === email && had.domain === baseDomain(sd)) { had.company = b.data.company; await store.set(`open:emp:${u.id}`, had); return c.json({ employer: pubE(had) }); }
+  const e: Employer = { user: u.id, company: b.data.company, email, site: sd, domain: baseDomain(sd), verified: false, how: "", at: now() };
+  // a tester is verified at once, unless they ask to walk the real path (the code by email) with real: true
+  if (isTester(u) && !b.data.real) { e.verified = true; e.how = "tester account, no code sent"; await store.set(`open:emp:${u.id}`, e); return c.json({ employer: pubE(e), tester: true }); }
+  if (!mailReady()) return c.json({ error: "We can’t send verification emails just yet. Please try again shortly." }, 503);
+  if (had?.code && had.email === email && Date.now() - Date.parse(had.code.sent_at) < RESEND_GAP_MS) return c.json({ employer: pubE(had), sent_to: email });
+  if (!(await mailCode(e))) return c.json({ error: `We couldn’t send a code to ${email}. Check the address and try again.` }, 502);
+  return c.json({ employer: pubE(e), sent_to: email });
+});
+open.post("/employer/confirm", async (c) => {
+  const u = c.get("user"); const e = await store.get<Employer>(`open:emp:${u.id}`);
+  const b = z.object({ code: z.string().trim().regex(/^\d{6}$/) }).safeParse(await c.req.json().catch(() => ({})));
+  if (!b.success) return c.json({ error: "The code is six digits." }, 400);
+  if (!e) return c.json({ error: "Start with your company details." }, 409);
+  if (e.verified) return c.json({ employer: pubE(e) });
+  if (!e.code || Date.parse(e.code.until) < Date.now()) return c.json({ error: "That code has run out. Ask for a new one." }, 410);
+  if (e.code.tries >= CODE_TRIES) return c.json({ error: "Too many tries. Ask for a new code." }, 429);
+  const want = Buffer.from(e.code.hash), got = Buffer.from(codeHash(u.id, b.data.code));
+  if (want.length !== got.length || !timingSafeEqual(want, got)) { e.code.tries += 1; await store.set(`open:emp:${u.id}`, e); return c.json({ error: "That isn’t the code we sent." }, 400); }
+  e.verified = true; e.how = "code sent to the work email"; e.at = now(); delete e.code;
+  await store.set(`open:emp:${u.id}`, e);
+  return c.json({ employer: pubE(e) });
+});
+open.post("/employer/resend", async (c) => {
+  const u = c.get("user"); const e = await store.get<Employer>(`open:emp:${u.id}`);
+  if (!e || e.verified) return c.json({ employer: pubE(e) });
+  if (e.code && Date.now() - Date.parse(e.code.sent_at) < RESEND_GAP_MS) return c.json({ error: "A code was sent a moment ago. Give it a minute." }, 429);
+  if (!mailReady() || !(await mailCode(e))) return c.json({ error: `We couldn’t send a code to ${e.email}.` }, 502);
+  return c.json({ employer: pubE(e), sent_to: e.email });
 });
 const ask = z.object({ title: z.string().trim().min(3).max(90), pay: z.string().trim().min(2).max(40), exp_min: z.number().int().min(0).max(40), exp_max: z.number().int().min(0).max(45), location: z.string().trim().min(2).max(60), question: z.string().trim().min(40).max(400) });
 open.post("/questions", async (c) => {
@@ -94,6 +157,7 @@ open.post("/questions", async (c) => {
   const mine = (await store.list<Question>("open:q:")).filter((q) => q.owner === u.id && isLive(q));
   if (mine.length >= 5) return c.json({ error: "Five live questions at a time. Close one first." }, 429);
   const q: Question = { id: randomBytes(5).toString("hex"), owner: u.id, company: e.company, domain: e.domain, ...b.data, status: "live", created: now(), closes: new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(), views: 0 };
+  q.path = await claimPath(q);
   await store.set(qKey(q.id), q);
   return c.json({ question: pubQ(q, 0) });
 });
@@ -102,7 +166,7 @@ open.get("/desk", async (c) => {
   const u = c.get("user");
   const qs = (await store.list<Question>("open:q:")).filter((q) => q.owner === u.id).sort((a, b) => b.created.localeCompare(a.created));
   const out = await Promise.all(qs.map(async (q) => { const as = (await answersOf(q.id)).sort((a, b) => a.at.localeCompare(b.at)); return { ...pubQ(q, as.length), views: q.views ?? 0, answers_list: await Promise.all(as.map((a) => deskA(a))) }; }));
-  return c.json({ employer: await store.get<Employer>(`open:emp:${u.id}`), questions: out, tester: isTester(u), price: INTRO_PRICE });
+  return c.json({ employer: pubE(await store.get<Employer>(`open:emp:${u.id}`)), questions: out, tester: isTester(u), price: INTRO_PRICE });
 });
 async function deskA(a: Answer) {
   const base: any = { id: a.id, n: a.n, label: a.label, text: a.text, at: a.at, how: a.how, status: a.status,
@@ -155,23 +219,49 @@ open.post("/answers/:id/followup", async (c) => {
   m.a.status = "shortlisted";
   m.a.followup = { q: b.data.question, suggested: (m.a.suggestions ?? []).includes(b.data.question), asked_at: now() };
   await save(m.a);
+  void notifyOpen(m.a.user, "followup", { company: m.q.company, title: m.q.title });
   return c.json({ answer: await deskA(m.a) });
 });
 open.post("/answers/:id/request", async (c) => {
   const m = await mineAnswer(c.get("user"), c.req.param("id")); if (!m) return c.json({ error: "Not your answer to act on." }, 404);
   if (!isLive(m.q)) return c.json({ error: "This role is closed." }, 409);
-  if (["in", "shortlisted"].includes(m.a.status)) { m.a.status = "requested"; m.a.requested_at = now(); await save(m.a); }
+  if (["in", "shortlisted"].includes(m.a.status)) { m.a.status = "requested"; m.a.requested_at = now(); await save(m.a); void notifyOpen(m.a.user, "invite", { company: m.q.company, title: m.q.title }); }
   return c.json({ answer: await deskA(m.a) });
 });
-/** Payment for an accepted introduction. The payments table has no Open product yet (it needs migration 0011), so the
- *  only path open today is the tester's: it marks the introduction paid without money moving, and says so. */
+const rzp = () => new Razorpay({ key_id: env.razorpayKeyId, key_secret: env.razorpayKeySecret });
+/** The one place an introduction becomes paid: the browser's confirmation, Razorpay's webhook and the tester path all land here. */
+async function markPaid(a: Answer, ref: { order_id?: string; payment_id?: string }) {
+  if (a.status === "paid") return;
+  a.status = "paid"; a.paid_at = now(); Object.assign(a, ref); await save(a);
+}
+/** Called by the payments settle step when a ₹499 Open order is confirmed paid. Idempotent. */
+export async function settleOpenIntro(orderId: string, paymentId?: string | null): Promise<boolean> {
+  const m = await store.get<{ q: string; user: string }>(`open:pay:${orderId}`); if (!m) return false;
+  const a = await store.get<Answer>(aKey(m.q, m.user)); if (!a) return false;
+  if (!["accepted", "paid"].includes(a.status)) return false;
+  await markPaid(a, { order_id: orderId, ...(paymentId ? { payment_id: paymentId } : {}) });
+  return true;
+}
+/** Payment for an accepted introduction: ₹499, and only now. Returns a Razorpay order for the browser's checkout; the
+ *  payments confirm step (or the webhook) then marks it paid and the contact appears on the desk. A tester account
+ *  marks it paid without money moving, and says so — unless it asks for the real path with ?real=1. */
 open.post("/answers/:id/pay", async (c) => {
   const u = c.get("user"); const m = await mineAnswer(u, c.req.param("id")); if (!m) return c.json({ error: "Not your answer to act on." }, 404);
   if (m.a.status === "paid") return c.json({ answer: await deskA(m.a) });
   if (m.a.status !== "accepted") return c.json({ error: "You pay only after the candidate accepts." }, 409);
-  if (!isTester(u)) return c.json({ error: "Payments for Open aren’t switched on yet. The candidate’s acceptance is held for you." }, 402);
-  m.a.status = "paid"; m.a.paid_at = now(); await save(m.a);
-  return c.json({ answer: await deskA(m.a), test_payment: true });
+  if (isTester(u) && c.req.query("real") !== "1") { await markPaid(m.a, {}); return c.json({ answer: await deskA(m.a), test_payment: true }); }
+  if (!env.razorpayKeyId || !env.razorpayKeySecret) return c.json({ error: "Payments aren’t available right now. The candidate’s acceptance is held for you." }, 503);
+  try {
+    const here = srcOf(c); const src = await srcOfUser(u.id);
+    const attributed = { first: src.first ?? here.first ?? here.last ?? null, last: here.last ?? src.last ?? null };
+    const order = await rzp().orders.create({ amount: INTRO_PRICE * 100, currency: "INR", notes: { user_id: u.id, product: "open_intro", answer: m.a.id, src_first: attributed.first ?? "direct", src_last: attributed.last ?? "direct" } });
+    const { error } = await db.from("payments").insert({ user_id: u.id, product: "open_intro", amount_paise: INTRO_PRICE * 100, razorpay_order_id: order.id, raw: order, src_first: attributed.first, src_last: attributed.last });
+    if (error) { console.error("[open] pay: payments row", error.message); return c.json({ error: "Payments for Open aren’t switched on yet. The candidate’s acceptance is held for you." }, 503); }
+    await store.set(`open:pay:${order.id}`, { q: m.a.q, user: m.a.user, answer: m.a.id, owner: u.id });
+    m.a.order_id = order.id; await save(m.a);
+    void logEvent("order", { src: attributed, userId: u.id, meta: { order_id: order.id, product: "open_intro", amount_paise: INTRO_PRICE * 100 } });
+    return c.json({ order: { order_id: order.id, amount: INTRO_PRICE * 100, key_id: env.razorpayKeyId, phone: u.phone } });
+  } catch (e) { console.error("[open] pay", (e as Error).message); return c.json({ error: "We couldn’t start the payment. Nothing was charged; try again." }, 502); }
 });
 open.post("/questions/:id/close", async (c) => {
   const u = c.get("user"); const q = await store.get<Question>(qKey(c.req.param("id")));
@@ -181,6 +271,7 @@ open.post("/questions/:id/close", async (c) => {
   q.status = "closed"; q.outcome = b.data.outcome; q.note = b.data.note; q.closed_at = now();
   await store.set(qKey(q.id), q);
   const as = await answersOf(q.id);
+  for (const a of as) void notifyOpen(a.user, "closed", { company: q.company, title: q.title, id: q.id });
   return c.json({ question: pubQ(q, as.length), notified: as.length });
 });
 
@@ -237,6 +328,8 @@ open.post("/q/:id/answers", async (c) => {
   do { n = 100 + Math.floor(Math.random() * 900); } while (taken.has(n));
   const a: Answer = { id: `${q.id}-${n}`, q: q.id, user: u.id, n, label: r.label, text: b.data.text, at: now(), how: { ms: b.data.ms, pasted: b.data.pasted }, status: "in" };
   await save(a);
+  // the employer hears about the first answer at once, and after that at most once every three hours
+  if (!q.told_at || Date.now() - Date.parse(q.told_at) > 3 * 3600e3) { q.told_at = now(); await store.set(qKey(q.id), q); void notifyOpen(q.owner, "answer", { title: q.title, count: taken.size + 1 }); }
   return c.json({ answer: candA(a, q) });
 });
 /** an answer as its own writer sees it */
@@ -270,6 +363,7 @@ open.post("/answers/:id/reply", async (c) => {
   if (lapsed(m.a)) return c.json({ error: "The reply window has closed." }, 410);
   m.a.followup.reply = b.data.text; m.a.followup.replied_at = now(); m.a.followup.how = { ms: b.data.ms, pasted: b.data.pasted };
   await save(m.a);
+  void notifyOpen(m.q.owner, "reply", { n: m.a.n, title: m.q.title });
   return c.json({ answer: candA(m.a, m.q) });
 });
 open.post("/answers/:id/respond", async (c) => {
@@ -281,5 +375,6 @@ open.post("/answers/:id/respond", async (c) => {
   if (b.data.accept && !share.phone && !share.email) return c.json({ error: "Share at least a phone number or an email, or they can’t reach you." }, 400);
   m.a.status = b.data.accept ? "accepted" : "declined"; m.a.responded_at = now(); if (b.data.accept) m.a.share = share;
   await save(m.a);
+  void notifyOpen(m.q.owner, b.data.accept ? "accepted" : "declined", { n: m.a.n, title: m.q.title });
   return c.json({ answer: candA(m.a, m.q) });
 });
