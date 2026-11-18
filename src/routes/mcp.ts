@@ -105,6 +105,19 @@ async function rowsFor(ids: number[]): Promise<Map<number, Row>> {
   for (const r of (data ?? []) as Row[]) out.set(r.id, r);
   return out;
 }
+// Radar's live list takes several seconds to load from cold, which is too long for someone waiting in a chat. So this
+// server answers from the copy it last had and asks for a fresh one behind the answer; only the very first call waits.
+let mine: { at: number; rows: Sighting[] } | null = null; let refreshing = false;
+async function jobPool(): Promise<Sighting[]> {
+  if (!mine) { mine = { at: Date.now(), rows: await livePool() }; return mine.rows; }
+  if (Date.now() - mine.at > 30 * 60e3 && !refreshing) { refreshing = true; void livePool().then((rows) => { mine = { at: Date.now(), rows }; }).catch((e) => console.error("[mcp] pool", e?.message ?? e)).finally(() => { refreshing = false; }); }
+  return mine.rows;
+}
+/** called once after boot, so the first person to search does not pay for the load */
+export const warmJobs = () => { void jobPool().catch(() => { /* the first search will try again */ }); };
+const st = (w: string) => w.replace(/ies$/, "y").replace(/(ing|ers?|s)$/, "");
+/** "2 Locations (Bengaluru facet)" is the hiring system's own shorthand; a person reads it as one of several places */
+const place = (loc: string | null | undefined) => { const l = String(loc ?? "").trim(); const m = /^(\d+) Locations? \(Bengaluru facet\)$/i.exec(l); return m ? `Bengaluru (one of ${m[1]} locations)` : l || "Bengaluru"; };
 const PER_PAGE = 8;
 const STALE_MS = 7 * 86400e3;   // a posting we have not been able to confirm for a week is not offered as live
 const MAX_PAGES = 5;
@@ -116,7 +129,7 @@ async function searchJobs(a: { role: string; years_experience?: number; company?
   if (!want.length) return { error: `“${a.role}” is too general to search on. Name the job itself, for example “category manager”, “data analyst” or “backend engineer”.` };
   const years = a.years_experience; const page = a.page ?? 1;
   const key = JSON.stringify([words(a.role), years ?? null, normCo(a.company ?? "")]);
-  const pool = await livePool(); titleIdf(pool);
+  const pool = await jobPool(); titleIdf(pool);
   let hit = searchCache.get(key);
   if (!hit || Date.now() - hit.at > 10 * 60e3) {
     // the level Radar's title match assumes: the words of the ask decide it, then the years
@@ -124,11 +137,17 @@ async function searchJobs(a: { role: string; years_experience?: number; company?
     const level = senior ? "head" : junior || years === undefined || years < 4 ? "ic" : years >= 12 ? "head" : "manager";
     const co = normCo(a.company ?? "");
     const scored: { s: Sighting; sc: number }[] = [];
+    // Radar's match decides who is in. Among those, the title that says the asked-for words themselves comes first:
+    // "Category Manager" before "Category Buyer" for someone who asked for a category manager.
+    const asked = words(a.role).map(st); const phrase = ` ${asked.join(" ")} `;
     for (const s of pool) {
       if (!httpsOnly(s.url) || !s.title) continue;
       if (co && !normCo(s.company_name ?? "").includes(co)) continue;
-      const sc = titleScore(s.title, [words(a.role)], level, true);
-      if (sc >= TITLE_IN) scored.push({ s, sc });
+      const base = titleScore(s.title, [words(a.role)], level, true);
+      if (base < TITLE_IN) continue;
+      const tw = words(s.title).map(st); const line = ` ${tw.join(" ")} `;
+      const sc = base + (line.includes(phrase) ? 1 : asked.every((w) => tw.includes(w)) ? 0.6 : 0);
+      scored.push({ s, sc });
     }
     // closest title first, the newest among equals; no employer takes more than two places in any eight
     scored.sort((x, y) => (Math.round(y.sc * 20) - Math.round(x.sc * 20)) || y.s.first_seen.localeCompare(x.s.first_seen));
@@ -149,7 +168,7 @@ async function searchJobs(a: { role: string; years_experience?: number; company?
   const byId = new Map(pool.map((s) => [s.id, s]));
   const slice = hit.ids.slice((page - 1) * PER_PAGE, page * PER_PAGE); const rows = await rowsFor(slice);
   const jobs = slice.flatMap((id) => { const s = byId.get(id), r = rows.get(id); if (!s || !r || r.gone_at || Date.now() - Date.parse(r.last_seen) > STALE_MS) return [];   // not confirmed lately: not shown as open
-    return [{ job_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "Bengaluru", apply_url: s.url, on_employer_site_since: day(s.posted_at ?? s.first_seen), last_confirmed: day(r.last_seen), experience_asked: bandWords(r.description) }]; });
+    return [{ job_id: s.id, title: s.title, company: s.company_name ?? "", location: place(s.location), apply_url: s.url, on_employer_site_since: day(s.posted_at ?? s.first_seen), last_confirmed: day(r.last_seen), experience_asked: bandWords(r.description) }]; });
   return { jobs, total_matching: hit.total, page, has_more: page < MAX_PAGES && hit.ids.length > page * PER_PAGE, coverage: "Bengaluru, India. Roles on employers' own hiring systems that Ghosted checks; not every employer is covered.", checked_at: new Date().toISOString() };
 }
 async function getJob(id: number) {
@@ -157,7 +176,7 @@ async function getJob(id: number) {
   if (error) throw new Error(error.message);
   const r = data as any;
   if (!r || !r.blr || !httpsOnly(r.url)) return { status: "not_found" as const };
-  const job = { job_id: r.id, title: String(r.title ?? ""), company: r.company_name ?? "", location: r.location ?? "Bengaluru", apply_url: r.url, on_employer_site_since: day(r.posted_at ?? r.first_seen), last_confirmed: day(r.last_seen), experience_asked: bandWords(r.description), excerpt: excerpt(r.description), hiring_system: SYSTEMS[r.source] ?? "the employer's own hiring system" };
+  const job = { job_id: r.id, title: String(r.title ?? ""), company: r.company_name ?? "", location: place(r.location), apply_url: r.url, on_employer_site_since: day(r.posted_at ?? r.first_seen), last_confirmed: day(r.last_seen), experience_asked: bandWords(r.description), excerpt: excerpt(r.description), hiring_system: SYSTEMS[r.source] ?? "the employer's own hiring system" };
   return r.gone_at ? { status: "closed" as const, closed_on: day(r.gone_at), job } : { status: "live" as const, closed_on: null, job };
 }
 function aboutRadar(client: Client) {
