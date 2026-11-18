@@ -364,7 +364,8 @@ Judge from the role title and what the question asks a person to actually do. Ye
     { ok: v.same === "yes", label: FN(t.functions?.[0] ?? "Your function"), note: v.same === "yes" ? "the role’s function" : v.same === "adjacent" ? "near this role’s function, not the same" : "a different function from this role" },
     { ok: inBand, label: `${years} ${years === 1 ? "year" : "years"}`, note: `asks for ${q.exp_min}–${q.exp_max}` },
   ];
-  return { state: "ok" as const, fit, fit_label: FIT_WORDS[fit], in_band: inBand, checks, why: v.why, label: labelFor(t), record: { name: rec.resume.parsed.name, one_line: t.one_line, level: t.level, years, functions: t.functions, strengths: t.strengths, titles: t.titles } };
+  // `relevant` stays in the reply, always true, for a page loaded before this change: it must not tell anyone the box is closed
+  return { state: "ok" as const, relevant: true, fit, fit_label: FIT_WORDS[fit], in_band: inBand, checks, why: v.why, label: labelFor(t), record: { name: rec.resume.parsed.name, one_line: t.one_line, level: t.level, years, functions: t.functions, strengths: t.strengths, titles: t.titles } };
 }
 open.get("/q/:id/me", async (c) => {
   const u = c.get("user"); const q = await store.get<Question>(qKey(c.req.param("id")));
