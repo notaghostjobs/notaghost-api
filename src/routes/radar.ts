@@ -57,17 +57,17 @@ type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "question
 
 const norm = (t: string) => (t ?? "").toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 const STOP = new Set(["and", "the", "of", "for", "in", "to", "with", "a", "an", "at", "on", "or", "&", "ii", "iii", "i", "india", "bengaluru", "bangalore", "remote"]);
-const words = (t: string) => norm(t).split(" ").filter((w) => w && !STOP.has(w) && w.length > 1);
+export const words = (t: string) => norm(t).split(" ").filter((w) => w && !STOP.has(w) && w.length > 1);
 const stem = (w: string) => w.replace(/(ies)$/, "y").replace(/(ing|ers?|s)$/, "");
 /** Words that say how senior a role is, or nothing at all — never what the job is. They never decide a title match (9 Nov:
  *  with them counted, "Director, Project Management" beat "Category Manager" for a category person every time). */
 const GENERIC = new Set("management manager mgr mgmt head director lead leader senior sr jr junior associate assistant specialist executive officer analyst coordinator principal staff chief vp president vice avp gm general group global regional national team role roles ind karnataka hybrid level l1 l2 l3 new founder founders cofounder co ex".split(" "));
 const fstem = (w: string) => { let x = w.replace(/(ies)$/, "y"); if (x.endsWith("ment") && x.length > 7) x = x.replace(/e?ment$/, ""); return x.replace(/(ing|ers?|s)$/, ""); };
 /** The function words of a title: what the job is, stemmed, level words and filler gone. */
-const fwords = (t: string) => words(t).filter((w) => !GENERIC.has(w) && !/^\d+$/.test(w)).map(fstem);
+export const fwords = (t: string) => words(t).filter((w) => !GENERIC.has(w) && !/^\d+$/.test(w)).map(fstem);
 let idfCache: { at: number; n: number; df: Map<string, number> } | null = null;
 /** How rare each function word is across the city's live titles — "category" is heavy, "business" is light. Refreshed hourly. */
-function titleIdf(pool: Sighting[]) {
+export function titleIdf(pool: Sighting[]) {
   if (idfCache && Date.now() - idfCache.at < 3600e3) return idfCache;
   const df = new Map<string, number>();
   for (const s of pool) for (const w of new Set(fwords(s.title ?? ""))) df.set(w, (df.get(w) ?? 0) + 1);
@@ -111,11 +111,11 @@ async function deriveTargetsModel(p: ResumeProfile): Promise<Targets> {
   );
 }
 
-type Sighting = { id: number; title: string; company_name: string | null; location: string | null; url: string; posted_at: string | null; first_seen: string; employer_key: string | null; readable?: boolean };
+export type Sighting = { id: number; title: string; company_name: string | null; location: string | null; url: string; posted_at: string | null; first_seen: string; employer_key: string | null; readable?: boolean };
 let poolCache: { at: number; rows: Sighting[] } | null = null;
 /** Every live Bengaluru sighting (title, employer, location, url), marked readable when its description is on file.
  *  The pulse counts all of them; scoring uses the readable ones. Cached in memory for 30 minutes. */
-async function livePool(): Promise<Sighting[]> {
+export async function livePool(): Promise<Sighting[]> {
   if (poolCache && Date.now() - poolCache.at < 30 * 60e3) return poolCache.rows;
   const rows: Sighting[] = [];
   for (let from = 0; from < 80000; from += 1000) {
@@ -187,7 +187,7 @@ async function companiesChecked(): Promise<number> {
  *  target's meaning the live title carries (70%) and how much of the live title that explains (30%). Level words then
  *  adjust: a head-level person may be shown manager roles (India's ladders differ); a non-head person sees head roles only
  *  as a stretch; nobody but an IC sees intern or trainee roles. `targets` are the search titles already split into words. */
-function titleScore(title: string, targets: string[][], level: Targets["level"], stretch: boolean): number {
+export function titleScore(title: string, targets: string[][], level: Targets["level"], stretch: boolean): number {
   const tw = new Set(fwords(title)); if (!tw.size) return 0;
   const twTot = [...tw].reduce((n, w) => n + idfOf(w), 0);
   let best = 0;
@@ -207,7 +207,7 @@ function titleScore(title: string, targets: string[][], level: Targets["level"],
   if (level !== "ic" && junior) best *= 0.2;
   return best;
 }
-const TITLE_IN = 0.35;   // a title enters the long list at or above this
+export const TITLE_IN = 0.35;   // a title enters the long list at or above this
 
 
 
