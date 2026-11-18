@@ -108,7 +108,7 @@ open.get("/employer", async (c) => c.json({ employer: pubE(await store.get<Emplo
  *  code sent to that address, which only its owner can read. The automated walk's account and testers skip the code. */
 open.post("/employer", async (c) => {
   const u = c.get("user");
-  const b = z.object({ company: z.string().trim().min(2).max(80), email: z.string().trim().email().max(120), site: z.string().trim().min(4).max(160) }).safeParse(await c.req.json().catch(() => ({})));
+  const b = z.object({ company: z.string().trim().min(2).max(80), email: z.string().trim().email().max(120), site: z.string().trim().min(4).max(160), real: z.boolean().optional() }).safeParse(await c.req.json().catch(() => ({})));
   if (!b.success) return c.json({ error: "Company name, your work email and the company website." }, 400);
   const ed = domainOf(b.data.email), sd = domainOf(b.data.site);
   if (!ed || !sd) return c.json({ error: "That email or website doesn’t look right." }, 400);
@@ -118,7 +118,8 @@ open.post("/employer", async (c) => {
   const email = b.data.email.toLowerCase();
   if (had?.verified && had.email === email && had.domain === baseDomain(sd)) { had.company = b.data.company; await store.set(`open:emp:${u.id}`, had); return c.json({ employer: pubE(had) }); }
   const e: Employer = { user: u.id, company: b.data.company, email, site: sd, domain: baseDomain(sd), verified: false, how: "", at: now() };
-  if (isTester(u)) { e.verified = true; e.how = "tester account, no code sent"; await store.set(`open:emp:${u.id}`, e); return c.json({ employer: pubE(e), tester: true }); }
+  // a tester is verified at once, unless they ask to walk the real path (the code by email) with real: true
+  if (isTester(u) && !b.data.real) { e.verified = true; e.how = "tester account, no code sent"; await store.set(`open:emp:${u.id}`, e); return c.json({ employer: pubE(e), tester: true }); }
   if (!mailReady()) return c.json({ error: "We can’t send verification emails just yet. Please try again shortly." }, 503);
   if (had?.code && had.email === email && Date.now() - Date.parse(had.code.sent_at) < RESEND_GAP_MS) return c.json({ employer: pubE(had), sent_to: email });
   if (!(await mailCode(e))) return c.json({ error: `We couldn’t send a code to ${email}. Check the address and try again.` }, 502);
