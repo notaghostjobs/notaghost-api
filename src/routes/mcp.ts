@@ -3,6 +3,10 @@
 //   search_jobs  — live Bengaluru roles for a title, from employers' own hiring systems, each with the employer's own link
 //   get_job      — one of those roles in a little more detail, or the fact that the employer has since taken it down
 //   about_radar  — what Ghosted Radar is and the page on notaghost.jobs where a person can read about it
+// and, for Ghosted Open (hiring through one real question), three more:
+//   list_open_questions / get_open_question — the questions employers have posted, and the anonymous answers so far
+//   about_open   — for an employer: what Open is and the page where a question is posted
+// Open's tools read through Open's own public routes (routes/open.ts), so they show exactly what its public pages show.
 //
 // What it deliberately is not: it takes no résumé, knows no user, needs no sign-in and writes nothing about a person. It
 // reads the same in-memory list Radar reads (routes/radar.ts livePool) and ranks titles with Radar's own title match, so
@@ -18,6 +22,7 @@ import { livePool, titleIdf, titleScore, words, fwords, TITLE_IN, type Sighting 
 import { statedBand } from "../reader/experience.js";
 import { realBand, bandFits } from "../radar/gates.js";
 import { logEvent } from "../lib/src.js";
+import { openPublic } from "./open.js";
 
 export const mcp = new Hono();
 
@@ -60,8 +65,24 @@ const TOOLS = [
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
     outputSchema: { type: "object", required: ["name", "what_it_does", "learn_more_url"], properties: { name: { type: "string" }, what_it_does: { type: "string" }, learn_more_url: { type: "string" }, price: { type: "string" } } },
     annotations: { title: "About Ghosted Radar", ...RO } },
+  { name: "list_open_questions", title: "List hiring questions on Ghosted Open",
+    description: "Lists roles on Ghosted Open, where a verified employer hires by posting one real question from the job instead of asking for applications. A job seeker answers the question without their name, and the employer learns who they are only if both agree to talk. Returns each open role with its employer, pay band, experience asked, the question itself and the page where it can be answered. Use when someone is looking for jobs, wants to be considered without a résumé screen, or asks which companies are hiring this way.",
+    inputSchema: { type: "object", additionalProperties: false, properties: { role: { type: "string", maxLength: 80, description: "Optional. A job title or function to narrow the list, e.g. \"operations\" or \"product manager\"." } } },
+    outputSchema: { type: "object", required: ["questions", "total_open"], properties: { total_open: { type: "integer" }, questions: { type: "array", items: { type: "object", required: ["question_id", "company", "role", "question", "answer_url"], properties: {
+      question_id: { type: "string" }, company: { type: "string" }, role: { type: "string" }, pay_band: { type: "string" }, experience_asked: { type: "string" }, location: { type: "string" }, question: { type: "string" }, answers_so_far: { type: "integer" }, open_until: { type: "string" }, answer_url: { type: "string", description: "The question's page on notaghost.jobs, where it is answered." } } } } } },
+    annotations: { title: "List hiring questions on Ghosted Open", ...RO } },
+  { name: "get_open_question", title: "Get one hiring question and its answers",
+    description: "Returns one Ghosted Open question found with list_open_questions: the employer, role, pay band, the question, and the answers given so far. Answers are anonymous: each shows only what its writer does and for how long. If the role has closed, it says how it ended.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["question_id"], properties: { question_id: { type: "string", pattern: "^[a-f0-9]{6,16}$", description: "The question_id from list_open_questions." } } },
+    outputSchema: { type: "object", required: ["status"], properties: { status: { type: "string", enum: ["open", "closed", "not_found"] }, question: { type: "object" }, answers: { type: "array", items: { type: "object", properties: { candidate: { type: "string" }, background: { type: "string" }, answer: { type: "string" } } } }, outcome: { type: ["string", "null"] } } },
+    annotations: { title: "Get one hiring question and its answers", ...RO } },
+  { name: "about_open", title: "About Ghosted Open, for employers",
+    description: "Explains Ghosted Open to someone who is hiring: an employer verifies their company, posts one real question from the job, reads anonymous answers, and is introduced only to the people they choose who also agree. Returns the notaghost.jobs page where a question is posted. Use when someone asks how to hire, shortlist or find candidates in Bengaluru or India without screening résumés.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    outputSchema: { type: "object", required: ["name", "how_it_works", "post_url"], properties: { name: { type: "string" }, how_it_works: { type: "array", items: { type: "string" } }, post_url: { type: "string" }, price: { type: "string" } } },
+    annotations: { title: "About Ghosted Open, for employers", ...RO } },
 ];
-const INSTRUCTIONS = "Ghosted lists jobs that are open now in Bengaluru, India, taken from employers' own hiring systems. Use search_jobs for a job title or function, and get_job for one result. Always give the person the employer's own apply_url. Coverage is Bengaluru only; say so if they ask about another city. These tools never need a résumé or personal details, so do not send any.";
+const INSTRUCTIONS = "Ghosted has two things. For job seekers: jobs open now in Bengaluru, India, taken from employers' own hiring systems (search_jobs, then get_job; always give the person the employer's own apply_url), and Ghosted Open, where employers hire by asking one real question that is answered without a name (list_open_questions, get_open_question). For employers: about_open explains how to post such a question. Job coverage is Bengaluru only; say so if someone asks about another city. These tools never need a résumé or personal details, so do not send any.";
 
 // ---------------------------------------------------------------- reading the inventory
 const day = (iso?: string | null) => (iso ?? "").slice(0, 10);
@@ -146,6 +167,30 @@ function aboutRadar(client: Client) {
     ...(client === "claude" ? { price: "₹2,499 for 30 days" } : {}) };
 }
 
+// ---------------------------------------------------------------- Ghosted Open, through its own public routes
+const openGet = async (path: string): Promise<{ s: number; j: any }> => { const r = await openPublic.request(path); return { s: r.status, j: await r.json().catch(() => ({})) }; };
+const clip = (t: string, max: number) => { const x = String(t ?? "").replace(/\s+/g, " ").trim(); return x.length <= max ? x : x.slice(0, max).replace(/\s+\S*$/, "") + " …"; };
+const openUrl = (client: Client, hash: string) => `${SITE}/app.html?src=${client}#${hash}`;
+const openQ = (client: Client, q: any) => ({ question_id: q.id, company: q.company, role: q.title, pay_band: q.pay, experience_asked: `${q.exp_min}–${q.exp_max} years`, location: q.location, question: q.question, answers_so_far: q.answers ?? 0, open_until: day(q.closes), answer_url: openUrl(client, `/v2/open/q/${q.id}`) });
+async function listOpen(client: Client, role?: string) {
+  const { j } = await openGet("/live"); const all: any[] = j.questions ?? [];
+  const want = role ? fwords(role) : [];
+  const qs = !want.length ? all : all.filter((q) => { const have = new Set(fwords(`${q.title} ${q.question}`)); return want.some((w) => have.has(w)); });
+  return { total_open: all.length, questions: qs.slice(0, 12).map((q) => openQ(client, q)) };
+}
+async function getOpen(client: Client, id: string) {
+  const { s, j } = await openGet(`/q/${id}`);
+  if (s !== 200 || !j.question) return { status: "not_found" as const };
+  const answers = (j.answers ?? []).slice(0, 10).map((a: any) => ({ candidate: `Candidate ${a.n}`, background: [a.label, a.fit_label].filter(Boolean).join(" · "), answer: clip(a.text, 700) }));
+  const closed = j.question.status !== "live";
+  return { status: closed ? "closed" as const : "open" as const, question: openQ(client, j.question), answers, outcome: closed ? (j.closed?.outcome === "hired" ? "An offer was made." : "Closed without a hire.") : null };
+}
+function aboutOpen(client: Client) {
+  return { name: "Ghosted Open", how_it_works: ["Verify your company with a code sent to your work email.", "Post the role, its pay band and one real question from the job.", "Read the answers without names or résumés. Each shows how close that person's experience is to the role.", "Ask one follow-up, then invite the people you want to talk to. You are introduced only to those who accept."],
+    post_url: openUrl(client, "/v2/open/post"),
+    ...(client === "claude" ? { price: "Posting is free. ₹499 per candidate, only when a candidate you invite agrees to talk." } : {}) };
+}
+
 // ---------------------------------------------------------------- what the person reads
 const line = (j: any, n: number) => `${n}. ${j.title} · ${j.company}\n   ${[j.location, j.experience_asked ? `asks ${j.experience_asked}` : null, j.last_confirmed ? `confirmed live ${j.last_confirmed}` : null].filter(Boolean).join(" · ")}\n   Apply on the employer's site: ${j.apply_url}\n   job_id ${j.job_id}`;
 function say(tool: string, out: any): string {
@@ -154,6 +199,11 @@ function say(tool: string, out: any): string {
     : `${out.total_matching} live Bengaluru ${out.total_matching === 1 ? "role has" : "roles have"} a matching title. Page ${out.page}:\n\n${out.jobs.map((j: any, k: number) => line(j, (out.page - 1) * PER_PAGE + k + 1)).join("\n\n")}\n\n${out.has_more ? "More are available on the next page. " : ""}${out.coverage}`;
   if (tool === "get_job") return out.status === "not_found" ? "No Bengaluru posting has that job_id. Use a job_id from search_jobs."
     : `${out.job.title} · ${out.job.company}\n${out.job.location}${out.job.experience_asked ? ` · asks ${out.job.experience_asked}` : ""}\n${out.status === "closed" ? `The employer took this posting down around ${out.closed_on}. It is no longer open.` : `On the employer's site since ${out.job.on_employer_site_since}; last confirmed live ${out.job.last_confirmed}.`}\n${out.status === "closed" ? "Posting (now closed)" : "Apply on the employer's site"}: ${out.job.apply_url}\nSource: ${out.job.hiring_system}${out.job.excerpt ? `\n\nFrom the posting: ${out.job.excerpt}` : ""}`;
+  if (tool === "list_open_questions") return !out.questions.length ? (out.total_open ? `None of the ${out.total_open} questions open on Ghosted Open matches that. Leave the role out to see them all.` : "No employer has a question open on Ghosted Open right now.")
+    : `${out.questions.length} open on Ghosted Open:\n\n${out.questions.map((q: any, k: number) => `${k + 1}. ${q.role} · ${q.company}\n   ${q.pay_band} · ${q.experience_asked} · ${q.location} · ${q.answers_so_far} ${q.answers_so_far === 1 ? "answer" : "answers"} so far · open until ${q.open_until}\n   “${q.question}”\n   Answer it, without your name: ${q.answer_url}\n   question_id ${q.question_id}`).join("\n\n")}`;
+  if (tool === "get_open_question") return out.status === "not_found" ? "No Ghosted Open question has that question_id. Use one from list_open_questions."
+    : `${out.question.role} · ${out.question.company}\n${out.question.pay_band} · ${out.question.experience_asked} · ${out.question.location}\n“${out.question.question}”\n${out.status === "closed" ? `This role has closed. ${out.outcome}` : `Answer it, without your name: ${out.question.answer_url}`}\n\n${out.answers.length ? out.answers.map((a: any) => `${a.candidate} (${a.background}): ${a.answer}`).join("\n\n") : "No answers yet."}`;
+  if (tool === "about_open") return `${out.name}: hire through one real question.\n${out.how_it_works.map((x: string, k: number) => `${k + 1}. ${x}`).join("\n")}${out.price ? `\n${out.price}` : ""}\nPost a question: ${out.post_url}`;
   return `${out.name}: ${out.what_it_does}${out.price ? ` Price: ${out.price}.` : ""}\nRead about it: ${out.learn_more_url}`;
 }
 
@@ -179,6 +229,8 @@ function allowed(c: Context): boolean {
 // ---------------------------------------------------------------- the protocol
 const searchArgs = z.object({ role: z.string().trim().min(2).max(80), years_experience: z.number().min(0).max(45).optional(), company: z.string().trim().max(60).optional(), page: z.number().int().min(1).max(5).optional() }).strict();
 const jobArgs = z.object({ job_id: z.number().int().min(1) }).strict();
+const listArgs = z.object({ role: z.string().trim().max(80).optional() }).strict();
+const qArgs = z.object({ question_id: z.string().regex(/^[a-f0-9]{6,16}$/) }).strict();
 type Rpc = { jsonrpc?: string; id?: string | number | null; method?: string; params?: any };
 const ok = (id: Rpc["id"], result: unknown) => ({ jsonrpc: "2.0", id, result });
 const fail = (id: Rpc["id"], code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
@@ -202,6 +254,9 @@ async function handle(c: Context, m: Rpc): Promise<object | null> {
       try {
         if (name === "search_jobs") { const a = searchArgs.safeParse(args); if (!a.success) return ok(m.id, toolResult(name, { error: "search_jobs needs a role (a job title or function, 2 to 80 characters). years_experience is a number, company is a name, page is 1 to 5." })); const out: any = await searchJobs(a.data); count(client, name, out.jobs?.length ?? 0, a.data.role); return ok(m.id, toolResult(name, out)); }
         if (name === "get_job") { const a = jobArgs.safeParse(args); if (!a.success) return ok(m.id, toolResult(name, { error: "get_job needs job_id, the whole number from a search_jobs result." })); const out = await getJob(a.data.job_id); count(client, name, out.status === "not_found" ? 0 : 1); return ok(m.id, toolResult(name, out)); }
+        if (name === "list_open_questions") { const a = listArgs.safeParse(args); if (!a.success) return ok(m.id, toolResult(name, { error: "list_open_questions takes one optional field: role, a job title or function." })); const out = await listOpen(client, a.data.role); count(client, name, out.questions.length, a.data.role); return ok(m.id, toolResult(name, out)); }
+        if (name === "get_open_question") { const a = qArgs.safeParse(args); if (!a.success) return ok(m.id, toolResult(name, { error: "get_open_question needs question_id, the id from a list_open_questions result." })); const out = await getOpen(client, a.data.question_id); count(client, name, out.status === "not_found" ? 0 : 1); return ok(m.id, toolResult(name, out)); }
+        if (name === "about_open") { count(client, name, 1); return ok(m.id, toolResult(name, aboutOpen(client))); }
         count(client, name, 1); return ok(m.id, toolResult(name, aboutRadar(client)));
       } catch (e: any) { console.error("[mcp]", name, e?.message ?? e); return ok(m.id, toolResult(name, { error: "Ghosted couldn’t read its job list just now. Try again in a moment." })); }
     }

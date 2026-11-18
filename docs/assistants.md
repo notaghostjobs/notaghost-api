@@ -19,6 +19,11 @@ The path only decides the tag on links back to notaghost.jobs (`?src=chatgpt` / 
 - `search_jobs(role, years_experience?, company?, page?)`: live Bengaluru roles, 8 a page, each with the employer's own link.
 - `get_job(job_id)`: one posting, or the fact and date that the employer took it down.
 - `about_radar()`: what Radar is and the notaghost.jobs page about it. No price inside ChatGPT (its rules forbid it).
+- `list_open_questions(role?)`: questions employers have open on Ghosted Open, each with the page where it is answered.
+- `get_open_question(question_id)`: one question and its anonymous answers, or how the role ended.
+- `about_open()`: for employers, how Open works and the page where a question is posted. No price inside ChatGPT.
+
+The Open tools read through Open's own public routes, so they show exactly what its public pages show.
 
 ## What it never does
 
@@ -37,6 +42,6 @@ Purchases that began in an assistant: `select count(*), sum(amount_paise)/100 fr
 
 ## Test
 
-`scratch: mcptest/t.mts` connects the official MCP client to the route over HTTP and runs 38 checks: tool metadata and
+`scratch: mcptest/t.mts` connects the official MCP client to the route over HTTP and runs 47 checks: tool metadata and
 hints, results, paging, the years filter, closed and unknown postings, attribution tags, protocol errors, CORS, the
 domain challenge, reply size and the event rows.
