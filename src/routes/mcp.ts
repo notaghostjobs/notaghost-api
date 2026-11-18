@@ -108,13 +108,16 @@ export const tidyTitle = (t: string) => String(t ?? "").replace(/\s*[•·|]\s*[
 /** Some employers' whole hiring site is on file under one of their brands (all of Accenture under "Accenture Song"; the
  *  Aditya Birla group's site under one group company; Marriott's under two of its hotel brands, so each role twice).
  *  Shown under the name a person would look for, and each posting once. The Reader's own records are not changed here. */
+const TWICE = new Set(["marriott international"]);
 const SHOWN_AS: Record<string, string> = { "accenture song": "Accenture", "aditya birla sun life insurance": "Aditya Birla Group", "fairfield by marriott": "Marriott International" };
 /** a place as a person would read it; a careers page sometimes hands us the next card's text where the city should be */
-const tidyPlace = (l: string | null) => { const x = String(l ?? "").replace(/\s+/g, " ").trim(); return !x || x.length > 70 || /[•]|apply now|manager|engineer/i.test(x) ? "Bengaluru" : x; };
+const tidyPlace = (l: string | null) => { const x = String(l ?? "").replace(/\s+/g, " ").trim().replace(/^(?!\d+ Locations?)(.*?)\s*\((?:Bengaluru facet|incl\. Bengaluru)\)$/i, "$1"); return !x || x.length > 70 || /[•]|apply now|manager|engineer/i.test(x) ? "Bengaluru" : x; };
 const shown = (rows: Sighting[]): Sighting[] => { const out: Sighting[] = []; const now = Date.now(); const seen = new Set<string>();
   for (const r of rows) { if (!r.title || !/^https:\/\/[^\s]+$/i.test(r.url ?? "")) continue; if (cityGate(r.title)) continue; if (r.last_seen && now - Date.parse(r.last_seen) > 7 * 86400e3) continue; const title = tidyTitle(r.title); if (title.length < 3) continue;
     if (seen.has(r.url)) continue; seen.add(r.url);
     const as = SHOWN_AS[(r.employer_key ?? "").toLowerCase()] ?? SHOWN_AS[(r.company_name ?? "").toLowerCase().trim()];
+    // one hiring site on file under two names lists each role twice, with different links: the same title in the same place is one role
+    if (TWICE.has((as ?? r.employer_key ?? "").toLowerCase())) { const k = `${(as ?? r.employer_key ?? "").toLowerCase()}|${title.toLowerCase()}|${(r.location ?? "").toLowerCase()}`; if (seen.has(k)) continue; seen.add(k); }
     out.push({ ...r, title, location: tidyPlace(r.location), ...(as ? { company_name: as, employer_key: as.toLowerCase() } : {}) }); }
   return out; };
 export async function jobPool(): Promise<Sighting[]> {
