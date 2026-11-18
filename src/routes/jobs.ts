@@ -1,10 +1,16 @@
 // Ghosted's public pages about the Bengaluru job market (19 Nov). Until now nothing Ghosted knows could be found by a
 // search engine, or by an AI assistant answering "product manager jobs in Bengaluru". These pages say what is true today:
-//   /jobs/bengaluru                 the hub: which roles and employers have openings, and the week's movement
-//   /jobs/bengaluru/<role>          how many are open, at whom, how many opened and closed this week, and five examples
+//   /jobs/bengaluru                 the hub: which roles and employers have openings
+//   /jobs/bengaluru/<role>          how many are open, at whom, when they were last confirmed, and five examples
 //   /jobs/bengaluru/at/<employer>   how many that employer has open, in which roles, and five examples
 // They are deliberately not a job board. Ghosted's point is that a long list is the problem: a page states the market
 // and shows a handful, and the list that fits one person is Radar's work, not a page to scroll.
+//
+// What is deliberately absent (19 Nov): "opened this week" and "taken down this week". Checked against the Reader's
+// records, a third of the week's 4,670 closings had the same title still open at the same employer (a posting re-listed
+// under a new id reads as one closed and one opened), and a fifth closed within three days of first being seen. Until
+// the Reader can tell a re-listing from a closing, those are not numbers to publish. What is published is what holds:
+// how many are open now, at whom, and when each was last confirmed.
 //   /jobs/bengaluru/roles, /employers, and /jobs/sitemap.xml
 //
 // One inventory: the pages are drawn from the same in-memory list Radar and the assistants' tools read (mcp.ts jobPool).
@@ -12,8 +18,8 @@
 // posting's own text is never republished here; the link goes to it.
 // The site serves these under notaghost.jobs through one forwarding rule on its host, so every link here is site-relative.
 import { Hono, type Context } from "hono";
-import { jobPool, tidyTitle } from "./mcp.js";
-import { words, gonePool, type Sighting, type Gone } from "./radar.js";
+import { jobPool } from "./mcp.js";
+import { words, type Sighting } from "./radar.js";
 
 export const jobs = new Hono();
 
@@ -39,18 +45,6 @@ const roleTokens = (title: string) => words(title).filter((w) => !LEVEL.has(w) &
 
 type Role = { slug: string; name: string; phrase: string; ids: number[] };
 type Emp = { slug: string; name: string; ids: number[] };
-/** how a posting's title is tested for a role: the role's words, in order, with the level words out of the way */
-const carries = (title: string, phrase: string) => ` ${roleTokens(title).join(" ")} `.includes(` ${phrase} `);
-const WEEK = 7 * 86400e3;
-const openedThisWeek = (list: Sighting[]) => list.filter((s) => Date.now() - Date.parse(s.first_seen) < WEEK).length;
-// Roles employers took down. Loading them takes a few seconds, so a page never waits for it: it is fetched behind the
-// first page that asks and refreshed behind later ones; until it has arrived a page simply says nothing about closings.
-let gone: { at: number; rows: Gone[] } | null = null; let goneBusy = false;
-function closedThisWeek(): Gone[] | null {
-  if ((!gone || Date.now() - gone.at > 30 * 60e3) && !goneBusy) { goneBusy = true; void gonePool().then((rows) => { gone = { at: Date.now(), rows: rows.filter((g) => Date.now() - Date.parse(g.gone_at) < WEEK).map((g) => ({ ...g, title: tidyTitle(g.title ?? "") })) }; }).catch((e) => console.error("[jobs] closed", e?.message ?? e)).finally(() => { goneBusy = false; }); }
-  return gone ? gone.rows : null;
-}
-export const warmMarket = () => { closedThisWeek(); };
 type Index = { pool: Sighting[]; byId: Map<number, Sighting>; roles: Role[]; roleBy: Map<string, Role>; emps: Emp[]; empBy: Map<string, Emp>; empOf: Map<number, Emp>; checked: string };
 let index: Index | null = null;
 const MIN_ROLE = 6, MAX_ROLES = 400;
@@ -137,7 +131,7 @@ function html(p: Page): string {
   return `<!doctype html><html lang="en-IN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(p.title)}</title><meta name="description" content="${esc(p.desc)}">${p.noindex ? `<meta name="robots" content="noindex">` : `<link rel="canonical" href="${SITE}${p.path}">`}<meta property="og:type" content="website"><meta property="og:site_name" content="Ghosted"><meta property="og:title" content="${esc(p.title)}"><meta property="og:description" content="${esc(p.desc)}"><meta property="og:url" content="${SITE}${p.path}"><meta property="og:image" content="${SITE}/og.png"><link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><style>${CSS}</style>${ld}</head><body><div class="w"><header><a class="brand" href="/"><img src="/favicon.svg" alt="" width="28" height="28">Ghosted</a><nav><a class="hide" href="${BASE}/roles">Roles</a><a class="hide" href="${BASE}/employers">Employers</a><a data-g href="/app.html?src=jobs#/v2/radar">Radar</a></nav></header><main><p class="crumb">${p.crumbs.map(([n, u], i) => i === p.crumbs.length - 1 ? esc(n) : `<a href="${u}">${esc(n)}</a>`).join(" › ")}</p><h1>${p.h1}</h1><p class="sum">${p.sum}</p>${p.body}</main><footer><span>© ${new Date().getFullYear()} notaghost.jobs</span><span><a href="/reader/">How Ghosted checks employers</a><a href="/terms/">Terms</a><a href="/privacy/">Privacy</a></span></footer></div><script>${TRACK}</script></body></html>`;
 }
 const radar = (line: string) => `<aside class="radar"><div><b>${line}</b><span>A long list is not the same as a real chance. Radar reads your résumé and shows the roles you are a real shot at, every morning.</span></div><a class="btn" data-g href="/app.html?src=jobs#/v2/radar">See how Radar works</a></aside>`;
-const HOW = `<p class="note"><b>Where these numbers come from.</b> Ghosted checks employers’ own hiring systems, not job boards. A role is counted while it is open on the employer’s own site and stops being counted when the employer takes it down. “Opened” means first seen there in the last seven days; “taken down” means it was there and no longer is. Coverage is ${CITY} only, and not every employer is covered. Ghosted is not a job board: these pages show a few examples, and each links to the employer’s own posting.</p>`;
+const HOW = `<p class="note"><b>Where these numbers come from.</b> Ghosted checks employers’ own hiring systems, not job boards. A role is counted while it is open on the employer’s own site and stops being counted when the employer takes it down. The dates say when Ghosted last confirmed it there. Coverage is ${CITY} only, and not every employer is covered. Ghosted is not a job board: these pages show a few examples, and each links to the employer’s own posting.</p>`;
 const facts = (items: [string | number, string][]) => `<ul class="facts">${items.map(([n, l]) => `<li><b>${typeof n === "number" ? n.toLocaleString("en-IN") : esc(n)}</b><span>${esc(l)}</span></li>`).join("")}</ul>`;
 const EXAMPLES = 5;
 /** a handful to make the numbers concrete: the newest, one per employer */
@@ -162,13 +156,13 @@ const missing = (c: Context, what: string) => send(c, html({ path: BASE, noindex
 // ---------------------------------------------------------------- routes
 jobs.get("/", (c) => c.redirect(BASE, 302));
 jobs.get("/bengaluru", async (c) => {
-  const ix = await idx(); const when = dmy(ix.checked); const closed = closedThisWeek(); const opened = openedThisWeek(ix.pool);
+  const ix = await idx(); const when = dmy(ix.checked);
   return send(c, html({ path: BASE, crumbs: [["Jobs in " + CITY, BASE]],
     title: `The ${CITY} job market today, from employers’ own sites · Ghosted`,
-    desc: `Which roles and employers have openings in ${CITY} today, and how many opened and were taken down this week. Counted on ${ix.emps.length} employers’ own hiring systems, last checked ${when}.`,
+    desc: `Which roles and employers have openings in ${CITY} today. Counted on ${ix.emps.length} employers’ own hiring systems, last checked ${when}.`,
     h1: `Jobs in ${CITY}, <em>as they stand today.</em>`,
-    sum: `${plural(ix.emps.length, "employer has", "employers have")} roles open in ${CITY} right now, across ${ix.roles.length} kinds of role. In the last seven days ${plural(opened, "role was", "roles were")} opened${closed ? ` and ${plural(closed.length, "was", "were")} taken down` : ""}. Counted on employers’ own hiring systems, last checked ${when}.`,
-    body: `${facts([[ix.emps.length, "employers with roles open"], [opened, "roles opened in the last 7 days"], ...(closed ? [[closed.length, "roles taken down in the last 7 days"] as [number, string]] : [])])}${radar("Thousands are open. A few are yours.")}<h2>Roles with the most openings</h2>${chips(ix.roles.slice(0, 60).map((r) => ({ href: `${BASE}/${r.slug}`, name: r.name, n: r.ids.length })))}<p class="more"><a href="${BASE}/roles">All ${ix.roles.length} roles</a></p><h2>Employers hiring most</h2>${chips(ix.emps.slice(0, 60).map((e) => ({ href: `${BASE}/at/${e.slug}`, name: e.name, n: e.ids.length })))}<p class="more"><a href="${BASE}/employers">All ${ix.emps.length} employers</a></p>${HOW}` }));
+    sum: `${plural(ix.emps.length, "employer has", "employers have")} roles open in ${CITY} right now, across ${ix.roles.length} kinds of role. Counted on employers’ own hiring systems, last checked ${when}.`,
+    body: `${facts([[ix.emps.length, "employers with roles open"], [ix.roles.length, "kinds of role with openings"], [when, "last checked"]])}${radar("Thousands are open. A few are yours.")}<h2>Roles with the most openings</h2>${chips(ix.roles.slice(0, 60).map((r) => ({ href: `${BASE}/${r.slug}`, name: r.name, n: r.ids.length })))}<p class="more"><a href="${BASE}/roles">All ${ix.roles.length} roles</a></p><h2>Employers hiring most</h2>${chips(ix.emps.slice(0, 60).map((e) => ({ href: `${BASE}/at/${e.slug}`, name: e.name, n: e.ids.length })))}<p class="more"><a href="${BASE}/employers">All ${ix.emps.length} employers</a></p>${HOW}` }));
 });
 jobs.get("/bengaluru/roles", async (c) => {
   const ix = await idx(); const az = [...ix.roles].sort((a, b) => a.name.localeCompare(b.name));
@@ -182,30 +176,29 @@ jobs.get("/bengaluru/employers", async (c) => {
 });
 jobs.get("/bengaluru/at/:emp", async (c) => {
   const ix = await idx(); const e = ix.empBy.get(c.req.param("emp")); if (!e) return missing(c, "No employer by that name has a role open here today.");
-  const all = e.ids.map((id) => ix.byId.get(id)!).filter(Boolean); const n = all.length; const opened = openedThisWeek(all); const list = [...all].sort(newest).slice(0, EXAMPLES);
-  const kinds = ix.roles.map((r) => ({ r, n: r.ids.reduce((k, id) => k + (ix.empOf.get(id) === e ? 1 : 0), 0) })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n).slice(0, 16);
+  const all = e.ids.map((id) => ix.byId.get(id)!).filter(Boolean); const n = all.length; const list = [...all].sort(newest).slice(0, EXAMPLES);
+  const kinds = ix.roles.map((r) => ({ r, n: r.ids.reduce((k, id) => k + (ix.empOf.get(id) === e ? 1 : 0), 0) })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
   const path = `${BASE}/at/${e.slug}`;
   return send(c, html({ path, crumbs: [["Jobs in " + CITY, BASE], ["Employers", `${BASE}/employers`], [e.name, ""]],
-    title: `${e.name} jobs in ${CITY}: ${n.toLocaleString("en-IN")} open now · Ghosted`, desc: `${e.name} has ${plural(n, "role", "roles")} open in ${CITY}, ${opened} of them opened in the last seven days. Counted on ${e.name}’s own hiring site, confirmed ${span(all)}.`,
-    h1: `${esc(e.name)}, <em>hiring in ${CITY}.</em>`, sum: `${esc(e.name)} has ${plural(n, "role", "roles")} open in ${CITY} right now${opened ? `; ${opened === n ? (n === 1 ? "it was" : "all were") : plural(opened, "was", "were")} opened in the last seven days` : ""}. Ghosted counted ${n === 1 ? "it" : "them"} on ${esc(e.name)}’s own hiring site, confirmed ${span(all)}.`,
+    title: `${e.name} jobs in ${CITY}: ${n.toLocaleString("en-IN")} open now · Ghosted`, desc: `${e.name} has ${plural(n, "role", "roles")} open in ${CITY}. Counted on ${e.name}’s own hiring site, confirmed ${span(all)}.`,
+    h1: `${esc(e.name)}, <em>hiring in ${CITY}.</em>`, sum: `${esc(e.name)} has ${plural(n, "role", "roles")} open in ${CITY} right now. Ghosted counted ${n === 1 ? "it" : "them"} on ${esc(e.name)}’s own hiring site, confirmed ${span(all)}.`,
     ld: [itemList(`${e.name} jobs in ${CITY}`, list)],
-    body: `${facts([[n, "roles open now"], [opened, "opened in the last 7 days"]])}${radar(n > EXAMPLES ? `Not all ${n.toLocaleString("en-IN")} are for you.` : "Is one of these for you?")}${kinds.length ? `<h2>What ${esc(e.name)} is hiring for</h2>${chips(kinds.map((x) => ({ href: `${BASE}/${x.r.slug}`, name: x.r.name, n: x.n })))}` : ""}<h2>${n > list.length ? `${list.length} of the newest` : plural(n, "open role", "open roles")}</h2>${rows(ix, list, false)}${HOW}` }));
+    body: `${facts([[n, n === 1 ? "role open now" : "roles open now"], [kinds.length, kinds.length === 1 ? "kind of role" : "kinds of role"], [dm(all.map((x) => x.last_seen ?? "").sort().pop()), "last confirmed"]])}${radar(n > EXAMPLES ? `Not all ${n.toLocaleString("en-IN")} are for you.` : "Is one of these for you?")}${kinds.length ? `<h2>What ${esc(e.name)} is hiring for</h2>${chips(kinds.slice(0, 16).map((x) => ({ href: `${BASE}/${x.r.slug}`, name: x.r.name, n: x.n })))}` : ""}<h2>${n > list.length ? `${list.length} of the newest` : plural(n, "open role", "open roles")}</h2>${rows(ix, list, false)}${HOW}` }));
 });
 jobs.get("/bengaluru/:role", async (c) => {
   const ix = await idx(); const r = ix.roleBy.get(c.req.param("role")); if (!r) return missing(c, "No role by that name has enough openings here today.");
-  const all = r.ids.map((id) => ix.byId.get(id)!).filter(Boolean); const n = all.length; const list = examples(all); const opened = openedThisWeek(all);
-  const closedAll = closedThisWeek(); const closed = closedAll ? closedAll.filter((g) => carries(g.title, r.phrase)).length : null;
+  const all = r.ids.map((id) => ix.byId.get(id)!).filter(Boolean); const n = all.length; const list = examples(all);
   const emps = new Map<string, number>(); for (const s of all) { const e = ix.empOf.get(s.id); if (e) emps.set(e.slug, (emps.get(e.slug) ?? 0) + 1); }
   const top = [...emps].sort((a, b) => b[1] - a[1]).slice(0, 16).map(([slug, k]) => ({ href: `${BASE}/at/${slug}`, name: ix.empBy.get(slug)!.name, n: k }));
   // roles that share a word with this one, the busiest first
   const mine = new Set(r.phrase.split(" ").filter((w) => !HEAD.has(w))); const head = r.phrase.split(" ").pop()!;
   const near = ix.roles.filter((x) => x !== r && (x.phrase.split(" ").some((w) => mine.has(w)) || x.phrase.endsWith(" " + head))).sort((a, b) => Number(b.phrase.split(" ").some((w) => mine.has(w))) - Number(a.phrase.split(" ").some((w) => mine.has(w))) || b.ids.length - a.ids.length).slice(0, 14);
-  const path = `${BASE}/${r.slug}`; const week = `In the last seven days ${plural(opened, "was", "were")} opened${closed !== null ? ` and ${plural(closed, "was", "were")} taken down` : ""}.`;
+  const path = `${BASE}/${r.slug}`;
   return send(c, html({ path, crumbs: [["Jobs in " + CITY, BASE], ["Roles", `${BASE}/roles`], [r.name, ""]],
-    title: `${r.name} jobs in ${CITY}: ${n.toLocaleString("en-IN")} open now · Ghosted`, desc: `${plural(n, `${r.name} role is`, `${r.name} roles are`)} open in ${CITY} at ${plural(emps.size, "employer", "employers")}. ${week} Counted on employers’ own hiring sites, confirmed ${span(all)}.`,
-    h1: `${esc(r.name)} jobs <em>in ${CITY}.</em>`, sum: `${plural(n, `${esc(r.name)} role is`, `${esc(r.name)} roles are`)} open in ${CITY} right now, at ${plural(emps.size, "employer", "employers")}. ${week} Ghosted counted them on the employers’ own hiring sites, confirmed ${span(all)}.`,
+    title: `${r.name} jobs in ${CITY}: ${n.toLocaleString("en-IN")} open now · Ghosted`, desc: `${plural(n, `${r.name} role is`, `${r.name} roles are`)} open in ${CITY} at ${plural(emps.size, "employer", "employers")}. Counted on employers’ own hiring sites, confirmed ${span(all)}.`,
+    h1: `${esc(r.name)} jobs <em>in ${CITY}.</em>`, sum: `${plural(n, `${esc(r.name)} role is`, `${esc(r.name)} roles are`)} open in ${CITY} right now, at ${plural(emps.size, "employer", "employers")}. Ghosted counted them on the employers’ own hiring sites, confirmed ${span(all)}.`,
     ld: [itemList(`${r.name} jobs in ${CITY}`, list)],
-    body: `${facts([[n, "open now"], [emps.size, emps.size === 1 ? "employer hiring" : "employers hiring"], [opened, "opened in the last 7 days"], ...(closed !== null ? [[closed, "taken down in the last 7 days"] as [number, string]] : [])])}${radar(n > EXAMPLES ? `Not all ${n.toLocaleString("en-IN")} are for you.` : "Is one of these for you?")}<h2>Who is hiring ${esc(r.name)}s</h2>${chips(top)}<h2>${n > list.length ? `${list.length} of the newest, one per employer` : plural(n, "open role", "open roles")}</h2>${rows(ix, list, true)}${near.length ? `<h2>Related roles</h2>${chips(near.map((x) => ({ href: `${BASE}/${x.slug}`, name: x.name, n: x.ids.length })))}` : ""}${HOW}` }));
+    body: `${facts([[n, "open now"], [emps.size, emps.size === 1 ? "employer hiring" : "employers hiring"], [dm(all.map((x) => x.last_seen ?? "").sort().pop()), "last confirmed"]])}${radar(n > EXAMPLES ? `Not all ${n.toLocaleString("en-IN")} are for you.` : "Is one of these for you?")}<h2>Who is hiring ${esc(r.name)}s</h2>${chips(top)}<h2>${n > list.length ? `${list.length} of the newest, one per employer` : plural(n, "open role", "open roles")}</h2>${rows(ix, list, true)}${near.length ? `<h2>Related roles</h2>${chips(near.map((x) => ({ href: `${BASE}/${x.slug}`, name: x.name, n: x.ids.length })))}` : ""}${HOW}` }));
 });
 jobs.get("/sitemap.xml", async (c) => {
   const ix = await idx(); const day = new Date().toISOString().slice(0, 10);
