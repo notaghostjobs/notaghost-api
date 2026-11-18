@@ -1,8 +1,8 @@
 // The Open walk (14 Nov): the whole of Ghosted Open the way two people meet it, run by a machine after every deploy and
 // nightly. An employer account verifies a company and posts a question; the candidate account (the fixed test résumé)
-// is found relevant, answers, gets a follow-up, replies inside the window, is invited, accepts; the employer pays (the
+// is read as the same function, answers, gets a follow-up, replies inside the window, is invited, accepts; the employer pays (the
 // tester path) and receives the contact; the role closes and the public page says how it ended. A second question, for
-// a different function, must refuse the same candidate. Everything it writes is removed at the end.
+// a different function, takes the same candidate's answer and labels it so. Everything it writes is removed at the end.
 import { db } from "../lib/db.js";
 import { createSession } from "../lib/auth.js";
 
@@ -42,17 +42,18 @@ export async function openProbe(app: App, candidatePhone: string): Promise<OpenP
     if (pub.question?.question !== ask.question || pub.question.status !== "live") problems.push("public page does not show the live question");
     if (!((await P("/open/public/live")).questions ?? []).some((x: any) => x.id === q.id)) problems.push("question missing from the live list");
     steps.push("public page readable");
-    // the candidate: relevant here, not there
+    // the candidate: read as the same craft here and a different one there, and turned away from neither
     const me = await C(`/open/q/${q.id}/me`);
     if (me.state !== "ok") { problems.push(`candidate has no Record (${me.state})`); return out(); }
-    if (!me.relevant) problems.push(`a product manager was found not relevant to a product role: ${JSON.stringify(me.checks)} ${me.why ?? ""}`.slice(0, 260));
+    if (me.fit !== "same") problems.push(`a product manager was not read as the same function as a product role: ${me.fit} ${JSON.stringify(me.checks)} ${me.why ?? ""}`.slice(0, 260));
     if (/@|\+91|krishnan/i.test(me.label ?? "")) problems.push(`the anonymous label carries identity: ${me.label}`);
     const other = await C(`/open/q/${off.id}/me`);
-    if (other.relevant) problems.push("a product manager was found relevant to a head chef role");
+    if (other.fit === "same") problems.push("a product manager was read as the same function as a head chef role");
     const text = "I would start with where the failures sit before touching anything: by bank, by payout rail and by time of day. A doubling in one month usually traces to one partner bank or one retry rule, not the whole system. I would leave the settlement schedule alone until that split is clear, because changing it hides the cause.";
-    await C(`/open/q/${off.id}/answers`, { text, ms: 60000, pasted: false }, 403);
-    steps.push("relevance holds both ways");
-    if (!me.relevant) return out();
+    const far = (await C(`/open/q/${off.id}/answers`, { text, ms: 60000, pasted: false })).answer;
+    if (!far?.id) problems.push("an answer from a different function was turned away");
+    else if (far.fit === "same") problems.push("an answer from a different function carries the same-function label");
+    steps.push("fit is read both ways, nobody turned away");
     const a = (await C(`/open/q/${q.id}/answers`, { text, ms: 240000, pasted: false })).answer;
     await C(`/open/q/${q.id}/answers`, { text, ms: 1, pasted: true }, 409);
     await E(`/open/q/${q.id}/answers`, { text }, 403);

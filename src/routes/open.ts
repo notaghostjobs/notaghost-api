@@ -1,6 +1,7 @@
 // Ghosted Open (14 Nov, first working build): hiring through one real question.
-// A verified employer posts a role with one question. Anyone can read the question and the anonymous answers; only people
-// whose Record is relevant to the role can write one. The employer reads answers without names, shortlists, may ask one
+// A verified employer posts a role with one question. Anyone can read the question and the anonymous answers. Anyone with
+// a verified number and a résumé can write one (18 Nov: the gate was opened; nobody is turned away); each answer carries
+// how close its writer's work is to the role, and the desk reads closest first. The employer shortlists, may ask one
 // private follow-up, and requests a conversation; the candidate accepts or declines; only then does the employer pay and
 // receive the details the candidate chose to share. Closing the role tells everyone who answered how it ended.
 //
@@ -39,12 +40,15 @@ const domainOf = (s: string) => { let d = String(s ?? "").trim().toLowerCase().r
 /** the registrable part, near enough: "careers.acme.co.in" and "acme.co.in" are the same employer */
 const baseDomain = (d: string) => { const p = d.split("."); const two = /^(co|com|org|net|ac|gov|edu)$/.test(p[p.length - 2] ?? "") && (p[p.length - 1] ?? "").length === 2; return p.slice(two ? -3 : -2).join("."); };
 
-type Employer = { user: string; company: string; email: string; site: string; domain: string; verified: boolean; how: string; at: string;
+type Employer = { user: string; company: string; email: string; site: string; domain: string; verified: boolean; how: string; at: string; logo?: string;
   code?: { hash: string; until: string; tries: number; sent_at: string } };
 type Question = { id: string; owner: string; company: string; domain: string; title: string; pay: string; exp_min: number; exp_max: number; location: string; question: string;
   status: "live" | "closed"; created: string; closes: string; outcome?: "hired" | "not_hired"; note?: string; closed_at?: string; views: number;
-  path?: string; told_at?: string };
+  path?: string; told_at?: string; logo?: string };
+/** how close the writer's own work is to the role: the same craft, a neighbouring one, or a different one */
+type Fit = "same" | "near" | "different";
 type Answer = { id: string; q: string; user: string; n: number; label: string; text: string; at: string; how: { ms: number; pasted: boolean };
+  fit?: Fit; in_band?: boolean;
   status: "in" | "shortlisted" | "requested" | "accepted" | "declined" | "paid";
   followup?: { q: string; suggested: boolean; asked_at: string; opened_at?: string; reply?: string; replied_at?: string; how?: { ms: number; pasted: boolean }; lapsed?: boolean };
   suggestions?: string[]; share?: { name: boolean; phone: boolean; email: boolean }; requested_at?: string; responded_at?: string; paid_at?: string; order_id?: string; payment_id?: string };
@@ -66,8 +70,13 @@ const isLive = (q: Question) => q.status === "live" && Date.parse(q.closes) > Da
 const FN = (s: string) => s.replace(/\b\w/g, (m) => m.toUpperCase());
 /** what the employer sees in place of a name: the function and the years, from the Record */
 const labelFor = (t: { functions: string[]; years: number; level: string }) => `${FN((t.functions?.[0] ?? "Experienced").trim())} · ${Math.max(0, Math.round(t.years))} ${Math.round(t.years) === 1 ? "year" : "years"}`;
-const pubQ = (q: Question, n: number) => ({ id: q.id, company: q.company, title: q.title, pay: q.pay, exp_min: q.exp_min, exp_max: q.exp_max, location: q.location, question: q.question, status: isLive(q) ? "live" : "closed", created: q.created, closes: q.closes, outcome: q.outcome ?? null, closed_at: q.closed_at ?? null, answers: n, path: q.path ?? null });
-const pubA = (a: Answer) => ({ n: a.n, label: a.label, text: a.text, at: a.at });
+const pubQ = (q: Question, n: number) => ({ id: q.id, company: q.company, title: q.title, pay: q.pay, exp_min: q.exp_min, exp_max: q.exp_max, location: q.location, question: q.question, status: isLive(q) ? "live" : "closed", created: q.created, closes: q.closes, outcome: q.outcome ?? null, closed_at: q.closed_at ?? null, answers: n, path: q.path ?? null, logo: logoUrl(q.domain, q.logo) });
+/** the employer's own mark, served by us; the stamp changes when they change it, so a browser never shows a stale one */
+const logoUrl = (domain: string, stamp?: string) => stamp ? `/open/public/logo/${domain}?v=${stamp}` : null;
+const FIT_WORDS: Record<Fit, string> = { same: "Same function", near: "Near function", different: "Different function" };
+/** closest first: the same craft inside the years asked, then the same craft outside them, then near, then different */
+const fitRank = (a: Answer) => a.fit === "same" ? (a.in_band === false ? 1 : 0) : a.fit === "near" ? 2 : a.fit === "different" ? 3 : 1;
+const pubA = (a: Answer) => ({ n: a.n, label: a.label, text: a.text, at: a.at, fit: a.fit ?? null, fit_label: a.fit ? FIT_WORDS[a.fit] : null });
 const stage = (a: Answer) => ["accepted", "paid"].includes(a.status) ? "conversation" : a.status === "requested" || a.status === "declined" ? "requested" : a.status === "shortlisted" ? "shortlisted" : "in";
 
 // ---------------- public: anyone can read ----------------
@@ -93,7 +102,7 @@ openPublic.get("/q/:id", async (c) => {
 });
 
 // ---------------- the employer ----------------
-const pubE = (e: Employer | null) => e ? { company: e.company, email: e.email, domain: e.domain, verified: e.verified, pending: !e.verified && !!e.code } : null;
+const pubE = (e: Employer | null) => e ? { company: e.company, email: e.email, domain: e.domain, verified: e.verified, pending: !e.verified && !!e.code, logo: logoUrl(e.domain, e.logo) } : null;
 const CODE_MIN = 15, CODE_TRIES = 5, RESEND_GAP_MS = 60e3;
 const codeHash = (user: string, code: string) => createHash("sha256").update(`${user}:${code}`).digest("hex");
 async function mailCode(e: Employer): Promise<boolean> {
@@ -117,7 +126,7 @@ open.post("/employer", async (c) => {
   const had = await store.get<Employer>(`open:emp:${u.id}`);
   const email = b.data.email.toLowerCase();
   if (had?.verified && had.email === email && had.domain === baseDomain(sd)) { had.company = b.data.company; await store.set(`open:emp:${u.id}`, had); return c.json({ employer: pubE(had) }); }
-  const e: Employer = { user: u.id, company: b.data.company, email, site: sd, domain: baseDomain(sd), verified: false, how: "", at: now() };
+  const e: Employer = { user: u.id, company: b.data.company, email, site: sd, domain: baseDomain(sd), verified: false, how: "", at: now(), ...(had?.logo && had.domain === baseDomain(sd) ? { logo: had.logo } : {}) };
   // a tester is verified at once, unless they ask to walk the real path (the code by email) with real: true
   if (isTester(u) && !b.data.real) { e.verified = true; e.how = "tester account, no code sent"; await store.set(`open:emp:${u.id}`, e); return c.json({ employer: pubE(e), tester: true }); }
   if (!mailReady()) return c.json({ error: "We can’t send verification emails just yet. Please try again shortly." }, 503);
@@ -147,6 +156,56 @@ open.post("/employer/resend", async (c) => {
   return c.json({ employer: pubE(e), sent_to: e.email });
 });
 const ask = z.object({ title: z.string().trim().min(3).max(90), pay: z.string().trim().min(2).max(40), exp_min: z.number().int().min(0).max(40), exp_max: z.number().int().min(0).max(45), location: z.string().trim().min(2).max(60), question: z.string().trim().min(40).max(400) });
+// ---------------- the employer's own mark ----------------
+// A verified employer may add their company's logo. It is theirs to give: we never fetch one. The page shrinks it to a small
+// square before sending; here it is checked to be a real PNG or JPEG and kept beside Open's other records, one per company
+// domain. Questions carry a stamp of it, so every page of that company shows the same mark.
+const LOGO_MAX = 300 * 1024;
+const logoCache = new Map<string, { at: number; mime: string; buf: Buffer } | null>();
+const isPng = (b: Buffer) => b.length > 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+const isJpg = (b: Buffer) => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+async function stampLogo(domain: string, stamp: string | null) {
+  const { data } = await db.from("reader_control").select("key,value").like("key", "open:q:%").limit(500);
+  for (const r of data ?? []) { const q = r.value as Question; if (q.domain !== domain) continue; if (stamp) q.logo = stamp; else delete q.logo; await store.set(qKey(q.id), q); }
+  const { data: es } = await db.from("reader_control").select("value").like("key", "open:emp:%").limit(500);
+  for (const r of es ?? []) { const e = r.value as Employer; if (e.domain !== domain) continue; if (stamp) e.logo = stamp; else delete e.logo; await store.set(`open:emp:${e.user}`, e); }
+  logoCache.delete(domain);
+}
+open.post("/employer/logo", async (c) => {
+  const u = c.get("user"); const e = await store.get<Employer>(`open:emp:${u.id}`);
+  if (!e?.verified) return c.json({ error: "Verify your company first." }, 403);
+  const b = z.object({ data: z.string().max(LOGO_MAX * 2) }).safeParse(await c.req.json().catch(() => ({})));
+  const m = b.success ? /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(b.data.data) : null;
+  if (!m) return c.json({ error: "A logo is a PNG or JPG image." }, 400);
+  const buf = Buffer.from(m[2]!, "base64");
+  if (buf.length > LOGO_MAX) return c.json({ error: "That image is too large. Try a smaller one." }, 413);
+  const mime = isPng(buf) ? "image/png" : isJpg(buf) ? "image/jpeg" : "";
+  if (!mime) return c.json({ error: "A logo is a PNG or JPG image." }, 400);
+  const stamp = Date.now().toString(36);
+  await store.set(`open:logo:${e.domain}`, { mime, b64: buf.toString("base64"), at: now(), by: u.id });
+  await stampLogo(e.domain, stamp);
+  return c.json({ employer: pubE(await store.get<Employer>(`open:emp:${u.id}`)) });
+});
+open.delete("/employer/logo", async (c) => {
+  const u = c.get("user"); const e = await store.get<Employer>(`open:emp:${u.id}`);
+  if (!e?.verified) return c.json({ error: "Verify your company first." }, 403);
+  await db.from("reader_control").delete().eq("key", `open:logo:${e.domain}`);
+  await stampLogo(e.domain, null);
+  return c.json({ employer: pubE(await store.get<Employer>(`open:emp:${u.id}`)) });
+});
+openPublic.get("/logo/:domain", async (c) => {
+  const domain = domainOf(c.req.param("domain")); if (!domain) return c.text("", 404);
+  let hit = logoCache.get(domain);
+  if (hit === undefined || (hit && Date.now() - hit.at > 10 * 60e3) || (hit === null)) {
+    const r = await store.get<{ mime: string; b64: string }>(`open:logo:${domain}`);
+    hit = r && (r.mime === "image/png" || r.mime === "image/jpeg") ? { at: Date.now(), mime: r.mime, buf: Buffer.from(r.b64, "base64") } : null;
+    if (logoCache.size > 500) logoCache.clear();
+    logoCache.set(domain, hit);
+  }
+  if (!hit) return c.text("", 404);
+  return new Response(new Uint8Array(hit.buf), { headers: { "content-type": hit.mime, "cache-control": "public, max-age=86400, immutable", "x-content-type-options": "nosniff", "cross-origin-resource-policy": "cross-origin" } });
+});
+
 open.post("/questions", async (c) => {
   const u = c.get("user");
   const e = await store.get<Employer>(`open:emp:${u.id}`);
@@ -156,7 +215,7 @@ open.post("/questions", async (c) => {
   if (b.data.exp_max < b.data.exp_min) return c.json({ error: "The experience range runs the wrong way." }, 400);
   const mine = (await store.list<Question>("open:q:")).filter((q) => q.owner === u.id && isLive(q));
   if (mine.length >= 5) return c.json({ error: "Five live questions at a time. Close one first." }, 429);
-  const q: Question = { id: randomBytes(5).toString("hex"), owner: u.id, company: e.company, domain: e.domain, ...b.data, status: "live", created: now(), closes: new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(), views: 0 };
+  const q: Question = { id: randomBytes(5).toString("hex"), owner: u.id, company: e.company, domain: e.domain, ...b.data, status: "live", created: now(), closes: new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(), views: 0, ...(e.logo ? { logo: e.logo } : {}) };
   q.path = await claimPath(q);
   await store.set(qKey(q.id), q);
   return c.json({ question: pubQ(q, 0) });
@@ -165,11 +224,11 @@ open.post("/questions", async (c) => {
 open.get("/desk", async (c) => {
   const u = c.get("user");
   const qs = (await store.list<Question>("open:q:")).filter((q) => q.owner === u.id).sort((a, b) => b.created.localeCompare(a.created));
-  const out = await Promise.all(qs.map(async (q) => { const as = (await answersOf(q.id)).sort((a, b) => a.at.localeCompare(b.at)); return { ...pubQ(q, as.length), views: q.views ?? 0, answers_list: await Promise.all(as.map((a) => deskA(a))) }; }));
+  const out = await Promise.all(qs.map(async (q) => { const as = (await answersOf(q.id)).sort((a, b) => fitRank(a) - fitRank(b) || a.at.localeCompare(b.at)); return { ...pubQ(q, as.length), views: q.views ?? 0, answers_list: await Promise.all(as.map((a) => deskA(a))) }; }));
   return c.json({ employer: pubE(await store.get<Employer>(`open:emp:${u.id}`)), questions: out, tester: isTester(u), price: INTRO_PRICE });
 });
 async function deskA(a: Answer) {
-  const base: any = { id: a.id, n: a.n, label: a.label, text: a.text, at: a.at, how: a.how, status: a.status,
+  const base: any = { id: a.id, n: a.n, label: a.label, text: a.text, at: a.at, how: a.how, status: a.status, fit: a.fit ?? null, fit_label: a.fit ? FIT_WORDS[a.fit] : null, in_band: a.in_band ?? null,
     followup: a.followup ? { q: a.followup.q, asked_at: a.followup.asked_at, opened: !!a.followup.opened_at, reply: a.followup.reply ?? null, replied_at: a.followup.replied_at ?? null, lapsed: lapsed(a), how: a.followup.how ?? null } : null };
   if (a.status === "paid") base.contact = await contactOf(a);
   return base;
@@ -276,14 +335,15 @@ open.post("/questions/:id/close", async (c) => {
 });
 
 // ---------------- the candidate ----------------
-/** Can this person answer this question? Their Record against the role: the same function, and years near the band asked. */
+/** How close is this person's own work to the role? Their Record against it: the craft, and the years asked. Nobody is
+ *  turned away on the answer (18 Nov); this is what the employer reads beside each one, and what the desk sorts by. */
 async function relevance(u: User, q: Question) {
   const rec = await recordFor(u.id);
   if (!rec) return { state: "no_resume" as const };
   const t = rec.targets; const years = Math.round(Number(t.years ?? 0));
   const key = `open:rel:${q.id}:${u.id}:${rec.resume.id}`;
   let v = await store.get<{ same: string; why: string }>(key);
-  if (!v) {
+  if (!v) try {
     // Open has no job description: the role's title and the question itself say what the work is
     const r = await withMeter({ tag: "open:relevance", user: u.id }, () => json<{ same: string; why: string }>(
       `An employer has posted a role on a hiring platform with ONE question for candidates instead of a job description. You are a fair recruiter answering one thing: is this role the same FUNCTION (craft) as the candidate's own work?
@@ -294,14 +354,17 @@ Judge from the role title and what the question asks a person to actually do. Ye
       `CANDIDATE: ${t.one_line}\nFunctions: ${(t.functions ?? []).join("; ")}. Recent titles: ${(t.titles ?? []).slice(0, 5).join("; ")}.\n\nROLE: ${q.title} — ${q.company}, ${q.location}\nTHE QUESTION CANDIDATES ANSWER: ${q.question}`, 300));
     v = { same: ["yes", "adjacent"].includes(String(r.same)) ? String(r.same) : "no", why: String(r.why ?? "").replace(/\s+/g, " ").slice(0, 140) };
     await store.set(key, v);
+  } catch (e: any) {
+    // the comparison could not be made just now: the answer still goes in, read as a neighbouring craft, and is not kept so it is tried again
+    console.error("[open] fit", e?.message ?? e); v = { same: "adjacent", why: "" };
   }
   const inBand = years >= q.exp_min - 1 && years <= q.exp_max + 3;
-  const relevant = v.same === "yes" && inBand;
+  const fit: Fit = v.same === "yes" ? "same" : v.same === "adjacent" ? "near" : "different";
   const checks = [
     { ok: v.same === "yes", label: FN(t.functions?.[0] ?? "Your function"), note: v.same === "yes" ? "the role’s function" : v.same === "adjacent" ? "near this role’s function, not the same" : "a different function from this role" },
     { ok: inBand, label: `${years} ${years === 1 ? "year" : "years"}`, note: `asks for ${q.exp_min}–${q.exp_max}` },
   ];
-  return { state: "ok" as const, relevant, checks, why: v.why, label: labelFor(t), record: { name: rec.resume.parsed.name, one_line: t.one_line, level: t.level, years, functions: t.functions, strengths: t.strengths, titles: t.titles } };
+  return { state: "ok" as const, fit, fit_label: FIT_WORDS[fit], in_band: inBand, checks, why: v.why, label: labelFor(t), record: { name: rec.resume.parsed.name, one_line: t.one_line, level: t.level, years, functions: t.functions, strengths: t.strengths, titles: t.titles } };
 }
 open.get("/q/:id/me", async (c) => {
   const u = c.get("user"); const q = await store.get<Question>(qKey(c.req.param("id")));
@@ -322,11 +385,10 @@ open.post("/q/:id/answers", async (c) => {
   if (!b.success) return c.json({ error: "An answer is between a few sentences and about 250 words." }, 400);
   if (await store.get<Answer>(aKey(q.id, u.id))) return c.json({ error: "You’ve already answered this one." }, 409);
   const r = await relevance(u, q);
-  if (r.state !== "ok") return c.json({ error: "Upload your résumé first — your Record decides who can answer." }, 403);
-  if (!r.relevant) return c.json({ error: "Your Record isn’t relevant to this role, so the answer box stays closed. You can still read the question and the answers." }, 403);
+  if (r.state !== "ok") return c.json({ error: "Add your résumé to publish your answer. The employer sees the answer, never the résumé.", need: "resume" }, 403);
   const taken = new Set((await answersOf(q.id)).map((a) => a.n)); let n = 0;
   do { n = 100 + Math.floor(Math.random() * 900); } while (taken.has(n));
-  const a: Answer = { id: `${q.id}-${n}`, q: q.id, user: u.id, n, label: r.label, text: b.data.text, at: now(), how: { ms: b.data.ms, pasted: b.data.pasted }, status: "in" };
+  const a: Answer = { id: `${q.id}-${n}`, q: q.id, user: u.id, n, label: r.label, text: b.data.text, at: now(), how: { ms: b.data.ms, pasted: b.data.pasted }, status: "in", fit: r.fit, in_band: r.in_band };
   await save(a);
   // the employer hears about the first answer at once, and after that at most once every three hours
   if (!q.told_at || Date.now() - Date.parse(q.told_at) > 3 * 3600e3) { q.told_at = now(); await store.set(qKey(q.id), q); void notifyOpen(q.owner, "answer", { title: q.title, count: taken.size + 1 }); }
@@ -335,8 +397,8 @@ open.post("/q/:id/answers", async (c) => {
 /** an answer as its own writer sees it */
 function candA(a: Answer, q: Question) {
   const f = a.followup;
-  return { id: a.id, n: a.n, label: a.label, text: a.text, at: a.at, status: a.status, stage: stage(a),
-    question: { id: q.id, company: q.company, title: q.title, question: q.question, status: isLive(q) ? "live" : "closed", outcome: q.outcome ?? null },
+  return { id: a.id, n: a.n, label: a.label, text: a.text, at: a.at, status: a.status, stage: stage(a), fit: a.fit ?? null, fit_label: a.fit ? FIT_WORDS[a.fit] : null,
+    question: { id: q.id, company: q.company, title: q.title, question: q.question, logo: logoUrl(q.domain, q.logo), status: isLive(q) ? "live" : "closed", outcome: q.outcome ?? null },
     followup: f ? { asked_at: f.asked_at, opened_at: f.opened_at ?? null, q: f.opened_at ? f.q : null, reply: f.reply ?? null, lapsed: lapsed(a), ms_left: f.opened_at && !f.reply ? Math.max(0, REPLY_WINDOW_MS - (Date.now() - Date.parse(f.opened_at))) : null, window_min: REPLY_WINDOW_MS / 60e3 } : null,
     invited: a.status === "requested", share: a.share ?? null };
 }
