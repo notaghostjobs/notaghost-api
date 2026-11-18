@@ -44,6 +44,11 @@ type Run = { status: "targets" | "shortlist" | "picking" | "scoring" | "question
   pq?: ProfileQ[];              // the Radar questions: career-level facts, asked once
   shots?: number; within_reach?: number; almost?: number; gap?: number; threshold: number;   // legacy names; v2 mirrors for_you/adjacent/stretch into them
   for_you?: number; adjacent?: number; stretch?: number;
+  // 19 Nov — the check before payment costs nothing to match. `free` marks a run made for someone who has not paid: the
+  // titles and the screen (years, level, city, language: all rules, no model) are done in full; the one judgement that
+  // costs money — is this posting the person's function — is asked only up to RADAR_FREE_DEPTH postings (0 unless set).
+  // `screened` is how many passed the screen; `checked` how many have that judgement; `screen_taste` three employers from the screened.
+  free?: boolean; screened?: number; checked?: number; screen_taste?: { company: string; location: string; first_seen: string; posted_at: string | null; band_text: string | null }[];
   violations?: { sighting_id: number; title: string; rule: string; at: string }[];   // what verify() removed, and why
   refreshed?: string;           // the last morning re-run
   seen?: number[];              // sightings already put to the model (picked or passed over), so a morning never re-asks
@@ -83,6 +88,10 @@ const currentResume = async (userId: string) => {
   return any?.parsed ? { id: any.id as string, parsed: any.parsed as ResumeProfile } : null;
 };
 /** An active Radar plan, shots used or not: the list stays open for the 30 days even after the ten Sharpens are spent. */
+/** How many postings the function question may be asked of before a person has paid. 0: the check before payment makes
+ *  no model call to match. Raise it (RADAR_FREE_DEPTH=24) to show a verified sample first, at about ₹2.60 per twelve. */
+const FREE_DEPTH = Math.max(0, Math.min(240, Number(process.env.RADAR_FREE_DEPTH ?? 0) || 0));
+const paidFor = async (userId: string) => (await hasRadar(userId)) || !!(await kv.get(`radar:unlock:${userId}`));
 async function hasRadar(userId: string): Promise<boolean> {
   const { data } = await db.from("plans").select("id").eq("user_id", userId).eq("product", "radar").gt("expires_at", new Date().toISOString()).limit(1);
   return !!(data && data.length);
@@ -221,7 +230,7 @@ async function descriptionsFor(ids: number[]): Promise<Map<number, string>> {
 }
 /** The discovery pass (v2). Gates and world exclusions on the posting text (₹0) → the function question, twelve postings a
  *  call, cached per posting × function profile → labels from facts → verify(). Returns the verified items. */
-async function discover(user: User, resume: { id: string; parsed: ResumeProfile }, t: Targets, a: Answers, cands: Sighting[], opt: { cap: number; ceiling: number; run: Run; mark?: string; onProgress?: (n: number) => Promise<void> | void }) {
+async function discover(user: User, resume: { id: string; parsed: ResumeProfile }, t: Targets, a: Answers, cands: Sighting[], opt: { cap: number; ceiling: number; run: Run; maxNew?: number; mark?: string; onProgress?: (n: number) => Promise<void> | void }) {
   const { run } = opt;
   const descs = await descriptionsFor(cands.map((c) => c.id));
   const years = Math.max(Number(resume.parsed.years_total ?? 0), Number(t.years ?? 0), yearsFromRoles(resume.parsed.roles) ?? 0);
@@ -243,6 +252,8 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
   passed.sort((x, y) => Date.parse(y.s.first_seen) - Date.parse(x.s.first_seen));
   const perEmp: Record<string, number> = {}; const ask: typeof passed = [];
   for (const x of passed) { const k = x.s.employer_key ?? x.s.company_name ?? "?"; if ((perEmp[k] ?? 0) >= 16) { trail.push({ id: x.s.id, title: x.s.title, company: x.s.company_name ?? "", rank: -1, fit: 0, dropped: "employer cap" }); continue; } perEmp[k] = (perEmp[k] ?? 0) + 1; ask.push(x); if (ask.length >= opt.ceiling) break; }
+  run.screened = passed.length;
+  { const seen = new Set<string>(); run.screen_taste = []; for (const x of passed) { const k = (x.s.company_name ?? "").toLowerCase(); if (!k || seen.has(k)) continue; seen.add(k); run.screen_taste.push({ company: x.s.company_name ?? "", location: x.s.location ?? "", first_seen: x.s.first_seen, posted_at: x.s.posted_at, band_text: BAND_TEXT(x.text) }); if (run.screen_taste.length === 3) break; } }
   // 2. the one question, cached per posting × function profile
   const fnKey = createHash("sha1").update(`v3|${t.functions.join("|")}|${level}|${t.one_line}`).digest("hex").slice(0, 10);   // v3: the question's wording changed on 10 Nov
   const verdicts = new Map<number, Verdict>(); const need: typeof ask = [];
@@ -253,7 +264,9 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
     for (const x of slice) { const v = have.get(x.s.id); if (v) verdicts.set(x.s.id, { ...v, same: cleanSame(v.same, v.why) }); else need.push(x); }
   }
   const cand = { one_line: t.one_line, functions: t.functions, years, level };
-  const batches: typeof need[] = []; for (let i = 0; i < need.length; i += 12) batches.push(need.slice(i, i + 12));
+  // before payment nothing new is asked beyond the free depth; what earlier runs already answered is still used
+  const send = opt.maxNew === undefined ? need : need.slice(0, Math.max(0, opt.maxNew));
+  const batches: typeof need[] = []; for (let i = 0; i < send.length; i += 12) batches.push(send.slice(i, i + 12));
   let bi = 0, doneB = 0;
   const workerFn = async () => {
     while (bi < batches.length) {
@@ -267,6 +280,7 @@ async function discover(user: User, resume: { id: string; parsed: ResumeProfile 
     }
   };
   await Promise.all(Array.from({ length: 3 }, workerFn));
+  run.checked = verdicts.size;
   // 3. labels from facts
   const items: Item[] = [];
   for (const x of ask) {
@@ -404,8 +418,10 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     if (!longList.length) { run.status = "done"; run.finished = new Date().toISOString(); await save(); return; }
     run.status = "scoring"; run.picked = 0; await save();
     const planSince = run.started;
+    const paid = await paidFor(user.id);
+    run.free = !paid;
     const { paise } = await charge(user.id, planSince, "radar:run", async () => {
-      const r = await discover(user, resume, targets, answers, longList, { cap: 40, ceiling: 240, run, onProgress: async (n) => { run.scored = n; await save(); } });
+      const r = await discover(user, resume, targets, answers, longList, { cap: 40, ceiling: 240, run, ...(paid ? {} : { maxNew: FREE_DEPTH }), onProgress: async (n) => { run.scored = n; await save(); } });
       run.picked = r.items.length; run.items = r.items; run.scored = r.items.length; run.examined = r.examined;
     });
     run.spend = { run_paise: paise, total_paise: await spent30(user.id) };
@@ -415,7 +431,7 @@ async function runRadar(user: User, resume: { id: string; parsed: ResumeProfile 
     // on "questions" for seven minutes while a tester watched the scan screen).
     run.pq = run.pq ?? [];
     run.status = "done"; run.finished = new Date().toISOString(); await save();
-    void Promise.race([preQuestions(user.id, resume.parsed, resume.id, targets), new Promise<null>((res) => setTimeout(() => res(null), 60_000))])
+    if (!run.free) void Promise.race([preQuestions(user.id, resume.parsed, resume.id, targets), new Promise<null>((res) => setTimeout(() => res(null), 60_000))])   // the questions are worked out by the model: after payment only
       .then(async (q) => { if (!q || !q.questions.length) return; const cur = await kv.get<Run>(key); if (cur && cur.status === "done" && cur.started === run.started) { cur.pq = q.questions; await kv.set(key, cur); } })
       .catch((e) => console.error("[radar] questions", (e as Error).message));
   } catch (e) {
@@ -685,18 +701,29 @@ export async function flowProbe(app: { request: (input: string, init?: RequestIn
     let r: any = { status: "shortlist" }; const started = Date.now();
     while (Date.now() - started < 6 * 60e3) { await new Promise((res) => setTimeout(res, 4000)); r = await get("/radar/test/result"); if (r.status === "done" || r.status === "error") break; }
     if (r.status !== "done") { problems.push(`status "${r.status}" after ${Math.round((Date.now() - started) / 1000)}s${r.error ? ` (${r.error})` : ""}`); return out(r.status); }
-    const rv = r.reveal ?? {}; const chance = Number(rv.chance ?? 0);
+    // before payment: the free check. The screen is done in full, the paid judgement is asked of at most FREE_DEPTH postings,
+    // and nothing that identifies a role leaves the service.
+    const rv = r.reveal ?? {};
     const taste: string[] = (rv.taste ?? []).map((t: any) => String(t.company ?? ""));
-    if (chance > 0) {
+    if (!rv.free) problems.push("an unpaid run was not a free check");
+    if (Number(r.cost_calls ?? 0) > Math.ceil(FREE_DEPTH / 12)) problems.push(`the free check made ${r.cost_calls} paid calls; the limit is ${Math.ceil(FREE_DEPTH / 12)}`);
+    if (!(Number(rv.screened ?? 0) > 0)) problems.push("nothing passed the screen for the test résumé");
+    else {
       if (!taste.length) problems.push("reveal has no taste");
       if (taste.some((c) => !c || c.length > 64 || /\b(is|are)\b/i.test(c) || /^careers? at/i.test(c))) problems.push(`taste employer reads wrong: ${taste.join(" | ")}`);
-      if (chance >= 3 && new Set(taste.map((c) => c.toLowerCase())).size < 3) problems.push(`taste repeats an employer: ${taste.join(" | ")}`);
-      if (r.unlocked) problems.push("locked run came back unlocked");
-      if ((r.items ?? []).some((i: any) => i.title || i.url || i.why)) problems.push("locked result leaks titles, links or reasons");
+      if (Number(rv.screened) >= 12 && new Set(taste.map((c) => c.toLowerCase())).size < 3) problems.push(`taste repeats an employer: ${taste.join(" | ")}`);
     }
+    if (r.unlocked) problems.push("locked run came back unlocked");
+    if ((r.items ?? []).some((i: any) => i.title || i.url || i.why)) problems.push("locked result leaks titles, links or reasons");
+    // payment (the tester's unlock stands in for it): the full pass starts by itself and the list opens when it is done
     await get("/radar/test/unlock", { method: "POST", body: "{}" });
-    const full: any = await get("/radar/test/result");
+    let full: any = await get("/radar/test/result"); const paidAt = Date.now();
+    if (rv.free && full.status === "done") problems.push("paying did not start the full pass");
+    while (full.status !== "done" && full.status !== "error" && Date.now() - paidAt < 6 * 60e3) { await new Promise((res) => setTimeout(res, 4000)); full = await get("/radar/test/result"); }
+    if (full.status !== "done") { problems.push(`full pass: status "${full.status}" after ${Math.round((Date.now() - paidAt) / 1000)}s${full.error ? ` (${full.error})` : ""}`); return out(full.status); }
     if (!full.unlocked) problems.push("unlock did not open the list");
+    if (full.free) problems.push("the list after payment is still the free check");
+    const chance = Number(full.reveal?.chance ?? 0);
     const items: any[] = (full.items ?? []).filter((i: any) => i.label);
     if (items.length !== chance) problems.push(`reveal said ${chance} roles, the list has ${items.length}`);
     for (const i of items) {
@@ -721,6 +748,18 @@ export async function panelTick(app?: { request: (input: string, init?: RequestI
   const nightly = (ist.getUTCHours() > 3 || (ist.getUTCHours() === 3 && ist.getUTCMinutes() >= 30)) && lastIst !== todayIst;
   const fresh = commit && (!last || last.commit !== commit);
   if (!fresh && !nightly) return;
+  // A deploy no longer runs the panel, the Radar walk and the Sharpen walk: each is a full paid pass, and on 18 Nov ten
+  // deploys in a day cost about ₹1,000 that way. They run once a night. A deploy runs only the Open walk, which is
+  // nearly free, once per commit. PROBE_ON_DEPLOY=1 brings the old behaviour back for a release that needs it.
+  if (!nightly && process.env.PROBE_ON_DEPLOY !== "1") {
+    if (!app) return;
+    const lastOpen = await kv.get<{ commit?: string | null }>(OPEN_FLOW_KEY);
+    if (lastOpen?.commit === commit) return;
+    const op = await openProbe(app, PROBE_PHONE);
+    await kv.set(OPEN_FLOW_KEY, { ...op, commit });
+    console.log(`[open] flow probe ${op.ok ? "PASS" : "FAIL"} in ${Math.round(op.ms / 1000)}s: ${op.steps.length} steps${op.problems.length ? ` — ${op.problems.join("; ")}` : ""}`);
+    return;
+  }
   const res = await runPanel(fresh ? `deploy ${commit}` : "nightly");
   if (!app) return;
   const flow = await flowProbe(app);
@@ -878,6 +917,7 @@ radar.get("/test/prequestions", async (c) => {
   let t = await kv.get<Targets>(tkey); if (!t) { t = await withMeter({ tag: "radar:targets", user: u.id }, () => deriveTargets(resume.parsed)); await kv.set(tkey, t); }
   const runNow = await kv.get<Run>(runKey(u.id));
   let questions: ProfileQ[] = runNow?.pq ?? []; let from = -1;
+  if (!questions.length && !(await paidFor(u.id))) return c.json({ questions: [], from, run_status: runNow?.status ?? "none", after_payment: true });   // written by the model: not before payment
   if (!questions.length) { const pre = await preQuestions(u.id, resume.parsed, resume.id, t); questions = pre.questions; from = pre.from; }
   const bank = await recallAnswers(u.id).catch(() => []);
   const marked = questions.map((q) => { const r = bank.find((x) => q.covers.some((cv) => sameRequirement(x.requirement, cv))); return r ? { ...q, told: { text: r.fact, line: r.line, remembered: true } } : q; });
@@ -913,11 +953,27 @@ radar.post("/test/prime", async (c) => {
   return c.json({ ok: true, line });
 });
 
+/** After payment: if the list on file is the free check, run the full pass. True when it was started. Safe to call twice. */
+export async function fullPassIfFree(userId: string, user?: User): Promise<boolean> {
+  if (running.has(userId)) return false;
+  const run = await kv.get<Run>(runKey(userId));
+  if (!run?.free || !(run.status === "done" || run.status === "error")) return false;
+  const u = user ?? ((await db.from("users").select("*").eq("id", userId).maybeSingle()).data as User | null);
+  const resume = await currentResume(userId);
+  const t = resume ? await kv.get<Targets>(`radar:targets:v3:${userId}:${resume.id}`) : null;
+  if (!u || !resume || !t || running.has(userId)) return false;
+  running.add(userId); void runRadar(u, resume, t, run.answers);
+  return true;
+}
 radar.get("/test/result", async (c) => {
   const u = c.get("user");
   const run = await kv.get<Run>(runKey(u.id));
   if (!run) return c.json({ status: "none" });
-  const unlocked = (await hasRadar(u.id)) || !!(await kv.get(`radar:unlock:${u.id}`));
+  const unlocked = await paidFor(u.id);
+  // paid, and the list on file is the free check: the full pass starts now (if the payment step has not started it already)
+  if (unlocked && run.free && (run.status === "done" || run.status === "error")) {
+    if (running.has(u.id) || await fullPassIfFree(u.id, u)) return c.json({ status: "shortlist", started: new Date().toISOString(), items: [], unlocked: true, by_title: run.by_title, tester: isTester(u), full_pass: true });
+  }
   const labelled = run.items.filter((i) => i.label);
   const shots = labelled.filter((i) => i.label === "for_you");
   const almost = labelled.filter((i) => i.label === "adjacent");
@@ -925,12 +981,15 @@ radar.get("/test/result", async (c) => {
   const chance = [...shots, ...almost, ...gap];
   const since = Date.now() - 86400e3;
   const oldest = chance.reduce((m, i) => Math.max(m, (Date.now() - Date.parse(i.first_seen)) / 86400e3), 0);
-  const reveal = { by_title: run.by_title ?? 0, examined: run.examined ?? run.picked ?? 0, shots: shots.length, almost: almost.length, gap: gap.length, chance: chance.length,
+  const freeTaste = (run.screen_taste ?? []).map((x) => ({ company: x.company, location: x.location, label: null, why: null, band_text: x.band_text, first_seen: x.first_seen, posted_at: x.posted_at }));
+  const reveal = { free: !!run.free, screened: run.screened ?? null, checked: run.checked ?? null,
+    by_title: run.by_title ?? 0, examined: run.examined ?? run.picked ?? 0, shots: shots.length, almost: almost.length, gap: gap.length, chance: chance.length,
     for_you: shots.length, adjacent: almost.length, stretch: gap.length,
     opened_today: chance.filter((i) => Date.parse(i.first_seen) >= since).length, within_reach: almost.length + gap.length, oldest_days: Math.round(oldest),
     // the taste: the employer, the label and the line — the role itself hidden — the best three, three different employers
     taste: ((): typeof chance => { const seen = new Set<string>(), out: typeof chance = []; for (const i of chance) { const k = i.company.toLowerCase(); if (seen.has(k)) continue; seen.add(k); out.push(i); if (out.length === 3) break; } return out.length === 3 ? out : chance.slice(0, 3); })()
       .map((i) => ({ company: i.company, location: i.location, label: i.label, why: i.why, band_text: i.band_text, first_seen: i.first_seen, posted_at: i.posted_at })) };
+  if (run.free && !chance.length) (reveal as any).taste = freeTaste;
   const my = (title: string) => titleScore(title, run.answers.titles.map(words), run.answers.level, true) >= 0.5;
   const mine = run.status === "done" ? await pulse(my).catch(() => null) : null;
   if (!isTester(u)) { delete (run as any).spend; delete (run as any).trail; }   // ours to see, not the customer's
