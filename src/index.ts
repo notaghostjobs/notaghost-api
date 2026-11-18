@@ -14,7 +14,7 @@ import { preview } from "./routes/preview.js";
 import { check } from "./routes/check.js";
 import { radar, radarPublic } from "./routes/radar.js";
 import { open, openPublic } from "./routes/open.js";
-import { mcp, openaiChallenge } from "./routes/mcp.js";
+import { mcp, openaiChallenge, warmJobs } from "./routes/mcp.js";
 import { events } from "./routes/funnel.js";
 import { admin } from "./routes/admin.js";
 import { snapshotDue } from "./engine/ghost/index.js";
@@ -67,6 +67,7 @@ app.onError((err, c) => {
 });
 
 serve({ fetch: app.fetch, port: env.port }, () => console.log(`notaghost-api on :${env.port}`));
+setTimeout(warmJobs, 45e3).unref();   // the assistants' job search answers from memory; load it before the first person asks
 
 // the reader runs in its own worker process (src/reader/worker.ts); this process only serves.
 // daily snapshot of every posting we know (signal 21); runs every 6h, re-checks what is due
