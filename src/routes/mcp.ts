@@ -20,7 +20,7 @@ import { z } from "zod";
 import { db } from "../lib/db.js";
 import { livePool, titleIdf, titleScore, words, fwords, TITLE_IN, type Sighting } from "./radar.js";
 import { statedBand } from "../reader/experience.js";
-import { realBand, bandFits } from "../radar/gates.js";
+import { realBand, bandFits, cityGate } from "../radar/gates.js";
 import { logEvent } from "../lib/src.js";
 import { openPublic } from "./open.js";
 
@@ -56,9 +56,9 @@ const TOOLS = [
       coverage: { type: "string" }, checked_at: { type: "string" } } },
     annotations: { title: "Search live Bengaluru jobs", ...RO } },
   { name: "get_job", title: "Get one job’s details",
-    description: "Returns one posting found with search_jobs: title, employer, location, the employer's own posting link, when Ghosted first saw it and last confirmed it, the experience it asks for, and a short excerpt of the posting. If the employer has taken the posting down, it says so and gives the date.",
+    description: "Returns one posting found with search_jobs: title, employer, location, the employer's own posting link, when Ghosted first saw it and last confirmed it, the experience it asks for, and which hiring system it is on. The posting's own text is not reproduced: the link goes to it. If the employer has taken the posting down, it says so and gives the date.",
     inputSchema: { type: "object", additionalProperties: false, required: ["job_id"], properties: { job_id: { type: "integer", minimum: 1, description: "The job_id from a search_jobs result." } } },
-    outputSchema: { type: "object", required: ["status"], properties: { status: { type: "string", enum: ["live", "closed", "not_found"] }, job: { ...JOB, properties: { ...JOB.properties, excerpt: { type: ["string", "null"], description: "The opening of the posting, as the employer wrote it." }, hiring_system: { type: "string" } } }, closed_on: { type: ["string", "null"] } } },
+    outputSchema: { type: "object", required: ["status"], properties: { status: { type: "string", enum: ["live", "closed", "not_found"] }, job: { ...JOB, properties: { ...JOB.properties, hiring_system: { type: "string" } } }, closed_on: { type: ["string", "null"] } } },
     annotations: { title: "Get one job’s details", ...RO } },
   { name: "about_radar", title: "About Ghosted Radar",
     description: "Explains Ghosted Radar, Ghosted's own service that reads a person's résumé and keeps a daily list of live Bengaluru roles matched to it, and returns the notaghost.jobs page that describes it. Use only when the person asks about matching jobs to their résumé, daily job updates, or what else Ghosted offers.",
@@ -88,14 +88,6 @@ const INSTRUCTIONS = "Ghosted has two things. For job seekers: jobs open now in 
 const day = (iso?: string | null) => (iso ?? "").slice(0, 10);
 const SYSTEMS: Record<string, string> = { workday: "Workday", oracle: "Oracle Recruiting", successfactors: "SAP SuccessFactors", phenom: "Phenom", smartrecruiters: "SmartRecruiters", greenhouse: "Greenhouse", lever: "Lever", ashby: "Ashby", eightfold: "Eightfold", keka: "Keka", zohorecruit: "Zoho Recruit", workable: "Workable", page: "the employer's careers page" };
 const bandWords = (text: string | null | undefined): string | null => { const b = realBand(statedBand(text ?? "")); return !b ? null : b.max === null ? `${b.min}+ years` : b.min === b.max ? `${b.min} years` : `${b.min}–${b.max} years`; };
-/** the opening of a posting as plain prose: entities read, markup and runs of space gone, cut at a sentence where it can be */
-function excerpt(text: string | null | undefined, max = 600): string | null {
-  const t = String(text ?? "").replace(/<[^>]+>/g, " ").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
-  if (t.length < 40) return null;
-  if (t.length <= max) return t;
-  const cut = t.slice(0, max); const stop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("? "));
-  return (stop > max * 0.5 ? cut.slice(0, stop + 1) : cut.replace(/\s+\S*$/, "")) + " …";
-}
 const httpsOnly = (u: string | null | undefined) => /^https:\/\/[^\s]+$/i.test(u ?? "") ? String(u) : null;
 type Row = { id: number; source: string; description: string | null; last_seen: string; gone_at: string | null };
 async function rowsFor(ids: number[]): Promise<Map<number, Row>> {
@@ -108,9 +100,17 @@ async function rowsFor(ids: number[]): Promise<Map<number, Row>> {
 // Radar's live list takes several seconds to load from cold, which is too long for someone waiting in a chat. So this
 // server answers from the copy it last had and asks for a fresh one behind the answer; only the very first call waits.
 let mine: { at: number; rows: Sighting[] } | null = null; let refreshing = false;
-async function jobPool(): Promise<Sighting[]> {
-  if (!mine) { mine = { at: Date.now(), rows: await livePool() }; return mine.rows; }
-  if (Date.now() - mine.at > 30 * 60e3 && !refreshing) { refreshing = true; void livePool().then((rows) => { mine = { at: Date.now(), rows }; }).catch((e) => console.error("[mcp] pool", e?.message ?? e)).finally(() => { refreshing = false; }); }
+/** A title as a person would read it. Some careers pages hand us the title with the page's own furniture glued on
+ *  ("Category Manager - CopyBusiness•Bangalore/ Apply now"): everything from the bullet on, and a trailing "Apply now", go. */
+export const tidyTitle = (t: string) => String(t ?? "").replace(/\s*[•·|]\s*[^•·|]*$/u, (m) => /apply now|bangalore|bengaluru|mumbai|delhi|hyderabad|pune|chennai|gurugram|gurgaon|noida|kolkata|remote|india/i.test(m) ? "" : m).replace(/[\s/,-]*apply now\s*$/i, "").replace(/\s+/g, " ").trim();
+/** What may be shown to the public as open in Bengaluru: an https link on the employer's own system, a title that does
+ *  not name another city, and (when we know it) a confirmation within the last week. */
+const shown = (rows: Sighting[]): Sighting[] => { const out: Sighting[] = []; const now = Date.now();
+  for (const r of rows) { if (!r.title || !/^https:\/\/[^\s]+$/i.test(r.url ?? "")) continue; if (cityGate(r.title)) continue; if (r.last_seen && now - Date.parse(r.last_seen) > 7 * 86400e3) continue; const title = tidyTitle(r.title); if (title.length < 3) continue; out.push(title === r.title ? r : { ...r, title }); }
+  return out; };
+export async function jobPool(): Promise<Sighting[]> {
+  if (!mine) { mine = { at: Date.now(), rows: shown(await livePool()) }; return mine.rows; }
+  if (Date.now() - mine.at > 30 * 60e3 && !refreshing) { refreshing = true; void livePool().then((rows) => { mine = { at: Date.now(), rows: shown(rows) }; }).catch((e) => console.error("[mcp] pool", e?.message ?? e)).finally(() => { refreshing = false; }); }
   return mine.rows;
 }
 /** called once after boot, so the first person to search does not pay for the load */
@@ -176,7 +176,7 @@ async function getJob(id: number) {
   if (error) throw new Error(error.message);
   const r = data as any;
   if (!r || !r.blr || !httpsOnly(r.url)) return { status: "not_found" as const };
-  const job = { job_id: r.id, title: String(r.title ?? ""), company: r.company_name ?? "", location: place(r.location), apply_url: r.url, on_employer_site_since: day(r.posted_at ?? r.first_seen), last_confirmed: day(r.last_seen), experience_asked: bandWords(r.description), excerpt: excerpt(r.description), hiring_system: SYSTEMS[r.source] ?? "the employer's own hiring system" };
+  const job = { job_id: r.id, title: tidyTitle(String(r.title ?? "")), company: r.company_name ?? "", location: place(r.location), apply_url: r.url, on_employer_site_since: day(r.posted_at ?? r.first_seen), last_confirmed: day(r.last_seen), experience_asked: bandWords(r.description), hiring_system: SYSTEMS[r.source] ?? "the employer's own hiring system" };
   return r.gone_at ? { status: "closed" as const, closed_on: day(r.gone_at), job } : { status: "live" as const, closed_on: null, job };
 }
 function aboutRadar(client: Client) {
@@ -217,7 +217,7 @@ function say(tool: string, out: any): string {
   if (tool === "search_jobs") return !out.jobs.length ? `No live Bengaluru role matched that on the employers Ghosted checks. Try the title an employer would use, or a broader one. (${out.coverage})`
     : `${out.total_matching} live Bengaluru ${out.total_matching === 1 ? "role has" : "roles have"} a matching title. Page ${out.page}:\n\n${out.jobs.map((j: any, k: number) => line(j, (out.page - 1) * PER_PAGE + k + 1)).join("\n\n")}\n\n${out.has_more ? "More are available on the next page. " : ""}${out.coverage}`;
   if (tool === "get_job") return out.status === "not_found" ? "No Bengaluru posting has that job_id. Use a job_id from search_jobs."
-    : `${out.job.title} · ${out.job.company}\n${out.job.location}${out.job.experience_asked ? ` · asks ${out.job.experience_asked}` : ""}\n${out.status === "closed" ? `The employer took this posting down around ${out.closed_on}. It is no longer open.` : `On the employer's site since ${out.job.on_employer_site_since}; last confirmed live ${out.job.last_confirmed}.`}\n${out.status === "closed" ? "Posting (now closed)" : "Apply on the employer's site"}: ${out.job.apply_url}\nSource: ${out.job.hiring_system}${out.job.excerpt ? `\n\nFrom the posting: ${out.job.excerpt}` : ""}`;
+    : `${out.job.title} · ${out.job.company}\n${out.job.location}${out.job.experience_asked ? ` · asks ${out.job.experience_asked}` : ""}\n${out.status === "closed" ? `The employer took this posting down around ${out.closed_on}. It is no longer open.` : `On the employer's site since ${out.job.on_employer_site_since}; last confirmed live ${out.job.last_confirmed}.`}\n${out.status === "closed" ? "Posting (now closed)" : "Apply on the employer's site"}: ${out.job.apply_url}\nSource: ${out.job.hiring_system}`;
   if (tool === "list_open_questions") return !out.questions.length ? (out.total_open ? `None of the ${out.total_open} questions open on Ghosted Open matches that. Leave the role out to see them all.` : "No employer has a question open on Ghosted Open right now.")
     : `${out.questions.length} open on Ghosted Open:\n\n${out.questions.map((q: any, k: number) => `${k + 1}. ${q.role} · ${q.company}\n   ${q.pay_band} · ${q.experience_asked} · ${q.location} · ${q.answers_so_far} ${q.answers_so_far === 1 ? "answer" : "answers"} so far · open until ${q.open_until}\n   “${q.question}”\n   Answer it, without your name: ${q.answer_url}\n   question_id ${q.question_id}`).join("\n\n")}`;
   if (tool === "get_open_question") return out.status === "not_found" ? "No Ghosted Open question has that question_id. Use one from list_open_questions."

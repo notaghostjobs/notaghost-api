@@ -111,7 +111,7 @@ async function deriveTargetsModel(p: ResumeProfile): Promise<Targets> {
   );
 }
 
-export type Sighting = { id: number; title: string; company_name: string | null; location: string | null; url: string; posted_at: string | null; first_seen: string; employer_key: string | null; readable?: boolean };
+export type Sighting = { id: number; title: string; company_name: string | null; location: string | null; url: string; posted_at: string | null; first_seen: string; employer_key: string | null; last_seen?: string; readable?: boolean };
 let poolCache: { at: number; rows: Sighting[] } | null = null;
 /** Every live Bengaluru sighting (title, employer, location, url), marked readable when its description is on file.
  *  The pulse counts all of them; scoring uses the readable ones. Cached in memory for 30 minutes. */
@@ -119,7 +119,7 @@ export async function livePool(): Promise<Sighting[]> {
   if (poolCache && Date.now() - poolCache.at < 30 * 60e3) return poolCache.rows;
   const rows: Sighting[] = [];
   for (let from = 0; from < 80000; from += 1000) {
-    const { data, error } = await db.from("sightings").select("id, title, company_name, location, url, posted_at, first_seen, employer_key").eq("blr", true).is("gone_at", null).order("id", { ascending: true }).range(from, from + 999);
+    const { data, error } = await db.from("sightings").select("id, title, company_name, location, url, posted_at, first_seen, employer_key, last_seen").eq("blr", true).is("gone_at", null).order("id", { ascending: true }).range(from, from + 999);
     if (error) throw new Error(error.message);
     rows.push(...((data ?? []) as Sighting[]).map((r) => ({ ...r, title: cleanTitle(r.title) })));
     if (!data || data.length < 1000) break;
