@@ -58,6 +58,44 @@ export const TEMPLATES = [
       { type: "BUTTONS", buttons: [{ type: "URL", text: "See your list", url: "https://notaghost.jobs/app.html#/radar/test" }] },
     ] },
 
+  // Ghosted Open: each hand-off between an employer and a candidate. Nobody is watching the page, and a follow-up runs
+  // on a fifteen-minute clock, so each one is told on WhatsApp. No name of a candidate ever goes in a message.
+  { name: "ghosted_open_followup", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Ghosted Open: *{{1}}* has one follow-up to your answer for *{{2}}*. It is private. Once you open it you have 15 minutes to reply, so pick your moment.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my answers", url: "https://notaghost.jobs/app.html#/v2/open/me" }] },
+    ] },
+  { name: "ghosted_open_invite", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Ghosted Open: *{{1}}* would like to talk to you about *{{2}}*. You choose what they receive. If you decline, they never learn who you were.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Accept or decline", url: "https://notaghost.jobs/app.html#/v2/open/me" }] },
+    ] },
+  { name: "ghosted_open_closed", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Ghosted Open: *{{1}}* has closed the role *{{2}}*. See how it ended and how far your answer went.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "See how it ended", url: "https://notaghost.jobs/app.html#/v2/open/q/{{1}}", example: ["7c41ad92e0"] }] },
+    ] },
+  { name: "ghosted_open_answer", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Ghosted Open: a new answer has arrived for *{{1}}*. Answers so far: {{2}}. No names are attached to them.", example: { body_text: [["Assistant Manager, Operations", "3"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Read the answers", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+  { name: "ghosted_open_reply", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Ghosted Open: Candidate {{1}} has replied to your follow-up for *{{2}}*. Their reply is on your desk.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Read the reply", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+  { name: "ghosted_open_accepted", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Ghosted Open: Candidate {{1}} has agreed to talk about *{{2}}*. Pay ₹499 on your desk to be connected.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my desk", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+  { name: "ghosted_open_declined", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Ghosted Open: Candidate {{1}} has declined a conversation about *{{2}}*. Their identity stays private, and nothing is charged.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my desk", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+
   // nudges 3 and 4 go out more than 24 hours after the person's last message, so they must be templates (Meta reviews them)
   { name: "ghosted_nudge_morning", category: "MARKETING", language: "en",
     components: [{ type: "BODY", text: NUDGE_TEXT[2] }] },
@@ -329,6 +367,32 @@ export async function notifyRadarMorning(userId: string, r: { new_shots: number;
       if (!ok) await sendCard(to, { body: `Good morning. Radar checked this morning: nothing new that clears your bar yet. ${r.shots} roles still on your list, ${r.gone} went quiet overnight. We check again tomorrow at 8.`, button: "See your list", url });
     }
   } catch (e: any) { console.error("[whatsapp] radar morning", e?.message ?? e); }
+}
+/** Ghosted Open's hand-offs. The approved template first (it lands at any hour); until Meta has approved it, the same words as
+ *  a card, which lands only if the person wrote to us in the last day. Best-effort: the page is always the source of truth. */
+export type OpenNote = "followup" | "invite" | "closed" | "answer" | "reply" | "accepted" | "declined";
+export async function notifyOpen(userId: string, kind: OpenNote, d: { company?: string; title?: string; n?: number; count?: number; id?: string }) {
+  try {
+    if (!env.waToken || !env.waPhoneId) return;
+    const { data: u } = await db.from("users").select("phone").eq("id", userId).maybeSingle();
+    const to = String(u?.phone ?? "").replace(/\D/g, ""); if (!to || /^910{6}/.test(to)) return;   // the automated walk's accounts are never messaged
+    const title = String(d.title ?? "").slice(0, 60), company = String(d.company ?? "").slice(0, 40), n = String(d.n ?? ""), base = "https://notaghost.jobs/app.html#/v2/open";
+    const M: Record<OpenNote, { params: string[]; text: string; button: string; url: string; btn?: string }> = {
+      followup: { params: [company, title], text: `Ghosted Open: *${company}* has one follow-up to your answer for *${title}*. It is private. Once you open it you have 15 minutes to reply, so pick your moment.`, button: "Open my answers", url: `${base}/me` },
+      invite: { params: [company, title], text: `Ghosted Open: *${company}* would like to talk to you about *${title}*. You choose what they receive. If you decline, they never learn who you were.`, button: "Accept or decline", url: `${base}/me` },
+      closed: { params: [company, title], text: `Ghosted Open: *${company}* has closed the role *${title}*. See how it ended and how far your answer went.`, button: "See how it ended", url: `${base}/q/${d.id ?? ""}`, btn: String(d.id ?? "") },
+      answer: { params: [title, String(d.count ?? 1)], text: `Ghosted Open: a new answer has arrived for *${title}*. Answers so far: ${d.count ?? 1}. No names are attached to them.`, button: "Read the answers", url: `${base}/desk` },
+      reply: { params: [n, title], text: `Ghosted Open: Candidate ${n} has replied to your follow-up for *${title}*. Their reply is on your desk.`, button: "Read the reply", url: `${base}/desk` },
+      accepted: { params: [n, title], text: `Ghosted Open: Candidate ${n} has agreed to talk about *${title}*. Pay ₹499 on your desk to be connected.`, button: "Open my desk", url: `${base}/desk` },
+      declined: { params: [n, title], text: `Ghosted Open: Candidate ${n} has declined a conversation about *${title}*. Their identity stays private, and nothing is charged.`, button: "Open my desk", url: `${base}/desk` },
+    };
+    const m = M[kind];
+    const ok = await graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name: `ghosted_open_${kind}`, language: { code: "en" }, components: [
+      { type: "body", parameters: m.params.map((t) => ({ type: "text", text: t || "-" })) },
+      ...(m.btn ? [{ type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: m.btn }] }] : []),
+    ] } });
+    if (!ok) await sendCard(to, { body: m.text, button: m.button, url: m.url });
+  } catch (e: any) { console.error("[whatsapp] open", kind, e?.message ?? e); }
 }
 /** Receipt on WhatsApp right after payment (approved template ghosted_receipt). The list price is shown struck while the launch offer runs. */
 export async function notifyReceipt(userId: string, p: { id: string; receipt_no: string; amount_paise: number; product: string; shots: number; days: number; list_paise?: number }) {
