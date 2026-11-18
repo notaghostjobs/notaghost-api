@@ -105,8 +105,17 @@ let mine: { at: number; rows: Sighting[] } | null = null; let refreshing = false
 export const tidyTitle = (t: string) => String(t ?? "").replace(/\s*[•·|]\s*[^•·|]*$/u, (m) => /apply now|bangalore|bengaluru|mumbai|delhi|hyderabad|pune|chennai|gurugram|gurgaon|noida|kolkata|remote|india/i.test(m) ? "" : m).replace(/[\s/,-]*apply now\s*$/i, "").replace(/\s+/g, " ").trim();
 /** What may be shown to the public as open in Bengaluru: an https link on the employer's own system, a title that does
  *  not name another city, and (when we know it) a confirmation within the last week. */
-const shown = (rows: Sighting[]): Sighting[] => { const out: Sighting[] = []; const now = Date.now();
-  for (const r of rows) { if (!r.title || !/^https:\/\/[^\s]+$/i.test(r.url ?? "")) continue; if (cityGate(r.title)) continue; if (r.last_seen && now - Date.parse(r.last_seen) > 7 * 86400e3) continue; const title = tidyTitle(r.title); if (title.length < 3) continue; out.push(title === r.title ? r : { ...r, title }); }
+/** Some employers' whole hiring site is on file under one of their brands (all of Accenture under "Accenture Song"; the
+ *  Aditya Birla group's site under one group company; Marriott's under two of its hotel brands, so each role twice).
+ *  Shown under the name a person would look for, and each posting once. The Reader's own records are not changed here. */
+const SHOWN_AS: Record<string, string> = { "accenture song": "Accenture", "aditya birla sun life insurance": "Aditya Birla Group", "fairfield by marriott": "Marriott International" };
+/** a place as a person would read it; a careers page sometimes hands us the next card's text where the city should be */
+const tidyPlace = (l: string | null) => { const x = String(l ?? "").replace(/\s+/g, " ").trim(); return !x || x.length > 70 || /[•]|apply now|manager|engineer/i.test(x) ? "Bengaluru" : x; };
+const shown = (rows: Sighting[]): Sighting[] => { const out: Sighting[] = []; const now = Date.now(); const seen = new Set<string>();
+  for (const r of rows) { if (!r.title || !/^https:\/\/[^\s]+$/i.test(r.url ?? "")) continue; if (cityGate(r.title)) continue; if (r.last_seen && now - Date.parse(r.last_seen) > 7 * 86400e3) continue; const title = tidyTitle(r.title); if (title.length < 3) continue;
+    if (seen.has(r.url)) continue; seen.add(r.url);
+    const as = SHOWN_AS[(r.employer_key ?? "").toLowerCase()] ?? SHOWN_AS[(r.company_name ?? "").toLowerCase().trim()];
+    out.push({ ...r, title, location: tidyPlace(r.location), ...(as ? { company_name: as, employer_key: as.toLowerCase() } : {}) }); }
   return out; };
 export async function jobPool(): Promise<Sighting[]> {
   if (!mine) { mine = { at: Date.now(), rows: shown(await livePool()) }; return mine.rows; }
