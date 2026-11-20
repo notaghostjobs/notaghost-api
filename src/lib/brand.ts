@@ -8,7 +8,7 @@ import { isIP } from "node:net";
 import { db } from "./db.js";
 import { UA, robotsAllows } from "../reader/http.js";
 
-export type Brand = { domain: string; name: string; source: "confirmed" | "known" | "site" | "domain"; logo: string | null; at: string; confirmed?: boolean };
+export type Brand = { domain: string; name: string; source: "confirmed" | "known" | "site" | "domain"; logo: string | null; at: string; confirmed?: boolean; trail?: string[] };
 type Img = { mime: "image/png" | "image/jpeg"; buf: Buffer; w: number; h: number };
 
 const now = () => new Date().toISOString();
@@ -137,20 +137,27 @@ const store = {
 const hostOf = (s: string) => String(s ?? "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split(/[/?#:]/)[0] ?? "";
 const baseOf = (d: string) => { const p = d.split("."); const two = /^(co|com|org|net|ac|gov|edu)$/.test(p[p.length - 2] ?? "") && (p[p.length - 1] ?? "").length === 2; return p.slice(two ? -3 : -2).join("."); };
 
-/** an employer we already follow, by its own website's domain */
-export async function knownByDomain(domain: string): Promise<string | null> {
-  const { data } = await db.from("employers").select("name,website").ilike("website", `%${domain}%`).limit(8);
-  const hit = (data ?? []).filter((r: any) => baseOf(hostOf(r.website)) === domain && String(r.name ?? "").trim().length >= 2).sort((a: any, b: any) => String(a.name).length - String(b.name).length)[0];
-  return hit ? String(hit.name).trim() : null;
+/** An employer we already follow, by its own website. Our list files many brands and careers hosts under one company
+ *  (aws.amazon.com, "Flipkart Minutes" at flipkart.com), so only a row at the domain itself counts, and the one whose name
+ *  is the domain's own word comes first. `sure` says it is that one. */
+export async function knownByDomain(domain: string): Promise<{ name: string; sure: boolean } | null> {
+  const { data } = await db.from("employers").select("name,website").ilike("website", `%${domain}%`).limit(20);
+  const rows = (data ?? []).filter((r: any) => { const h = hostOf(r.website); return (h === domain) && String(r.name ?? "").trim().length >= 2; }).map((r: any) => String(r.name).trim());
+  const lab = normName(label(domain));
+  const own = rows.find((n) => normName(n) === lab); if (own) return { name: own, sure: true };
+  const short = rows.sort((x, y) => x.length - y.length)[0];
+  return short ? { name: short, sure: false } : null;
 }
 /** an employer we already follow, or one already on Open, that carries this name on a different domain */
 export async function nameTakenElsewhere(name: string, domain: string): Promise<string | null> {
   const n = normName(name); if (n.length < 3) return null;
   const first = name.trim().split(/\s+/)[0]!.replace(/[%_,()]/g, "").slice(0, 30); if (first.length < 2) return null;
   const { data } = await db.from("employers").select("name,website").ilike("name", `%${first}%`).limit(60);
-  for (const r of data ?? []) { const d = baseOf(hostOf((r as any).website)); if (normName((r as any).name) === n && d && d !== domain) return d; }
+  // the same word under another ending (amazon.in, amazon.com) is the same company, not someone else
+  const mine = label(domain);
+  for (const r of data ?? []) { const d = baseOf(hostOf((r as any).website)); if (normName((r as any).name) === n && d && d !== domain && label(d) !== mine) return d; }
   const { data: bs } = await db.from("reader_control").select("value").like("key", "open:brand:%").limit(500);
-  for (const r of bs ?? []) { const b = r.value as Brand; if (b?.domain && b.domain !== domain && normName(b.name) === n && (b.confirmed || b.source !== "domain")) return b.domain; }
+  for (const r of bs ?? []) { const b = r.value as Brand; if (b?.domain && b.domain !== domain && label(b.domain) !== mine && normName(b.name) === n && (b.confirmed || b.source !== "domain")) return b.domain; }
   return null;
 }
 
@@ -162,20 +169,29 @@ export async function brandOf(domain: string, opts: { fresh?: boolean } = {}): P
   if (had && !opts.fresh && (had.confirmed || age < (had.logo ? 30 : 1) * 86400e3)) return had;
   const going = busy.get(domain); if (going) return going;
   const p = (async (): Promise<Brand> => {
-    const until = Date.now() + BUDGET_MS;
+    const until = Date.now() + BUDGET_MS; const trail: string[] = [];
     let site = "", icons: string[] = [];
     for (const start of [`https://${domain}/`, `https://www.${domain}/`]) {
       const page = await get(start, "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5", HTML_MAX, until);
-      if (!page) continue;
-      const r = readPage(page.buf.toString("utf8"), domain, page.url); site = r.name; icons = r.icons; break;
+      if (!page) { trail.push(`${start} not read`); continue; }
+      const r = readPage(page.buf.toString("utf8"), domain, page.url); site = r.name; icons = r.icons; trail.push(`${page.url} read, name “${site}”, ${icons.length} icons`); break;
     }
-    if (!icons.length) icons = [`https://${domain}/apple-touch-icon.png`, `https://www.${domain}/apple-touch-icon.png`];
+    if (!icons.length) icons = [`https://${domain}/apple-touch-icon.png`, `https://www.${domain}/apple-touch-icon.png`, `https://${domain}/favicon.ico`, `https://www.${domain}/favicon.ico`];
     let mark: Img | null = null;
-    for (const u of icons) { if (Date.now() > until - 500) break; const f = await get(u, "image/png,image/jpeg,image/*;q=0.8", MAX_BYTES * 2, until); if (!f) continue; mark = goodMark(f.buf); if (mark) break; }
+    for (const u of icons) {
+      if (Date.now() > until - 500) { trail.push("out of time"); break; }
+      const f = await get(u, "image/png,image/jpeg,image/*;q=0.8", MAX_BYTES * 2, until);
+      if (!f) { trail.push(`${u.slice(0, 90)} not read`); continue; }
+      mark = goodMark(f.buf); const im = mark ?? sizeOf(f.buf);
+      trail.push(`${u.slice(0, 90)} ${im ? `${im.w}x${im.h}` : `not a PNG or JPEG (${f.type.slice(0, 24)}, ${f.buf.length}b)`}${mark ? " taken" : ""}`);
+      if (mark) break;
+    }
     const known = await knownByDomain(domain).catch(() => null);
+    // the name: our own list when it is plainly this company, then what the site calls itself, then our list, then the domain's word
+    const name = known?.sure ? known.name : site || known?.name || cap(label(domain));
     const b: Brand = had?.confirmed
-      ? { ...had, at: now() }
-      : { domain, name: known ?? (site || cap(label(domain))), source: known ? "known" : site ? "site" : "domain", logo: null, at: now() };
+      ? { ...had, at: now(), trail }
+      : { domain, name, source: known?.sure || (!site && known) ? "known" : site ? "site" : "domain", logo: null, at: now(), trail };
     if (mark) { b.logo = Date.now().toString(36); await store.set(LOGO(domain), { mime: mark.mime, b64: mark.buf.toString("base64"), at: now(), by: "site", w: mark.w, h: mark.h }); }
     else if (had?.logo) b.logo = had.logo;   // a mark we already hold stays; one bad day on their site does not take it away
     await store.set(KEY(domain), b);
