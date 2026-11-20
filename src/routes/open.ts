@@ -155,7 +155,9 @@ open.post("/employer", async (c) => {
   if (company.length < 2) return c.json({ error: "Tell us your company’s name." }, 400);
   // the name differs only when we did read what the company calls itself and this is not it
   const typed = br.source !== "domain" && !sameName(company, br.name);
-  const taken = br.source === "confirmed" && !typed ? null : await nameTakenElsewhere(company, domain).catch(() => null);
+  // a name is checked against other employers only when it is not this domain's own: neither what its site says nor its own word
+  const own = (br.source !== "domain" && !typed) || sameName(company, domain.split(".")[0] ?? "");
+  const taken = own ? null : await nameTakenElsewhere(company, domain).catch(() => null);
   const had = await store.get<Employer>(`open:emp:${u.id}`);
   const shape = { company, site: sd || domain, domain, site_name: br.name || undefined, typed: typed || !!taken || undefined, hold: taken ? `“${company}” is the name of an employer at ${taken}` : undefined, logo: br.logo ?? (had?.domain === domain ? had.logo : undefined) };
   if (br.logo && had?.logo !== br.logo) void stampLogo(domain, br.logo).catch(() => {});

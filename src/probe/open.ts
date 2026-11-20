@@ -41,7 +41,7 @@ export async function openProbe(app: App, candidatePhone: string): Promise<OpenP
     // what real companies' own sites give us today (a note for us, never a failure: their sites are theirs)
     try {
       const seen: string[] = [];
-      for (const d of BRAND_SAMPLES) { const b = await Promise.race([brandOf(d), new Promise<null>((r) => setTimeout(() => r(null), 12000))]); seen.push(b ? `${d} → ${b.name} (${b.source}), mark ${b.logo ? "yes" : "none"}` : `${d} → no reply in time`); }
+      for (const d of BRAND_SAMPLES) { const b = await Promise.race([brandOf(d, { fresh: true }), new Promise<null>((r) => setTimeout(() => r(null), 12000))]); seen.push(b ? `${d} → ${b.name} (${b.source}), mark ${b.logo ? "yes" : "none"} [${(b.trail ?? []).join(" | ").slice(0, 330)}]` : `${d} → no reply in time`); }
       steps.push(`brands: ${seen.join("; ")}`);
     } catch (e) { steps.push(`brands: could not be read (${(e as Error).message.slice(0, 80)})`); }
     const ask = { title: "Senior Product Manager, Payments", pay: "₹45–60 LPA", exp_min: 5, exp_max: 10, location: "Bengaluru", question: "Failed payouts to small merchants doubled last month. What would you look at first, and what would you leave alone?" };
