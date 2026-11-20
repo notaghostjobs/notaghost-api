@@ -49,7 +49,8 @@ type Employer = { user: string; company: string; email: string; site: string; do
   code?: { hash: string; until: string; tries: number; sent_at: string } };
 type Question = { id: string; owner: string; company: string; domain: string; title: string; pay: string; exp_min: number; exp_max: number; location: string; question: string;
   status: "live" | "closed" | "held"; created: string; closes: string; outcome?: "hired" | "not_hired"; note?: string; closed_at?: string; views: number;
-  path?: string; told_at?: string; logo?: string; typed?: boolean; hold?: string };
+  path?: string; told_at?: string; logo?: string; typed?: boolean; hold?: string; hold_kind?: "name" | "question";
+  level?: string; fn?: string; speciality?: string; pay_min?: number; pay_max?: number; jd?: string };
 /** how close the writer's own work is to the role: the same craft, a neighbouring one, or a different one */
 type Fit = "same" | "near" | "different";
 type Answer = { id: string; q: string; user: string; n: number; label: string; text: string; at: string; how: { ms: number; pasted: boolean };
@@ -75,7 +76,7 @@ const isLive = (q: Question) => q.status === "live" && Date.parse(q.closes) > Da
 const FN = (s: string) => s.replace(/\b\w/g, (m) => m.toUpperCase());
 /** what the employer sees in place of a name: the function and the years, from the Record */
 const labelFor = (t: { functions: string[]; years: number; level: string }) => `${FN((t.functions?.[0] ?? "Experienced").trim())} · ${Math.max(0, Math.round(t.years))} ${Math.round(t.years) === 1 ? "year" : "years"}`;
-const pubQ = (q: Question, n: number) => ({ id: q.id, company: q.company, title: q.title, pay: q.pay, exp_min: q.exp_min, exp_max: q.exp_max, location: q.location, question: q.question, status: q.status === "held" ? "held" : isLive(q) ? "live" : "closed", created: q.created, closes: q.closes, outcome: q.outcome ?? null, closed_at: q.closed_at ?? null, answers: n, path: q.path ?? null, logo: q.typed ? null : logoUrl(q.domain, q.logo), verified_at: q.typed ? q.domain : null });
+const pubQ = (q: Question, n: number) => ({ id: q.id, company: q.company, title: q.title, pay: q.pay, exp_min: q.exp_min, exp_max: q.exp_max, location: q.location, question: q.question, status: q.status === "held" ? "held" : isLive(q) ? "live" : "closed", created: q.created, closes: q.closes, outcome: q.outcome ?? null, closed_at: q.closed_at ?? null, answers: n, path: q.path ?? null, logo: q.typed ? null : logoUrl(q.domain, q.logo), verified_at: q.typed ? q.domain : null, held_for: q.status === "held" ? (q.hold_kind ?? "name") : null });
 /** the employer's own mark, served by us; the stamp changes when they change it, so a browser never shows a stale one */
 const logoUrl = (domain: string, stamp?: string) => stamp ? `/open/public/logo/${domain}?v=${stamp}` : null;
 const FIT_WORDS: Record<Fit, string> = { same: "Same function", near: "Near function", different: "Different function" };
@@ -199,7 +200,68 @@ open.post("/employer/resend", async (c) => {
   if (!mailReady() || !(await mailCode(e))) return c.json({ error: `We couldn’t send a code to ${e.email}.` }, 502);
   return c.json({ employer: pubE(e), sent_to: e.email });
 });
-const ask = z.object({ title: z.string().trim().min(3).max(90), pay: z.string().trim().min(2).max(40), exp_min: z.number().int().min(0).max(40), exp_max: z.number().int().min(0).max(45), location: z.string().trim().min(2).max(60), question: z.string().trim().min(40).max(400) });
+// The role is stated in parts, so no two employers say it differently: a level and a function from our lists (a short
+// speciality if they wish), pay as two numbers in lakh a year, the years of experience, and one question. A job description
+// may be pasted; it is for our reading only and is never shown. (Title and pay as free text are still taken, for the page
+// that was live before 20 Nov and for the automated walk.)
+export const LEVELS = ["Associate", "Senior Associate", "Team Lead", "Assistant Manager", "Manager", "Senior Manager", "Associate Director", "Director", "Senior Director", "Vice President", "Head"];
+export const FUNCTIONS = ["Category Management", "Marketing", "Performance Marketing", "Brand", "Sales", "Business Development", "Key Accounts", "Product Management", "Program Management", "Engineering", "Data and Analytics", "Design", "Operations", "Supply Chain", "Procurement", "Finance", "Strategy", "Customer Success", "Customer Support", "Human Resources", "Talent Acquisition", "Legal", "Content", "Growth", "Founder’s Office"];
+const PAY_MIN = 1, PAY_MAX = 500;
+const ask = z.object({ title: z.string().trim().min(3).max(90).optional(), pay: z.string().trim().min(2).max(40).optional(),
+  level: z.string().trim().min(2).max(40).optional(), function: z.string().trim().min(2).max(50).optional(), speciality: z.string().trim().max(40).optional(),
+  pay_min: z.number().min(0).max(100000).optional(), pay_max: z.number().min(0).max(100000).optional(), jd: z.string().trim().max(12000).optional(),
+  exp_min: z.number().int().min(0).max(40), exp_max: z.number().int().min(0).max(45), location: z.string().trim().min(2).max(60), question: z.string().trim().min(40).max(400) });
+const lakh = (n: number) => String(Math.round(n * 10) / 10).replace(/\.0$/, "");
+/** the role as candidates read it, put together from its parts */
+function roleOf(b: z.infer<typeof ask>): { title: string; pay: string; parts: Partial<Question> } | { error: string } {
+  if (b.level && b.function) {
+    if (b.pay_min === undefined || b.pay_max === undefined) return { error: "Enter the pay range, in lakh a year." };
+    if (b.pay_min < PAY_MIN || b.pay_max > PAY_MAX) return { error: `Pay is in ₹ lakh a year, between ${PAY_MIN} and ${PAY_MAX}. For ₹40 lakh a year, enter 40.` };
+    if (b.pay_max < b.pay_min) return { error: "The pay range runs the wrong way." };
+    const sp = (b.speciality ?? "").trim();
+    return { title: `${b.level}, ${b.function}${sp ? ` · ${sp}` : ""}`.slice(0, 90), pay: `₹${lakh(b.pay_min)}–${lakh(b.pay_max)} LPA`, parts: { level: b.level, fn: b.function, ...(sp ? { speciality: sp } : {}), pay_min: b.pay_min, pay_max: b.pay_max } };
+  }
+  if (b.title && b.pay) return { title: b.title, pay: b.pay, parts: {} };
+  return { error: "Choose the level and the function of the role." };
+}
+// ---------------- the question, said clearly ----------------
+// Not everyone says what they mean at the first try. Before a question is published we offer two or three clearer ways to
+// ask the same thing; the employer picks one or keeps their own. Nothing here refuses a question. The one exception is
+// content that should not be on a hiring page at all (abuse, a demand for someone's caste, religion, age or marital
+// status, a request for free work product): that is held for a person, exactly as a doubtful company name is.
+type QCheck = { options: string[]; note: string; hold: boolean; why: string };
+const qHash = (role: string, text: string) => createHash("sha256").update(`${role}\n${text.replace(/\s+/g, " ").trim().toLowerCase()}`).digest("hex").slice(0, 24);
+async function checkQuestion(u: User, role: string, exp: string, text: string, jd?: string): Promise<QCheck> {
+  const key = `open:qcheck:${qHash(role, text)}`;
+  const had = await store.get<QCheck>(key); if (had) return had;
+  const r = await withMeter({ tag: "open:question", user: u.id }, () => json<{ options: string[]; note: string; hold: boolean; why: string }>(
+    `A hiring manager on a hiring platform is posting ONE question that candidates answer in a few paragraphs, without their names, instead of sending a résumé. A good question is the first real problem this hire will be handed: it describes the situation as it is today (what is happening, a number or a constraint if they have one) and asks what the person would do or has done. You help the manager say what they mean; you never refuse them.
+Return JSON:
+"options": two or three clearer ways to ask THEIR question. Keep their subject, their facts and their numbers exactly; never invent a number, a company fact or a cause. Where their question lacks the situation, write it so the gap is theirs to fill, with square brackets naming what to add, e.g. "[current figure]". Each option is one question, 25 to 60 words, plain words, answerable from experience in a few paragraphs, and written as the manager speaking ("our", "we"). If their question is already clear and specific, return at most one light tidy-up.
+"note": one short plain sentence, at most 22 words, on the single most useful thing to make clearer (for example that the question is about a different function than the role, or that it gives no starting point). Empty string if nothing needs saying.
+"hold": true ONLY if the text is abusive or obscene, asks for a protected or private personal detail (caste, religion, age, marital status, pregnancy, health, family plans), asks candidates to do substantial unpaid work for the company (a full plan, a campaign, code to be used), or is plainly not a hiring question at all. A vague, broad, odd or poorly written question is NOT held.
+"why": if hold is true, the reason in under 14 words; otherwise empty.`,
+    `ROLE: ${role}
+EXPERIENCE ASKED: ${exp}${jd ? `
+FROM THE JOB DESCRIPTION: ${jd.replace(/\s+/g, " ").slice(0, 900)}` : ""}
+
+THE MANAGER'S QUESTION: ${text}`, 700, HOUSEKEEPING));
+  const out: QCheck = { options: (r.options ?? []).map((x) => String(x).replace(/\s+/g, " ").trim()).filter((x) => x.length >= 40 && x.length <= 400 && x.toLowerCase() !== text.trim().toLowerCase()).slice(0, 3), note: String(r.note ?? "").replace(/\s+/g, " ").trim().slice(0, 180), hold: r.hold === true, why: String(r.why ?? "").replace(/\s+/g, " ").trim().slice(0, 120) };
+  await store.set(key, out);
+  // each wording we offered is the same question said better: it does not need reading again when it is published
+  for (const o of out.options) await store.set(`open:qcheck:${qHash(role, o)}`, { options: [], note: "", hold: out.hold, why: out.why });
+  return out;
+}
+open.post("/questions/clearer", async (c) => {
+  const u = c.get("user");
+  const e = await store.get<Employer>(`open:emp:${u.id}`);
+  if (!e?.verified) return c.json({ error: "Verify your company first." }, 403);
+  const b = ask.safeParse(await c.req.json().catch(() => ({})));
+  if (!b.success) return c.json({ error: "Write your question first: at least a full sentence." }, 400);
+  const role = roleOf(b.data); if ("error" in role) return c.json({ error: role.error }, 400);
+  try { const r = await checkQuestion(u, role.title, `${b.data.exp_min}–${b.data.exp_max} years`, b.data.question, b.data.jd); return c.json({ options: r.options, note: r.note }); }
+  catch (x) { console.error("[open] clearer", (x as Error).message); return c.json({ options: [], note: "" }); }   // never in the way
+});
 // ---------------- the company's mark ----------------
 // The mark comes from the company's own website, read once when its first hiring manager is looked up (lib/brand.ts): the
 // right one or none. Nobody uploads anything. It is kept beside Open's other records, one per company domain; questions
@@ -216,7 +278,7 @@ async function stampLogo(domain: string, stamp: string | null) {
 // Tester accounts (ours) see the questions waiting on a name, and the list of names that parted from their domain's own.
 open.get("/review", async (c) => {
   if (!isTester(c.get("user"))) return c.json({ error: "Not available on this account." }, 403);
-  const held = (await store.list<Question>("open:q:")).filter((q) => q.status === "held").map((q) => ({ id: q.id, company: q.company, domain: q.domain, title: q.title, question: q.question, why: q.hold ?? null, created: q.created }));
+  const held = (await store.list<Question>("open:q:")).filter((q) => q.status === "held").map((q) => ({ id: q.id, company: q.company, domain: q.domain, title: q.title, question: q.question, why: q.hold ?? null, about: q.hold_kind ?? "name", created: q.created }));
   return c.json({ held, names: (await store.get<Mismatch[]>("open:brand:log")) ?? [] });
 });
 open.post("/review/:id", async (c) => {
@@ -225,13 +287,16 @@ open.post("/review/:id", async (c) => {
   const q = await store.get<Question>(qKey(c.req.param("id")));
   if (!b.success || !q || q.status !== "held") return c.json({ error: "Nothing is waiting under that id." }, 404);
   const e = await store.get<Employer>(`open:emp:${q.owner}`);
-  if (b.data.ok) {
+  const about = q.hold_kind ?? "name";
+  if (b.data.ok && about === "question") {
+    q.status = "live"; q.closes = new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(); delete q.hold; delete q.hold_kind;
+  } else if (b.data.ok) {
     // the name is right for this domain: it stays that way for the next hiring manager from there, with the domain's mark
     const br = await confirmBrand(q.domain, q.company);
-    q.status = "live"; q.closes = new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(); delete q.hold; delete q.typed; if (br.logo) q.logo = br.logo;
+    q.status = "live"; q.closes = new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(); delete q.hold; delete q.hold_kind; delete q.typed; if (br.logo) q.logo = br.logo;
     if (e && e.domain === q.domain) { delete e.hold; delete e.typed; e.site_name = q.company; if (br.logo) e.logo = br.logo; await store.set(`open:emp:${e.user}`, e); }
   } else {
-    q.status = "closed"; q.closed_at = now(); q.note = "This question was not published: the company name could not be confirmed for the verified email’s domain.";
+    q.status = "closed"; q.closed_at = now(); q.note = about === "question" ? "This question was not published." : "This question was not published: the company name could not be confirmed for the verified email’s domain.";
   }
   await store.set(qKey(q.id), q);
   return c.json({ ok: true, status: q.status });
@@ -254,11 +319,17 @@ open.post("/questions", async (c) => {
   const e = await store.get<Employer>(`open:emp:${u.id}`);
   if (!e?.verified) return c.json({ error: "Verify your company first." }, 403);
   const b = ask.safeParse(await c.req.json().catch(() => ({})));
-  if (!b.success) return c.json({ error: "Role, pay band, experience, location, and one question of at least a sentence." }, 400);
+  if (!b.success) return c.json({ error: "The role’s level and function, pay, experience, location, and one question of at least a sentence." }, 400);
   if (b.data.exp_max < b.data.exp_min) return c.json({ error: "The experience range runs the wrong way." }, 400);
+  const role = roleOf(b.data); if ("error" in role) return c.json({ error: role.error }, 400);
   const mine = (await store.list<Question>("open:q:")).filter((q) => q.owner === u.id && isLive(q));
   if (mine.length >= 5) return c.json({ error: "Five live questions at a time. Close one first." }, 429);
-  const q: Question = { id: randomBytes(5).toString("hex"), owner: u.id, company: e.company, domain: e.domain, ...b.data, status: e.hold ? "held" : "live", created: now(), closes: new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(), views: 0, ...(e.logo ? { logo: e.logo } : {}), ...(e.typed ? { typed: true } : {}), ...(e.hold ? { hold: e.hold } : {}) };
+  // read once (or already read when we offered clearer wordings); a reading that fails holds nothing
+  const chk = await checkQuestion(u, role.title, `${b.data.exp_min}–${b.data.exp_max} years`, b.data.question, b.data.jd).catch(() => null);
+  const hold = e.hold ? { hold: e.hold, hold_kind: "name" as const } : chk?.hold ? { hold: chk.why || "the question needs a person to look at it", hold_kind: "question" as const } : null;
+  const q: Question = { id: randomBytes(5).toString("hex"), owner: u.id, company: e.company, domain: e.domain, title: role.title, pay: role.pay, exp_min: b.data.exp_min, exp_max: b.data.exp_max, location: b.data.location, question: b.data.question,
+    status: hold ? "held" : "live", created: now(), closes: new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(), views: 0, ...role.parts, ...(b.data.jd ? { jd: b.data.jd } : {}),
+    ...(e.logo ? { logo: e.logo } : {}), ...(e.typed ? { typed: true } : {}), ...(hold ?? {}) };
   q.path = await claimPath(q);
   await store.set(qKey(q.id), q);
   return c.json({ question: pubQ(q, 0) });
@@ -387,14 +458,14 @@ async function relevance(u: User, q: Question) {
   const key = `open:rel:${q.id}:${u.id}:${rec.resume.id}`;
   let v = await store.get<{ same: string; why: string }>(key);
   if (!v) try {
-    // Open has no job description: the role's title and the question itself say what the work is
+    // the role's title and the question say what the work is; a job description, when the employer pasted one, says it too
     const r = await withMeter({ tag: "open:relevance", user: u.id }, () => json<{ same: string; why: string }>(
       `An employer has posted a role on a hiring platform with ONE question for candidates instead of a job description. You are a fair recruiter answering one thing: is this role the same FUNCTION (craft) as the candidate's own work?
 "yes" — the day-to-day work this role and its question describe is what the candidate has done for most of their recent years (product management for a product manager; category management for a category manager; backend engineering for a backend engineer). The industry may differ; the craft must not.
 "adjacent" — a neighbouring craft a recruiter would still consider, but not the same one (program management for a product manager; key accounts for a category manager).
 "no" — a different craft, however similar the title words (a "Category Manager" in procurement is not e-commerce category management; a Technical Program Manager is not a product manager; a chef is not a kitchen-equipment product manager).
 Judge from the role title and what the question asks a person to actually do. Years and seniority are checked elsewhere; do not judge them. "why": at most 15 words, plain, naming the craft of the role. Return {"same": "yes"|"adjacent"|"no", "why": "…"}.`,
-      `CANDIDATE: ${t.one_line}\nFunctions: ${(t.functions ?? []).join("; ")}. Recent titles: ${(t.titles ?? []).slice(0, 5).join("; ")}.\n\nROLE: ${q.title} — ${q.company}, ${q.location}\nTHE QUESTION CANDIDATES ANSWER: ${q.question}`, 300));
+      `CANDIDATE: ${t.one_line}\nFunctions: ${(t.functions ?? []).join("; ")}. Recent titles: ${(t.titles ?? []).slice(0, 5).join("; ")}.\n\nROLE: ${q.title} — ${q.company}, ${q.location}\nTHE QUESTION CANDIDATES ANSWER: ${q.question}${q.jd ? `\nFROM THE JOB DESCRIPTION: ${q.jd.replace(/\s+/g, " ").slice(0, 700)}` : ""}`, 300));
     v = { same: ["yes", "adjacent"].includes(String(r.same)) ? String(r.same) : "no", why: String(r.why ?? "").replace(/\s+/g, " ").slice(0, 140) };
     await store.set(key, v);
   } catch (e: any) {
