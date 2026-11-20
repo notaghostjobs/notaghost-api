@@ -4,6 +4,8 @@
 // how close its writer's work is to the role, and the desk reads closest first. The employer shortlists, may ask one
 // private follow-up, and requests a conversation; the candidate accepts or declines; only then does the employer pay and
 // receive the details the candidate chose to share. Closing the role tells everyone who answered how it ended.
+// 20 Nov: the employer gives only a work email. The company's name and mark are read from that domain's own website
+// (lib/brand.ts); nothing is uploaded. A corrected name shows where the person was verified and carries no mark.
 //
 // Storage: this build keeps Open's records in reader_control (key → json) so it runs without a schema change. The proper
 // tables are in supabase/migrations/0011_open.sql; moving to them is a storage swap behind `store` below.
@@ -21,6 +23,7 @@ import { env } from "../lib/env.js";
 import { sendMail, mailReady } from "../lib/mail.js";
 import { notifyOpen } from "./whatsapp.js";
 import { srcOf, srcOfUser, logEvent } from "../lib/src.js";
+import { brandOf, confirmBrand, nameTakenElsewhere, sameName, type Brand } from "../lib/brand.js";
 
 export const open = new Hono<{ Variables: { user: User } }>();
 export const openPublic = new Hono();
@@ -40,11 +43,13 @@ const domainOf = (s: string) => { let d = String(s ?? "").trim().toLowerCase().r
 /** the registrable part, near enough: "careers.acme.co.in" and "acme.co.in" are the same employer */
 const baseDomain = (d: string) => { const p = d.split("."); const two = /^(co|com|org|net|ac|gov|edu)$/.test(p[p.length - 2] ?? "") && (p[p.length - 1] ?? "").length === 2; return p.slice(two ? -3 : -2).join("."); };
 
-type Employer = { user: string; company: string; email: string; site: string; domain: string; verified: boolean; how: string; at: string; logo?: string;
+/** `typed`: the hiring manager gave a name the domain's own website does not use, so the question says where they were verified
+ *  and carries no mark. `hold`: that name belongs to an employer on another domain, so their questions wait for a person. */
+type Employer = { user: string; company: string; email: string; site: string; domain: string; verified: boolean; how: string; at: string; logo?: string; site_name?: string; typed?: boolean; hold?: string;
   code?: { hash: string; until: string; tries: number; sent_at: string } };
 type Question = { id: string; owner: string; company: string; domain: string; title: string; pay: string; exp_min: number; exp_max: number; location: string; question: string;
-  status: "live" | "closed"; created: string; closes: string; outcome?: "hired" | "not_hired"; note?: string; closed_at?: string; views: number;
-  path?: string; told_at?: string; logo?: string };
+  status: "live" | "closed" | "held"; created: string; closes: string; outcome?: "hired" | "not_hired"; note?: string; closed_at?: string; views: number;
+  path?: string; told_at?: string; logo?: string; typed?: boolean; hold?: string };
 /** how close the writer's own work is to the role: the same craft, a neighbouring one, or a different one */
 type Fit = "same" | "near" | "different";
 type Answer = { id: string; q: string; user: string; n: number; label: string; text: string; at: string; how: { ms: number; pasted: boolean };
@@ -70,7 +75,7 @@ const isLive = (q: Question) => q.status === "live" && Date.parse(q.closes) > Da
 const FN = (s: string) => s.replace(/\b\w/g, (m) => m.toUpperCase());
 /** what the employer sees in place of a name: the function and the years, from the Record */
 const labelFor = (t: { functions: string[]; years: number; level: string }) => `${FN((t.functions?.[0] ?? "Experienced").trim())} · ${Math.max(0, Math.round(t.years))} ${Math.round(t.years) === 1 ? "year" : "years"}`;
-const pubQ = (q: Question, n: number) => ({ id: q.id, company: q.company, title: q.title, pay: q.pay, exp_min: q.exp_min, exp_max: q.exp_max, location: q.location, question: q.question, status: isLive(q) ? "live" : "closed", created: q.created, closes: q.closes, outcome: q.outcome ?? null, closed_at: q.closed_at ?? null, answers: n, path: q.path ?? null, logo: logoUrl(q.domain, q.logo) });
+const pubQ = (q: Question, n: number) => ({ id: q.id, company: q.company, title: q.title, pay: q.pay, exp_min: q.exp_min, exp_max: q.exp_max, location: q.location, question: q.question, status: q.status === "held" ? "held" : isLive(q) ? "live" : "closed", created: q.created, closes: q.closes, outcome: q.outcome ?? null, closed_at: q.closed_at ?? null, answers: n, path: q.path ?? null, logo: q.typed ? null : logoUrl(q.domain, q.logo), verified_at: q.typed ? q.domain : null });
 /** the employer's own mark, served by us; the stamp changes when they change it, so a browser never shows a stale one */
 const logoUrl = (domain: string, stamp?: string) => stamp ? `/open/public/logo/${domain}?v=${stamp}` : null;
 const FIT_WORDS: Record<Fit, string> = { same: "Same function", near: "Near function", different: "Different function" };
@@ -93,7 +98,7 @@ openPublic.get("/at/:co/:role", async (c) => {
 });
 openPublic.get("/q/:id", async (c) => {
   const q = await store.get<Question>(qKey(c.req.param("id")));
-  if (!q) return c.json({ error: "This question isn’t on Ghosted Open." }, 404);
+  if (!q || q.status === "held") return c.json({ error: "This question isn’t on Ghosted Open." }, 404);
   const as = (await answersOf(q.id)).sort((a, b) => a.at.localeCompare(b.at));
   if (isLive(q)) { q.views = (q.views ?? 0) + 1; void store.set(qKey(q.id), q); }
   // a closed role: the outcome, and which answers went forward — what everyone who answered is told
@@ -102,7 +107,7 @@ openPublic.get("/q/:id", async (c) => {
 });
 
 // ---------------- the employer ----------------
-const pubE = (e: Employer | null) => e ? { company: e.company, email: e.email, domain: e.domain, verified: e.verified, pending: !e.verified && !!e.code, logo: logoUrl(e.domain, e.logo) } : null;
+const pubE = (e: Employer | null) => e ? { company: e.company, email: e.email, domain: e.domain, verified: e.verified, pending: !e.verified && !!e.code, logo: e.typed ? null : logoUrl(e.domain, e.logo), verified_at: e.typed ? e.domain : null, held: !!e.hold } : null;
 const CODE_MIN = 15, CODE_TRIES = 5, RESEND_GAP_MS = 60e3;
 const codeHash = (user: string, code: string) => createHash("sha256").update(`${user}:${code}`).digest("hex");
 async function mailCode(e: Employer): Promise<boolean> {
@@ -113,27 +118,64 @@ async function mailCode(e: Employer): Promise<boolean> {
     lines: [`Your code to verify ${e.company} on Ghosted Open:`, `It is good for ${CODE_MIN} minutes. Enter it on the page you have open.`, "If you did not ask for this, ignore this email. Nobody can post as your company without the code."] });
 }
 open.get("/employer", async (c) => c.json({ employer: pubE(await store.get<Employer>(`open:emp:${c.get("user").id}`)) }));
-/** Verification: a work email on the company's own domain (not a free mailbox), matching the company site — and then a
- *  code sent to that address, which only its owner can read. The automated walk's account and testers skip the code. */
+/** Who a work email belongs to, before any code is sent: the company at that domain, by its own website's name and mark.
+ *  The hiring manager sees it and says yes, or corrects the name. */
+const lookups = new Map<string, number[]>();
+open.post("/employer/lookup", async (c) => {
+  const u = c.get("user");
+  const b = z.object({ email: z.string().trim().email().max(120) }).safeParse(await c.req.json().catch(() => ({})));
+  if (!b.success) return c.json({ error: "Enter your work email." }, 400);
+  const ed = domainOf(b.data.email);
+  if (!ed) return c.json({ error: "That email doesn’t look right." }, 400);
+  if (FREE_MAIL.test(ed)) return c.json({ error: "Use your work email, on the company’s own domain. A personal mailbox can’t verify a company." }, 400);
+  const hits = (lookups.get(u.id) ?? []).filter((t) => Date.now() - t < 10 * 60e3);
+  if (hits.length >= 12) return c.json({ error: "That’s a lot of tries. Give it a few minutes." }, 429);
+  hits.push(Date.now()); lookups.set(u.id, hits); if (lookups.size > 2000) lookups.clear();
+  const domain = baseDomain(ed);
+  const br = await brandOf(domain).catch((): Brand => ({ domain, name: "", source: "domain", logo: null, at: now() }));
+  return c.json({ domain, name: br.name, logo: logoUrl(domain, br.logo ?? undefined), read: br.source !== "domain" });
+});
+/** Verification: a work email on the company's own domain (not a free mailbox) — and then a code sent to that address,
+ *  which only its owner can read. The domain is the one thing proved. The company's name and mark come from that domain's
+ *  own website; a hiring manager may correct the name, and then the question says where they were verified and shows no
+ *  mark. A name that belongs to an employer on another domain is held for a person to look at.
+ *  The automated walk's account and testers skip the code. */
 open.post("/employer", async (c) => {
   const u = c.get("user");
-  const b = z.object({ company: z.string().trim().min(2).max(80), email: z.string().trim().email().max(120), site: z.string().trim().min(4).max(160), real: z.boolean().optional() }).safeParse(await c.req.json().catch(() => ({})));
-  if (!b.success) return c.json({ error: "Company name, your work email and the company website." }, 400);
-  const ed = domainOf(b.data.email), sd = domainOf(b.data.site);
-  if (!ed || !sd) return c.json({ error: "That email or website doesn’t look right." }, 400);
+  const b = z.object({ company: z.string().trim().max(80).optional(), email: z.string().trim().email().max(120), site: z.string().trim().max(160).optional(), real: z.boolean().optional() }).safeParse(await c.req.json().catch(() => ({})));
+  if (!b.success) return c.json({ error: "Enter your work email." }, 400);
+  const ed = domainOf(b.data.email), sd = b.data.site ? domainOf(b.data.site) : "";
+  if (!ed || (b.data.site && !sd)) return c.json({ error: "That email or website doesn’t look right." }, 400);
   if (FREE_MAIL.test(ed)) return c.json({ error: "Use your work email, on the company’s own domain. A personal mailbox can’t verify a company." }, 400);
-  if (baseDomain(ed) !== baseDomain(sd)) return c.json({ error: `Your email is on ${baseDomain(ed)} and the website is ${baseDomain(sd)}. They need to be the same company domain.` }, 400);
+  if (sd && baseDomain(ed) !== baseDomain(sd)) return c.json({ error: `Your email is on ${baseDomain(ed)} and the website is ${baseDomain(sd)}. They need to be the same company domain.` }, 400);
+  const domain = baseDomain(ed), email = b.data.email.toLowerCase();
+  const br = await brandOf(domain).catch((): Brand => ({ domain, name: "", source: "domain", logo: null, at: now() }));
+  const typedName = (b.data.company ?? "").trim();
+  const company = typedName.length >= 2 ? typedName : br.name;
+  if (company.length < 2) return c.json({ error: "Tell us your company’s name." }, 400);
+  // the name differs only when we did read what the company calls itself and this is not it
+  const typed = br.source !== "domain" && !sameName(company, br.name);
+  const taken = br.source === "confirmed" && !typed ? null : await nameTakenElsewhere(company, domain).catch(() => null);
   const had = await store.get<Employer>(`open:emp:${u.id}`);
-  const email = b.data.email.toLowerCase();
-  if (had?.verified && had.email === email && had.domain === baseDomain(sd)) { had.company = b.data.company; await store.set(`open:emp:${u.id}`, had); return c.json({ employer: pubE(had) }); }
-  const e: Employer = { user: u.id, company: b.data.company, email, site: sd, domain: baseDomain(sd), verified: false, how: "", at: now(), ...(had?.logo && had.domain === baseDomain(sd) ? { logo: had.logo } : {}) };
+  const shape = { company, site: sd || domain, domain, site_name: br.name || undefined, typed: typed || !!taken || undefined, hold: taken ? `“${company}” is the name of an employer at ${taken}` : undefined, logo: br.logo ?? (had?.domain === domain ? had.logo : undefined) };
+  if (br.logo && had?.logo !== br.logo) void stampLogo(domain, br.logo).catch(() => {});
+  if (typed || taken) void noteMismatch({ domain, typed: company, site_name: br.name, held: !!taken, taken_by: taken, user: u.id });
+  if (had?.verified && had.email === email && had.domain === domain) { const e2: Employer = { ...had, ...shape }; await store.set(`open:emp:${u.id}`, e2); return c.json({ employer: pubE(e2) }); }
+  const e: Employer = { user: u.id, email, verified: false, how: "", at: now(), ...shape };
   // a tester is verified at once, unless they ask to walk the real path (the code by email) with real: true
   if (isTester(u) && !b.data.real) { e.verified = true; e.how = "tester account, no code sent"; await store.set(`open:emp:${u.id}`, e); return c.json({ employer: pubE(e), tester: true }); }
   if (!mailReady()) return c.json({ error: "We can’t send verification emails just yet. Please try again shortly." }, 503);
-  if (had?.code && had.email === email && Date.now() - Date.parse(had.code.sent_at) < RESEND_GAP_MS) return c.json({ employer: pubE(had), sent_to: email });
+  if (had?.code && had.email === email && Date.now() - Date.parse(had.code.sent_at) < RESEND_GAP_MS) { const e2: Employer = { ...had, ...shape }; await store.set(`open:emp:${u.id}`, e2); return c.json({ employer: pubE(e2), sent_to: email }); }
   if (!(await mailCode(e))) return c.json({ error: `We couldn’t send a code to ${email}. Check the address and try again.` }, 502);
   return c.json({ employer: pubE(e), sent_to: email });
 });
+/** every time a typed name and a domain's own name part ways, one line is kept for a person to read */
+type Mismatch = { at: string; domain: string; typed: string; site_name: string; held: boolean; taken_by: string | null; user: string };
+async function noteMismatch(m: Omit<Mismatch, "at">) {
+  const list = (await store.get<Mismatch[]>("open:brand:log")) ?? [];
+  if (list.some((x) => x.domain === m.domain && x.typed === m.typed)) return;
+  await store.set("open:brand:log", [{ at: now(), ...m }, ...list].slice(0, 100));
+}
 open.post("/employer/confirm", async (c) => {
   const u = c.get("user"); const e = await store.get<Employer>(`open:emp:${u.id}`);
   const b = z.object({ code: z.string().trim().regex(/^\d{6}$/) }).safeParse(await c.req.json().catch(() => ({})));
@@ -156,14 +198,11 @@ open.post("/employer/resend", async (c) => {
   return c.json({ employer: pubE(e), sent_to: e.email });
 });
 const ask = z.object({ title: z.string().trim().min(3).max(90), pay: z.string().trim().min(2).max(40), exp_min: z.number().int().min(0).max(40), exp_max: z.number().int().min(0).max(45), location: z.string().trim().min(2).max(60), question: z.string().trim().min(40).max(400) });
-// ---------------- the employer's own mark ----------------
-// A verified employer may add their company's logo. It is theirs to give: we never fetch one. The page shrinks it to a small
-// square before sending; here it is checked to be a real PNG or JPEG and kept beside Open's other records, one per company
-// domain. Questions carry a stamp of it, so every page of that company shows the same mark.
-const LOGO_MAX = 300 * 1024;
+// ---------------- the company's mark ----------------
+// The mark comes from the company's own website, read once when its first hiring manager is looked up (lib/brand.ts): the
+// right one or none. Nobody uploads anything. It is kept beside Open's other records, one per company domain; questions
+// carry a stamp of it, so every page of that company shows the same mark.
 const logoCache = new Map<string, { at: number; mime: string; buf: Buffer } | null>();
-const isPng = (b: Buffer) => b.length > 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-const isJpg = (b: Buffer) => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
 async function stampLogo(domain: string, stamp: string | null) {
   const { data } = await db.from("reader_control").select("key,value").like("key", "open:q:%").limit(500);
   for (const r of data ?? []) { const q = r.value as Question; if (q.domain !== domain) continue; if (stamp) q.logo = stamp; else delete q.logo; await store.set(qKey(q.id), q); }
@@ -171,27 +210,29 @@ async function stampLogo(domain: string, stamp: string | null) {
   for (const r of es ?? []) { const e = r.value as Employer; if (e.domain !== domain) continue; if (stamp) e.logo = stamp; else delete e.logo; await store.set(`open:emp:${e.user}`, e); }
   logoCache.delete(domain);
 }
-open.post("/employer/logo", async (c) => {
-  const u = c.get("user"); const e = await store.get<Employer>(`open:emp:${u.id}`);
-  if (!e?.verified) return c.json({ error: "Verify your company first." }, 403);
-  const b = z.object({ data: z.string().max(LOGO_MAX * 2) }).safeParse(await c.req.json().catch(() => ({})));
-  const m = b.success ? /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(b.data.data) : null;
-  if (!m) return c.json({ error: "A logo is a PNG or JPG image." }, 400);
-  const buf = Buffer.from(m[2]!, "base64");
-  if (buf.length > LOGO_MAX) return c.json({ error: "That image is too large. Try a smaller one." }, 413);
-  const mime = isPng(buf) ? "image/png" : isJpg(buf) ? "image/jpeg" : "";
-  if (!mime) return c.json({ error: "A logo is a PNG or JPG image." }, 400);
-  const stamp = Date.now().toString(36);
-  await store.set(`open:logo:${e.domain}`, { mime, b64: buf.toString("base64"), at: now(), by: u.id });
-  await stampLogo(e.domain, stamp);
-  return c.json({ employer: pubE(await store.get<Employer>(`open:emp:${u.id}`)) });
+// ---------------- held names: a person looks ----------------
+// Tester accounts (ours) see the questions waiting on a name, and the list of names that parted from their domain's own.
+open.get("/review", async (c) => {
+  if (!isTester(c.get("user"))) return c.json({ error: "Not available on this account." }, 403);
+  const held = (await store.list<Question>("open:q:")).filter((q) => q.status === "held").map((q) => ({ id: q.id, company: q.company, domain: q.domain, title: q.title, question: q.question, why: q.hold ?? null, created: q.created }));
+  return c.json({ held, names: (await store.get<Mismatch[]>("open:brand:log")) ?? [] });
 });
-open.delete("/employer/logo", async (c) => {
-  const u = c.get("user"); const e = await store.get<Employer>(`open:emp:${u.id}`);
-  if (!e?.verified) return c.json({ error: "Verify your company first." }, 403);
-  await db.from("reader_control").delete().eq("key", `open:logo:${e.domain}`);
-  await stampLogo(e.domain, null);
-  return c.json({ employer: pubE(await store.get<Employer>(`open:emp:${u.id}`)) });
+open.post("/review/:id", async (c) => {
+  if (!isTester(c.get("user"))) return c.json({ error: "Not available on this account." }, 403);
+  const b = z.object({ ok: z.boolean() }).safeParse(await c.req.json().catch(() => ({})));
+  const q = await store.get<Question>(qKey(c.req.param("id")));
+  if (!b.success || !q || q.status !== "held") return c.json({ error: "Nothing is waiting under that id." }, 404);
+  const e = await store.get<Employer>(`open:emp:${q.owner}`);
+  if (b.data.ok) {
+    // the name is right for this domain: it stays that way for the next hiring manager from there, with the domain's mark
+    const br = await confirmBrand(q.domain, q.company);
+    q.status = "live"; q.closes = new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(); delete q.hold; delete q.typed; if (br.logo) q.logo = br.logo;
+    if (e && e.domain === q.domain) { delete e.hold; delete e.typed; e.site_name = q.company; if (br.logo) e.logo = br.logo; await store.set(`open:emp:${e.user}`, e); }
+  } else {
+    q.status = "closed"; q.closed_at = now(); q.note = "This question was not published: the company name could not be confirmed for the verified email’s domain.";
+  }
+  await store.set(qKey(q.id), q);
+  return c.json({ ok: true, status: q.status });
 });
 openPublic.get("/logo/:domain", async (c) => {
   const domain = domainOf(c.req.param("domain")); if (!domain) return c.text("", 404);
@@ -215,7 +256,7 @@ open.post("/questions", async (c) => {
   if (b.data.exp_max < b.data.exp_min) return c.json({ error: "The experience range runs the wrong way." }, 400);
   const mine = (await store.list<Question>("open:q:")).filter((q) => q.owner === u.id && isLive(q));
   if (mine.length >= 5) return c.json({ error: "Five live questions at a time. Close one first." }, 429);
-  const q: Question = { id: randomBytes(5).toString("hex"), owner: u.id, company: e.company, domain: e.domain, ...b.data, status: "live", created: now(), closes: new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(), views: 0, ...(e.logo ? { logo: e.logo } : {}) };
+  const q: Question = { id: randomBytes(5).toString("hex"), owner: u.id, company: e.company, domain: e.domain, ...b.data, status: e.hold ? "held" : "live", created: now(), closes: new Date(Date.now() + DAYS_OPEN * 86400e3).toISOString(), views: 0, ...(e.logo ? { logo: e.logo } : {}), ...(e.typed ? { typed: true } : {}), ...(e.hold ? { hold: e.hold } : {}) };
   q.path = await claimPath(q);
   await store.set(qKey(q.id), q);
   return c.json({ question: pubQ(q, 0) });
