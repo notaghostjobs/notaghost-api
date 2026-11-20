@@ -5,6 +5,9 @@
 // a different function, takes the same candidate's answer and labels it so. Everything it writes is removed at the end.
 import { db } from "../lib/db.js";
 import { createSession } from "../lib/auth.js";
+import { brandOf } from "../lib/brand.js";
+
+const BRAND_SAMPLES = ["amazon.com", "ninjacart.com", "flipkart.com", "razorpay.com", "infosys.com", "swiggy.com", "zoho.com", "63ideas.in"];
 
 export const OPEN_FLOW_KEY = "open:flow:last";
 export const OPEN_EMPLOYER_PHONE = "+910000000001";
@@ -26,11 +29,21 @@ export async function openProbe(app: App, candidatePhone: string): Promise<OpenP
   try {
     const emp = await account(OPEN_EMPLOYER_PHONE), cand = await account(candidatePhone);
     const E = as(emp.token), C = as(cand.token), P = as(null);
-    // the employer: a personal mailbox is refused, a mismatched domain is refused, a work email on the site's domain passes
-    await E("/open/employer", { company: "Ghosted Test Co", email: "someone@gmail.com", site: "ghosted-test.example" }, 400);
+    // the employer gives a work email and nothing else: a personal mailbox is refused, the company is read from the domain
+    await E("/open/employer/lookup", { email: "someone@gmail.com" }, 400);
+    await E("/open/employer", { email: "someone@gmail.com" }, 400);
     await E("/open/employer", { company: "Ghosted Test Co", email: "hiring@other.example", site: "ghosted-test.example" }, 400);
-    const ve = await E("/open/employer", { company: "Ghosted Test Co", email: "hiring@ghosted-test.example", site: "https://www.ghosted-test.example/careers" });
-    if (!ve.employer?.verified) problems.push("employer not verified"); steps.push("employer verified");
+    const lk = await E("/open/employer/lookup", { email: "hiring@ghosted-test.example" });
+    if (lk.domain !== "ghosted-test.example" || !lk.name) problems.push(`the email's company was not worked out: ${JSON.stringify(lk).slice(0, 120)}`);
+    const ve = await E("/open/employer", { email: "hiring@ghosted-test.example" });
+    if (!ve.employer?.verified || !ve.employer.company || ve.employer.held || ve.employer.verified_at) problems.push(`employer not verified cleanly from the email alone: ${JSON.stringify(ve.employer).slice(0, 160)}`);
+    steps.push("employer verified from a work email alone");
+    // what real companies' own sites give us today (a note for us, never a failure: their sites are theirs)
+    try {
+      const seen: string[] = [];
+      for (const d of BRAND_SAMPLES) { const b = await Promise.race([brandOf(d), new Promise<null>((r) => setTimeout(() => r(null), 12000))]); seen.push(b ? `${d} → ${b.name} (${b.source}), mark ${b.logo ? "yes" : "none"}` : `${d} → no reply in time`); }
+      steps.push(`brands: ${seen.join("; ")}`);
+    } catch (e) { steps.push(`brands: could not be read (${(e as Error).message.slice(0, 80)})`); }
     const ask = { title: "Senior Product Manager, Payments", pay: "₹45–60 LPA", exp_min: 5, exp_max: 10, location: "Bengaluru", question: "Failed payouts to small merchants doubled last month. What would you look at first, and what would you leave alone?" };
     const q = (await E("/open/questions", ask)).question; made.push(q.id); steps.push("question published");
     // its own readable address, and that address finds it
@@ -96,6 +109,6 @@ export async function openProbe(app: App, candidatePhone: string): Promise<OpenP
     steps.push("closed, outcome visible to all");
   } catch (e) { problems.push(`walk stopped: ${(e as Error).message.slice(0, 200)}`); }
   finally { for (const id of made) { await db.from("reader_control").delete().eq("key", `open:q:${id}`); await db.from("reader_control").delete().like("key", `open:a:${id}:%`); await db.from("reader_control").delete().like("key", `open:rel:${id}:%`); }
-    await db.from("reader_control").delete().like("key", "open:path:ghosted-test/%"); }
+    await db.from("reader_control").delete().like("key", "open:path:ghosted-test/%"); await db.from("reader_control").delete().eq("key", "open:brand:ghosted-test.example"); }
   return out();
 }
