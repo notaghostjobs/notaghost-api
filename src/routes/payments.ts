@@ -108,6 +108,9 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
     expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id,
   }).select("*").single();
   if (receipt) void notifyReceipt(pay.user_id, { id: pay.id, receipt_no: String(receipt), amount_paise: pay.amount_paise, product: pay.product, shots: price.shots, days: price.days, list_paise: (price as any).list_paise });
+  // Radar is paid for: the full pass over their roles starts now, whether or not their page is still open (the free
+  // check before payment made no paid judgement). Loaded here, not at the top, because radar.ts is a long way round.
+  if (pay.product === "radar") void import("./radar.js").then((m) => m.fullPassIfFree(pay.user_id)).catch((e) => console.error("[radar] full pass after payment", e?.message ?? e));
   return plan;
 }
 

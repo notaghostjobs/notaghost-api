@@ -4,6 +4,8 @@ import { isOwnDocument } from "../engine/own.js";
 import { masterChanged } from "./radar.js";
 import { currentParsedResume } from "../lib/resumeReady.js";
 import { requireUser } from "../lib/auth.js";
+import { isTester } from "../lib/testers.js";
+import { withMeter } from "../engine/meter.js";
 import { processResume } from "../engine/worker.js";
 
 export const resumes = new Hono<{ Variables: { user: User } }>();
@@ -17,6 +19,21 @@ resumes.post("/", async (c) => {
   if (!(file instanceof File)) return c.json({ error: "Attach a PDF, .docx or .doc." }, 400);
   if (!/\.(pdf|docx|doc)$/i.test(file.name)) return c.json({ error: "Upload a PDF, .docx or .doc résumé." }, 400);
   if (file.size > 5 * 1024 * 1024) return c.json({ error: "Keep it under 5 MB." }, 400);
+
+  // Reading a résumé is the one thing that costs money before anyone has paid. A ceiling on how many are read in a day
+  // for people with no plan (FREE_RESUMES_PER_DAY, 300 unless set) means a campaign can never run up a bill overnight:
+  // past it, the person is asked to come back in the morning. Testers and anyone holding a plan are not counted.
+  const freeKey = `free:resumes:${new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10)}`;
+  let freeCount: number | null = null;
+  if (!isTester(user)) {
+    const { data: plans } = await db.from("plans").select("id").eq("user_id", user.id).gt("expires_at", new Date().toISOString()).limit(1);
+    if (!plans?.length) {
+      const { data: row } = await db.from("reader_control").select("value").eq("key", freeKey).maybeSingle();
+      freeCount = Number((row?.value as any)?.n ?? 0);
+      const limit = Math.max(0, Number(process.env.FREE_RESUMES_PER_DAY ?? 300) || 0);
+      if (freeCount >= limit) return c.json({ error: "We’ve reached today’s limit for free checks. Come back tomorrow morning and yours will be the first.", code: "free_limit" }, 429);
+    }
+  }
 
   const id = crypto.randomUUID();
   const ext = file.name.toLowerCase().endsWith(".docx") ? "docx" : file.name.toLowerCase().endsWith(".doc") ? "doc" : "pdf";
@@ -35,8 +52,9 @@ resumes.post("/", async (c) => {
     .single();
   if (error) return c.json({ error: error.message }, 500);
   await db.from("resumes").update({ is_current: false }).eq("user_id", user.id).neq("id", id);   // concurrent uploads: the one that landed last is the one on file
+  if (freeCount !== null) await db.from("reader_control").upsert({ key: freeKey, value: { n: freeCount + 1 }, updated_at: new Date().toISOString() }, { onConflict: "key" });
   try {
-    const parsed = await processResume(id);
+    const parsed = await withMeter({ tag: "resume:read", user: user.id }, () => processResume(id));   // named on the meter, so what a free check costs can be read off it
     // One login, one person. When LOCK_RESUME_NAME is on, a plan is tied to the name on the résumé it was bought with.
     if (process.env.LOCK_RESUME_NAME === "1") {
       const { data: plans } = await db.from("plans").select("id, resume_name").eq("user_id", user.id).gt("expires_at", new Date().toISOString()).limit(5);
