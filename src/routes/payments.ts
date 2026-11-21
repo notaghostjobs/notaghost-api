@@ -18,8 +18,9 @@ const rzp = () => new Razorpay({ key_id: env.razorpayKeyId, key_secret: env.razo
 // 1. Client asks for an order -> we create it at Razorpay and record it.
 payments.post("/order", requireUser, async (c) => {
   const u = c.get("user");
-  const body = z.object({ product: z.enum(["sharpen", "build", "radar"]) }).safeParse(await c.req.json());
+  const body = z.object({ product: z.enum(["sharpen", "build", "radar", "first"]) }).safeParse(await c.req.json());
   if (!body.success) return c.json({ error: "Pick Sharpen or Build." }, 400);
+  if (body.data.product === "first" && !(await firstOpen(u.id))) return c.json({ error: "The ₹49 price is for your first résumé. Your next ones are on Sharpen: ₹499 for 10.", code: "first_used" }, 409);
   const price = PRICES[body.data.product];
   // the person's channel rides on the order: first (who brought them) and last (this visit) — on our row and in Razorpay's notes
   const here = srcOf(c); await stampUser(u.id, here);
@@ -73,6 +74,20 @@ payments.post("/webhook", async (c) => {
   return c.text("ok");
 });
 
+/** The ₹49 first résumé is open to an account that has never paid for a résumé product and has never held a plan. */
+async function firstOpen(userId: string): Promise<boolean> {
+  const [{ data: paid }, { data: plans }] = await Promise.all([
+    db.from("payments").select("id").eq("user_id", userId).eq("status", "paid").in("product", ["sharpen", "build", "radar", "first"]).limit(1),
+    db.from("plans").select("id").eq("user_id", userId).limit(1),
+  ]);
+  return !paid?.length && !plans?.length;
+}
+/** What this account is offered for a Sharpen: the first résumé at ₹49, or the pack. */
+payments.get("/offer", requireUser, async (c) => {
+  const first = await firstOpen(c.get("user").id);
+  return c.json({ first, first_paise: PRICES.first.paise, pack_paise: PRICES.sharpen.paise, pack_shots: PRICES.sharpen.shots });
+});
+
 /** Idempotent: marks the payment paid and creates the plan once. */
 async function settle(orderId: string, paymentId: string, signature: string | null, userId: string | null) {
   const { data: pay } = await db.from("payments").select("*").eq("razorpay_order_id", orderId).maybeSingle();
@@ -94,7 +109,7 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
     const { data } = await db.from("plans").select("*").eq("payment_id", pay.id).maybeSingle();
     return data;
   }
-  const price = PRICES[pay.product as "sharpen" | "build" | "radar"];
+  const price = PRICES[pay.product as keyof typeof PRICES];
   const { data: receipt } = await db.rpc("next_receipt_no");
   await db.from("payments").update({
     status: "paid", razorpay_payment_id: paymentId, razorpay_signature: signature,
@@ -104,7 +119,7 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
 
   const cur = await currentResume<{ parsed: any }>(pay.user_id, "parsed");
   const { data: plan } = await db.from("plans").insert({
-    user_id: pay.user_id, product: pay.product, shots_total: price.shots, resume_name: (cur?.parsed as any)?.name ?? null,
+    user_id: pay.user_id, product: pay.product === "first" ? "sharpen" : pay.product, shots_total: price.shots,   // the first résumé is one Sharpen resume_name: (cur?.parsed as any)?.name ?? null,
     expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id,
   }).select("*").single();
   if (receipt) void notifyReceipt(pay.user_id, { id: pay.id, receipt_no: String(receipt), amount_paise: pay.amount_paise, product: pay.product, shots: price.shots, days: price.days, list_paise: (price as any).list_paise });
@@ -137,7 +152,7 @@ payments.get("/receipt/:tok", async (c) => {
   if (!p || p.status !== "paid") return c.json({ error: "Receipt not found." }, 404);
   const { data: u } = await db.from("users").select("phone").eq("id", p.user_id).maybeSingle();
   const ph = String(u?.phone ?? "").replace(/\D/g, "");
-  const price = PRICES[p.product as "sharpen" | "build" | "radar"] as any;
+  const price = PRICES[p.product as keyof typeof PRICES] as any;
   return c.json({ receipt_no: p.receipt_no, paid_at: p.paid_at, amount_paise: p.amount_paise, list_paise: price?.list_paise ?? null,
     item: receiptItem(p.product, price?.shots ?? 10, price?.days ?? 10), payment_ref: p.razorpay_payment_id, phone: ph ? `+${ph.slice(0, 2)} ••••• ${ph.slice(-4)}` : null });
 });
