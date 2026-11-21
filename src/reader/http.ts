@@ -50,7 +50,11 @@ async function rulesFor(origin: string): Promise<Rules | null> {
   const hit = robots.get(origin); if (hit && Date.now() - hit.at < ROBOTS_TTL) return hit.rules;
   let rules: Rules | null = null;
   try {
-    const r = await fetch(`${origin}/robots.txt`, { headers: { "user-agent": UA, accept: "text/plain,*/*;q=0.5" }, signal: AbortSignal.timeout(10000), redirect: "follow" });
+    const fam = familyOf(new URL(origin).host);
+    // a platform with one shared limit: its robots.txt goes through the same door, and a "wait" is not an answer to keep
+    const r = fam ? await viaFamily(fam, `${origin}/robots.txt`, { headers: { "user-agent": UA, accept: "text/plain,*/*;q=0.5" } }, 10000)
+      : await fetch(`${origin}/robots.txt`, { headers: { "user-agent": UA, accept: "text/plain,*/*;q=0.5" }, signal: AbortSignal.timeout(10000), redirect: "follow" });
+    if (fam && (r.status === 429 || r.status === 503)) return null;
     if (r.ok) { const ct = r.headers.get("content-type") ?? ""; const t = await r.text(); if (!/html/i.test(ct) && !/^\s*</.test(t)) rules = parseRobots(t); }
     // 4xx / 5xx / no file → nothing is disallowed (RFC 9309 §2.3.1.3–4)
   } catch { /* unreachable → treat as no rules */ }
@@ -66,19 +70,77 @@ export async function robotsAllows(url: string): Promise<boolean> {
   return ok;
 }
 
-/** Fetch with robots.txt, per-host spacing (default 400ms, or the site's Crawl-delay if longer) and up to `retries` backoffs on 429/503. Throws on final failure. */
+// ---- one door per platform. Some hiring platforms count requests across every employer they host, not per employer's
+// address (Workday: every tenant sits on *.myworkdayjobs.com, and since mid-November 193 of our 204 tenants answered 429).
+// For those, all hosts share one pace and one cool-off: requests go out one at a time with a wider gap; a 429 is never
+// retried on the spot; it closes the door for as long as the platform asks (Retry-After) or, when it does not say, for a
+// time that doubles with each refusal in a row. While the door is closed nothing is sent at all: callers get a 429 at
+// once ("cooling"), so a pass over 200 employers cannot keep knocking and keep the limit in place.
+interface Family { key: string; gapMs: number; coolMs: number; maxCoolMs: number }
+const FAMILIES: { test: RegExp; f: Family }[] = [
+  { test: /\.myworkdayjobs\.com$/i, f: { key: "workday", gapMs: Number(process.env.WORKDAY_GAP_MS ?? 1500) || 1500, coolMs: 5 * 60e3, maxCoolMs: 60 * 60e3 } },
+];
+const familyOf = (host: string): Family | null => FAMILIES.find((x) => x.test.test(host))?.f ?? null;
+const chain = new Map<string, Promise<void>>();           // one request at a time per family
+const cool = new Map<string, { until: number; streak: number }>();
+export interface Refusal { at: string; family: string; host: string; status: number; retry_after: string | null; cool_s: number; streak: number; server: string | null; body: string }
+const refusals: Refusal[] = [];
+export const familyStats: Record<string, { sent: number; ok: number; refused: number; skipped: number }> = {};
+const stat = (k: string) => (familyStats[k] ??= { sent: 0, ok: 0, refused: 0, skipped: 0 });
+/** The last refusals a platform gave us, and whether its door is closed right now. For the worker to put on record. */
+export function familyReport() {
+  return { stats: familyStats, cooling: Object.fromEntries([...cool.entries()].map(([k, v]) => [k, { until: new Date(v.until).toISOString(), closed: v.until > Date.now(), streak: v.streak }])), last: refusals.slice(-8) };
+}
+/** True when this URL's platform has asked us to wait and the wait is not over. */
+export function cooling(url: string): boolean { const f = familyOf(new URL(url).host); const c = f ? cool.get(f.key) : null; return !!c && c.until > Date.now(); }
+const cooledResponse = () => new Response("", { status: 429, headers: { "x-ghosted": "cooling" } });
+
+async function viaFamily(f: Family, url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const prev = chain.get(f.key) ?? Promise.resolve();
+  let release!: () => void; const mine = new Promise<void>((r) => (release = r));
+  chain.set(f.key, prev.then(() => mine));
+  await prev;
+  try {
+    const c = cool.get(f.key);
+    if (c && c.until > Date.now()) { stat(f.key).skipped++; return cooledResponse(); }
+    const wait = (lastHit.get(`family:${f.key}`) ?? 0) + f.gapMs - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastHit.set(`family:${f.key}`, Date.now()); stat(f.key).sent++;
+    const r = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs), redirect: "follow" });
+    lastHit.set(`family:${f.key}`, Date.now());
+    if (r.status === 429 || r.status === 503) {
+      const ra = r.headers.get("retry-after"); const secs = ra && /^\d+$/.test(ra.trim()) ? Number(ra) : ra ? Math.max(0, (Date.parse(ra) - Date.now()) / 1000) : NaN;
+      const streak = (c?.streak ?? 0) + 1;
+      const ms = Math.min(f.maxCoolMs, Number.isFinite(secs) && secs > 0 ? Math.max(secs * 1000, 30e3) : f.coolMs * 2 ** Math.min(streak - 1, 4));
+      cool.set(f.key, { until: Date.now() + ms, streak });
+      const body = await r.clone().text().then((t) => t.replace(/\s+/g, " ").slice(0, 240)).catch(() => "");
+      refusals.push({ at: new Date().toISOString(), family: f.key, host: new URL(url).host, status: r.status, retry_after: ra, cool_s: Math.round(ms / 1000), streak, server: r.headers.get("server"), body }); if (refusals.length > 40) refusals.shift();
+      stat(f.key).refused++;
+      return r;
+    }
+    if (r.ok && c) cool.set(f.key, { until: 0, streak: 0 });   // an answer: the refusals in a row are over
+    if (r.ok) stat(f.key).ok++;
+    return r;
+  } finally { release(); }
+}
+
+/** Fetch with robots.txt, per-host spacing (default 400ms, or the site's Crawl-delay if longer) and up to `retries` backoffs on 429/503. Throws on final failure.
+ *  Hosts that belong to a platform with one shared limit (see FAMILIES) go through that platform's single door instead. */
 export async function http(url: string, o: HttpOpts = {}): Promise<Response> {
   const u = new URL(url); const host = u.host;
+  const fam = familyOf(host);
+  if (fam && cooling(url)) { stat(fam.key).skipped++; return cooledResponse(); }   // before robots.txt too: nothing at all goes out while we wait
   const rules = await rulesFor(u.origin); robotsStats.checked++;
   if (rules && !allowed(rules, u.pathname + u.search)) { robotsStats.blocked++; throw new RobotsDisallowed(url); }
-  const gap = Math.max(o.gapMs ?? 400, rules?.delayMs ?? 0);
-  const wait = (lastHit.get(host) ?? 0) + gap - Date.now();
-  if (wait > 0) await sleep(wait);
-  lastHit.set(host, Date.now());
   const headers: Record<string, string> = { "user-agent": UA, accept: "application/json, text/html;q=0.9, */*;q=0.8", "accept-language": "en-IN,en;q=0.9", ...(o.headers ?? {}) };
   if (o.body !== undefined) headers["content-type"] = "application/json";
   if (o.form !== undefined) headers["content-type"] = "application/x-www-form-urlencoded";
   const payload = o.form !== undefined ? new URLSearchParams(o.form).toString() : o.body === undefined ? undefined : JSON.stringify(o.body);
+  if (fam) return viaFamily(fam, url, { method: o.method ?? "GET", headers, body: payload }, o.timeoutMs ?? 15000);
+  const gap = Math.max(o.gapMs ?? 400, rules?.delayMs ?? 0);
+  const wait = (lastHit.get(host) ?? 0) + gap - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastHit.set(host, Date.now());
   let last: Response | null = null;
   for (let attempt = 0; attempt <= (o.retries ?? 2); attempt++) {
     const r = await fetch(url, { method: o.method ?? "GET", headers, body: payload, signal: AbortSignal.timeout(o.timeoutMs ?? 15000), redirect: "follow" });
