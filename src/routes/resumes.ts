@@ -29,11 +29,35 @@ resumes.post("/", async (c) => {
 // would be, so the fit and the Sharpen that follow work from it like any other. Nothing here is written by a model.
 const formIn = z.object({
   name: z.string().trim().min(2).max(80), email: z.string().trim().email().max(120).optional().or(z.literal("")),
-  city: z.string().trim().max(60).optional(), college: z.string().trim().min(2).max(140), degree: z.string().trim().min(2).max(140),
+  city: z.string().trim().max(60).optional(), links: z.string().trim().max(200).optional(),
+  college: z.string().trim().min(2).max(140), degree: z.string().trim().min(2).max(140),
   year: z.string().trim().regex(/^20\d\d$/), score: z.string().trim().max(40).optional(),
   skills: z.string().trim().min(3).max(500),
   projects: z.array(z.object({ title: z.string().trim().min(2).max(120), what: z.string().trim().min(20).max(600) })).min(1).max(3),
   experience: z.string().trim().max(800).optional(), extras: z.string().trim().max(400).optional(),
+});
+/** For phones, which cannot save a file handed to the page: a one-hour link that downloads the résumé on file under its own name. */
+resumes.get("/current/file-link", async (c) => {
+  const cur = await currentResume<{ id: string; storage_path: string; filename: string }>(c.get("user").id, "id, storage_path, filename");
+  if (!cur?.storage_path) return c.json({ error: "No résumé on file yet." }, 404);
+  const name = (cur.filename ?? "resume.pdf").replace(/[^A-Za-z0-9._-]/g, "-");
+  const { data, error } = await db.storage.from("resumes").createSignedUrl(cur.storage_path, 3600, { download: name });
+  if (error || !data?.signedUrl) return c.json({ error: error?.message ?? "Couldn’t make the link." }, 500);
+  return c.json({ url: data.signedUrl, name });
+});
+/** What they typed last time, so a line can be changed and the résumé made again without typing it all twice. */
+resumes.get("/form", async (c) => {
+  const { data } = await db.from("reader_control").select("value").eq("key", `form:${c.get("user").id}`).maybeSingle();
+  return c.json({ form: (data?.value as any) ?? null });
+});
+/** The résumé on file, as the file itself: the free résumé is downloaded from here. */
+resumes.get("/current/file", async (c) => {
+  const cur = await currentResume<{ id: string; storage_path: string; filename: string }>(c.get("user").id, "id, storage_path, filename");
+  if (!cur?.storage_path) return c.json({ error: "No résumé on file yet." }, 404);
+  const f = await db.storage.from("resumes").download(cur.storage_path);
+  if (f.error) return c.json({ error: f.error.message }, 500);
+  const type = /\.pdf$/i.test(cur.filename ?? "") ? "application/pdf" : "application/octet-stream";
+  return new Response(f.data, { headers: { "content-type": type, "content-disposition": `attachment; filename="${(cur.filename ?? "resume.pdf").replace(/[^A-Za-z0-9._-]/g, "-")}"` } });
 });
 resumes.post("/form", async (c) => {
   const user = c.get("user");
@@ -43,11 +67,14 @@ resumes.post("/form", async (c) => {
   // a page with too little on it cannot be read back as text, and gives the Sharpen nothing to work from
   const said = [f.skills, f.experience ?? "", f.extras ?? "", ...f.projects.map((p) => `${p.title} ${p.what}`)].join(" ").length;
   if (said < 220) return c.json({ error: "Tell us a little more: a couple of lines on what you built in each project, and the tools you used.", code: "form_thin" }, 400);
-  const buf = await formPdf(f, user.phone);
-  return ingest(c, user, `${f.name.replace(/[^A-Za-z ]/g, "").trim().replace(/\s+/g, "-") || "resume"}-resume.pdf`, buf, "application/pdf");
+  const buf = await formPdf({ ...f, email: f.email || undefined }, user.phone);
+  await db.from("reader_control").upsert({ key: `form:${user.id}`, value: f, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  return ingest(c, user, `${f.name.replace(/[^A-Za-z ]/g, "").trim().replace(/\s+/g, "-") || "resume"}-resume.pdf`, buf, "application/pdf", { later: true });
 });
 
-async function ingest(c: Context<{ Variables: { user: User } }>, user: User, name: string, buf: Buffer, type: string) {
+/** Puts a résumé file on the account. `later` (the free résumé made from typed details): nothing is read by a model now;
+ *  it is read on sight the first time a role is scored against it, like any résumé whose reading was cut short. */
+async function ingest(c: Context<{ Variables: { user: User } }>, user: User, name: string, buf: Buffer, type: string, opts: { later?: boolean } = {}) {
   // Reading a résumé is the one thing that costs money before anyone has paid. A ceiling on how many are read in a day
   // for people with no plan (FREE_RESUMES_PER_DAY, 300 unless set) means a campaign can never run up a bill overnight:
   // past it, the person is asked to come back in the morning. Testers and anyone holding a plan are not counted.
@@ -80,6 +107,7 @@ async function ingest(c: Context<{ Variables: { user: User } }>, user: User, nam
   if (error) return c.json({ error: error.message }, 500);
   await db.from("resumes").update({ is_current: false }).eq("user_id", user.id).neq("id", id);   // concurrent uploads: the one that landed last is the one on file
   if (freeCount !== null) await db.from("reader_control").upsert({ key: freeKey, value: { n: freeCount + 1 }, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  if (opts.later) return c.json({ resume: { ...data, parsed: null }, radar_reset: false });
   try {
     const parsed = await withMeter({ tag: "resume:read", user: user.id }, () => processResume(id));   // named on the meter, so what a free check costs can be read off it
     // One login, one person. When LOCK_RESUME_NAME is on, a plan is tied to the name on the résumé it was bought with.
