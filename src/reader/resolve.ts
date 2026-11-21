@@ -112,6 +112,10 @@ async function fromSlugGuess(name: string): Promise<Resolution | null> {
 /** Workday by name: the tenant confirmed by the API, the site list from robots.txt, the site with the most Bengaluru roles.
  *  Then the feed is read for real, so what is recorded is what the reader will see every morning. */
 async function fromWorkdayGuess(name: string): Promise<Resolution | null> {
+  // Off unless WORKDAY_GUESS=1. Trying spellings of a company's name across Workday's data centres is two dozen requests
+  // for an address that mostly does not exist; the 4,913-employer pass of 9 Nov was followed by Workday refusing nearly
+  // every employer we check. A Workday address now comes only from a real link on the employer's own careers page.
+  if (process.env.WORKDAY_GUESS !== "1") return null;
   const d = await workdayDiscover(name).catch(() => null); if (!d) return null;
   const f = await tryRef(name, "workday", d.ref); if (!f) return null;
   return { ats: "workday", ats_ref: d.ref, careers_url: f.board_url, website: null, confidence: "guess", evidence: `workday tenant "${d.tenant}" on ${d.wd} (${d.sites} sites in robots.txt); ${d.ref.split("/")[2]} has ${d.blr} Bengaluru roles of ${d.total}`, feed: f };
