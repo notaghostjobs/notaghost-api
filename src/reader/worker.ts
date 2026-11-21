@@ -13,6 +13,7 @@ import { mode } from "./systems/types.js";
 import { isBlr } from "./blr.js";
 import { seedTier1, checkTier1, type Tier1Row } from "./tier1.js";
 import { probeUrl } from "./probe.js";
+import { healthCheck } from "./health.js";
 import { enrichDue } from "./enrich.js";
 import { fingerprint, stripFurniture } from "../engine/ghost/canon.js";
 
@@ -83,6 +84,7 @@ async function runEnrich(n: number) { const r = await enrichDue(n); log("enrich"
 async function runCommand(cmd: { step: string; n?: number; url?: string }) {
   if (cmd.step === "probe" && cmd.url) { await status("probe", { url: cmd.url }); const r = await probeUrl(cmd.url).catch((e) => ({ error: (e as Error).message })); await setControl("probe", r); return r; }
   const n = cmd.n ?? 0;
+  if (cmd.step === "health") { await status("health"); return healthCheck(); }
   if (cmd.step === "resolve") return runResolve(n || 20);
   if (cmd.step === "read") return runRead(n || 200);
   if (cmd.step === "harvest") return runHarvest(n || 50);
@@ -118,6 +120,8 @@ async function pollOps() {
 /** The daily pass, 06:00 IST: harvest the board (new employers + listings), resolve everything new, re-read every feed. */
 async function daily() {
   const t0 = Date.now();
+  // first thing: how yesterday's checks went, system by system; an email to the founder if one of them is failing
+  await healthCheck().then((r) => log("health", JSON.stringify(r)), (e) => log("health", (e as Error).message));
   const h = await runHarvest(1000);
   let resolved = { done: 0, found: 0, none: 0, errors: 0 };
   for (let i = 0; i < 400; i++) { const r = await runResolve(20); if (!r.done) break; resolved = { done: resolved.done + r.done, found: resolved.found + r.found, none: resolved.none + r.none, errors: resolved.errors + r.errors }; }
