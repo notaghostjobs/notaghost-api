@@ -83,7 +83,7 @@ const FAMILIES: { test: RegExp; f: Family }[] = [
 const familyOf = (host: string): Family | null => FAMILIES.find((x) => x.test.test(host))?.f ?? null;
 const chain = new Map<string, Promise<void>>();           // one request at a time per family
 const cool = new Map<string, { until: number; streak: number }>();
-export interface Refusal { at: string; family: string; host: string; status: number; retry_after: string | null; cool_s: number; streak: number; server: string | null; body: string }
+export interface Refusal { at: string; family: string; host: string; status: number; retry_after: string | null; cool_s: number; streak: number; server: string | null; cf_mitigated: string | null; body: string }
 const refusals: Refusal[] = [];
 export const familyStats: Record<string, { sent: number; ok: number; refused: number; skipped: number }> = {};
 const stat = (k: string) => (familyStats[k] ??= { sent: 0, ok: 0, refused: 0, skipped: 0 });
@@ -91,8 +91,15 @@ const stat = (k: string) => (familyStats[k] ??= { sent: 0, ok: 0, refused: 0, sk
 export function familyReport() {
   return { stats: familyStats, cooling: Object.fromEntries([...cool.entries()].map(([k, v]) => [k, { until: new Date(v.until).toISOString(), closed: v.until > Date.now(), streak: v.streak }])), last: refusals.slice(-8) };
 }
-/** True when this URL's platform has asked us to wait and the wait is not over. */
-export function cooling(url: string): boolean { const f = familyOf(new URL(url).host); const c = f ? cool.get(f.key) : null; return !!c && c.until > Date.now(); }
+// Two doors per platform, because the platform treats them differently (21 Nov: Workday answers plain page reads — a
+// careers page, robots.txt — while refusing every job-list request, which is a POST). A refusal at one door closes that
+// door only: the job-list wait no longer stops a sitemap or a page from being read, and a page that is answered no
+// longer cuts the job-list wait short.
+type Door = "api" | "get";
+const doorOf = (method?: string): Door => ((method ?? "GET").toUpperCase() === "GET" ? "get" : "api");
+const doorKey = (f: Family, d: Door) => `${f.key}:${d}`;
+/** True when this URL's platform has asked us to wait at that door (the job-list door unless told otherwise) and the wait is not over. */
+export function cooling(url: string, door: Door = "api"): boolean { const f = familyOf(new URL(url).host); const c = f ? cool.get(doorKey(f, door)) : null; return !!c && c.until > Date.now(); }
 const cooledResponse = () => new Response("", { status: 429, headers: { "x-ghosted": "cooling" } });
 
 async function viaFamily(f: Family, url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
@@ -101,7 +108,8 @@ async function viaFamily(f: Family, url: string, init: RequestInit, timeoutMs: n
   chain.set(f.key, prev.then(() => mine));
   await prev;
   try {
-    const c = cool.get(f.key);
+    const dk = doorKey(f, doorOf(init.method));
+    const c = cool.get(dk);
     if (c && c.until > Date.now()) { stat(f.key).skipped++; return cooledResponse(); }
     const wait = (lastHit.get(`family:${f.key}`) ?? 0) + f.gapMs - Date.now();
     if (wait > 0) await sleep(wait);
@@ -112,13 +120,13 @@ async function viaFamily(f: Family, url: string, init: RequestInit, timeoutMs: n
       const ra = r.headers.get("retry-after"); const secs = ra && /^\d+$/.test(ra.trim()) ? Number(ra) : ra ? Math.max(0, (Date.parse(ra) - Date.now()) / 1000) : NaN;
       const streak = (c?.streak ?? 0) + 1;
       const ms = Math.min(f.maxCoolMs, Number.isFinite(secs) && secs > 0 ? Math.max(secs * 1000, 30e3) : f.coolMs * 2 ** Math.min(streak - 1, 4));
-      cool.set(f.key, { until: Date.now() + ms, streak });
+      cool.set(dk, { until: Date.now() + ms, streak });
       const body = await r.clone().text().then((t) => t.replace(/\s+/g, " ").slice(0, 240)).catch(() => "");
-      refusals.push({ at: new Date().toISOString(), family: f.key, host: new URL(url).host, status: r.status, retry_after: ra, cool_s: Math.round(ms / 1000), streak, server: r.headers.get("server"), body }); if (refusals.length > 40) refusals.shift();
+      refusals.push({ at: new Date().toISOString(), family: dk, host: new URL(url).host, status: r.status, retry_after: ra, cool_s: Math.round(ms / 1000), streak, server: r.headers.get("server"), cf_mitigated: r.headers.get("cf-mitigated"), body }); if (refusals.length > 40) refusals.shift();
       stat(f.key).refused++;
       return r;
     }
-    if (r.ok && c) cool.set(f.key, { until: 0, streak: 0 });   // an answer: the refusals in a row are over
+    if (r.ok && c) cool.set(dk, { until: 0, streak: 0 });   // an answer at this door: its refusals in a row are over
     if (r.ok) stat(f.key).ok++;
     return r;
   } finally { release(); }
@@ -129,7 +137,7 @@ async function viaFamily(f: Family, url: string, init: RequestInit, timeoutMs: n
 export async function http(url: string, o: HttpOpts = {}): Promise<Response> {
   const u = new URL(url); const host = u.host;
   const fam = familyOf(host);
-  if (fam && cooling(url)) { stat(fam.key).skipped++; return cooledResponse(); }   // before robots.txt too: nothing at all goes out while we wait
+  if (fam && cooling(url, doorOf(o.method))) { stat(fam.key).skipped++; return cooledResponse(); }   // before robots.txt too: nothing goes out at a closed door
   const rules = await rulesFor(u.origin); robotsStats.checked++;
   if (rules && !allowed(rules, u.pathname + u.search)) { robotsStats.blocked++; throw new RobotsDisallowed(url); }
   const headers: Record<string, string> = { "user-agent": UA, accept: "application/json, text/html;q=0.9, */*;q=0.8", "accept-language": "en-IN,en;q=0.9", ...(o.headers ?? {}) };
