@@ -116,6 +116,13 @@ export const TEMPLATES = [
       { type: "BODY", text: "Open by notaghost.jobs: *{{1}}* would like to talk to you about *{{2}}*. You choose what they receive. If you decline, they never learn who you were.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
       { type: "BUTTONS", buttons: [{ type: "URL", text: "Accept or decline", url: "https://notaghost.jobs/app.html#/v2/open/me" }] },
     ] },
+  // 22 Nov: Meta filed open_by_invite under MARKETING. An invitation is the one notice that must not be capped or switched
+  // off, so it is said again as what it is: the next step on an answer this person gave.
+  { name: "open_by_invited", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open by notaghost.jobs: *{{1}}* has invited you to a conversation about your answer for *{{2}}*. You choose what they receive. If you decline, they never learn who you were.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Accept or decline", url: "https://notaghost.jobs/app.html#/v2/open/me" }] },
+    ] },
   { name: "open_by_closed", category: "UTILITY", language: "en",
     components: [
       { type: "BODY", text: "Open by notaghost.jobs: *{{1}}* has closed the role *{{2}}*. See how it ended and how far your answer went.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
@@ -161,6 +168,20 @@ export async function ensureTemplates(): Promise<any[]> {
     results.push({ name: t.name, status: r.status, body: await r.json() });
   }
   return results;
+}
+/** Approved, and filed by Meta as UTILITY. A notice Meta has moved to MARKETING can be capped or switched off by the
+ *  person, so it is not used for a hand-off; the earlier template (still UTILITY) carries it. Asked at most every ten minutes. */
+const utilitySeen = new Map<string, { ok: boolean; at: number }>();
+export const utilityOk = (rows: { name?: string; status?: string; category?: string }[], name: string) => rows.some((t) => t.name === name && t.status === "APPROVED" && t.category === "UTILITY");
+async function templateUtility(name: string): Promise<boolean> {
+  const had = utilitySeen.get(name); if (had && Date.now() - had.at < 10 * 60e3) return had.ok;
+  let ok = false;
+  try {
+    const r = await (await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status,category&name=${name}`, { headers: { authorization: `Bearer ${env.waToken}` } })).json();
+    ok = utilityOk(((r as any).data ?? []) as any[], name);
+  } catch { ok = false; }
+  utilitySeen.set(name, { ok, at: Date.now() });
+  return ok;
 }
 async function templateApproved(name: string): Promise<boolean> {
   try {
@@ -425,7 +446,7 @@ export async function notifyOpen(userId: string, kind: OpenNote, d: { company?: 
     const title = String(d.title ?? "").slice(0, 60), company = String(d.company ?? "").slice(0, 40), n = String(d.n ?? ""), base = "https://notaghost.jobs/app.html#/v2/open";
     const M: Record<OpenNote, { params: string[]; text: string; button: string; url: string; btn?: string }> = {
       followup: { params: [company, title], text: `Open by notaghost.jobs: *${company}* has one follow-up to your answer for *${title}*. It is private. Once you open it you have 15 minutes to reply, so pick your moment.`, button: "Open my answers", url: `${base}/me` },
-      invite: { params: [company, title], text: `Open by notaghost.jobs: *${company}* would like to talk to you about *${title}*. You choose what they receive. If you decline, they never learn who you were.`, button: "Accept or decline", url: `${base}/me` },
+      invite: { params: [company, title], text: `Open by notaghost.jobs: *${company}* has invited you to a conversation about your answer for *${title}*. You choose what they receive. If you decline, they never learn who you were.`, button: "Accept or decline", url: `${base}/me` },
       closed: { params: [company, title], text: `Open by notaghost.jobs: *${company}* has closed the role *${title}*. See how it ended and how far your answer went.`, button: "See how it ended", url: `${base}/q/${d.id ?? ""}`, btn: String(d.id ?? "") },
       answer: { params: [title, String(d.count ?? 1)], text: `Open by notaghost.jobs: a new answer has arrived for *${title}*. Answers so far: ${d.count ?? 1}. No names are attached to them.`, button: "Read the answers", url: `${base}/desk` },
       reply: { params: [n, title], text: `Open by notaghost.jobs: Candidate ${n} has replied to your follow-up for *${title}*. Their reply is on your desk.`, button: "Read the reply", url: `${base}/desk` },
@@ -438,7 +459,12 @@ export async function notifyOpen(userId: string, kind: OpenNote, d: { company?: 
       ...(m.btn ? [{ type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: m.btn }] }] : []),
     ] } });
     // "accepted" goes out as the plain notice once Meta has approved it; until then the earlier one (same two blanks) still lands
-    const ok = kind === "accepted" ? (await send("open_by_agreed")) || (await send("ghosted_open_agreed")) || (await send("ghosted_open_accepted")) : (await send(`open_by_${kind}`)) || (await send(`ghosted_open_${kind}`));
+    // the new name only where Meta holds it as an approved UTILITY template; otherwise the earlier template, which is one
+    const fresh = kind === "accepted" ? ["open_by_agreed"] : kind === "invite" ? ["open_by_invited", "open_by_invite"] : [`open_by_${kind}`];
+    const earlier = kind === "accepted" ? ["ghosted_open_agreed", "ghosted_open_accepted"] : [`ghosted_open_${kind}`];
+    let ok = false;
+    for (const name of fresh) { if (ok) break; if (await templateUtility(name)) ok = !!(await send(name)); }
+    for (const name of earlier) { if (ok) break; ok = !!(await send(name)); }
     if (!ok) await sendCard(to, { body: m.text, button: m.button, url: m.url });
   } catch (e: any) { console.error("[whatsapp] open", kind, e?.message ?? e); }
 }
