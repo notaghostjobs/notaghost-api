@@ -20,8 +20,12 @@ const hashUrl = (u: string) => createHash("sha256").update(canonicalPostingUrl(u
 /** The description on file for a role Radar follows, by its link: the employer's own words, as the reader took them. */
 async function knownPosting(url: string): Promise<string | null> {
   const bare = url.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
-  const { data } = await db.from("sightings").select("title, company_name, location, description").in("url", [url.trim(), bare, bare + "/"]).not("description", "is", null).limit(1);
-  const s: any = data?.[0];
+  // The link reaches us with its path in lower case (one posting, one address), while the employer's own address may carry
+  // capitals (…/job/R-01369895, …/sites/CX_1/…). So the role is found whatever the case of the letters.
+  const like = bare.replace(/[\\%_]/g, (ch) => "\\" + ch) + "%";
+  const { data } = await db.from("sightings").select("url, title, company_name, location, description").ilike("url", like).not("description", "is", null).limit(8);
+  const same = (u: string) => u.trim().replace(/[?#].*$/, "").replace(/\/$/, "").toLowerCase() === bare.toLowerCase();
+  const s: any = (data ?? []).find((r: any) => same(String(r.url ?? "")));
   if (!s || String(s.description ?? "").length < 200) return null;
   return `${cleanTitle(s.title)}\n${s.company_name ?? ""}${/bengaluru|bangalore/i.test(s.location ?? "") ? " · Bengaluru" : ""}\n\n${s.description}`;
 }
