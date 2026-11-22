@@ -1,4 +1,4 @@
-// Ghosted Open (14 Nov, first working build): hiring through one real question.
+// Open by notaghost.jobs (14 Nov, first working build): hiring through one real question.
 // A verified employer posts a role with one question. Anyone can read the question and the anonymous answers. Anyone with
 // a verified number and a résumé can write one (18 Nov: the gate was opened; nobody is turned away); each answer carries
 // how close its writer's work is to the role, and the desk reads closest first. The employer shortlists, may ask one
@@ -94,12 +94,12 @@ openPublic.get("/live", async (c) => {
 /** the readable address of a question (notaghost.jobs/open/<company>/<role>) → its id */
 openPublic.get("/at/:co/:role", async (c) => {
   const id = await store.get<string>(`open:path:${slugOf(c.req.param("co"))}/${slugOf(c.req.param("role"))}`);
-  if (!id) return c.json({ error: "This question isn’t on Ghosted Open." }, 404);
+  if (!id) return c.json({ error: "This question isn’t on Open by notaghost.jobs." }, 404);
   return c.json({ id });
 });
 openPublic.get("/q/:id", async (c) => {
   const q = await store.get<Question>(qKey(c.req.param("id")));
-  if (!q || q.status === "held") return c.json({ error: "This question isn’t on Ghosted Open." }, 404);
+  if (!q || q.status === "held") return c.json({ error: "This question isn’t on Open by notaghost.jobs." }, 404);
   const as = (await answersOf(q.id)).sort((a, b) => a.at.localeCompare(b.at));
   if (isLive(q)) { q.views = (q.views ?? 0) + 1; void store.set(qKey(q.id), q); }
   // a closed role: the outcome, and which answers went forward — what everyone who answered is told
@@ -115,8 +115,8 @@ async function mailCode(e: Employer): Promise<boolean> {
   const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
   e.code = { hash: codeHash(e.user, code), until: new Date(Date.now() + CODE_MIN * 60e3).toISOString(), tries: 0, sent_at: now() };
   await store.set(`open:emp:${e.user}`, e);
-  return sendMail({ to: e.email, subject: `${code} is your Ghosted Open code`, code,
-    lines: [`Your code to verify ${e.company} on Ghosted Open:`, `It is good for ${CODE_MIN} minutes. Enter it on the page you have open.`, "If you did not ask for this, ignore this email. Nobody can post as your company without the code."] });
+  return sendMail({ to: e.email, subject: `${code} is your Open by notaghost.jobs code`, code,
+    lines: [`Your code to verify ${e.company} on Open by notaghost.jobs:`, `It is good for ${CODE_MIN} minutes. Enter it on the page you have open.`, "If you did not ask for this, ignore this email. Nobody can post as your company without the code."] });
 }
 open.get("/employer", async (c) => c.json({ employer: pubE(await store.get<Employer>(`open:emp:${c.get("user").id}`)) }));
 /** Who a work email belongs to, before any code is sent: the company at that domain, by its own website's name and mark.
@@ -483,7 +483,7 @@ Judge from the role title and what the question asks a person to actually do. Ye
 }
 open.get("/q/:id/me", async (c) => {
   const u = c.get("user"); const q = await store.get<Question>(qKey(c.req.param("id")));
-  if (!q) return c.json({ error: "This question isn’t on Ghosted Open." }, 404);
+  if (!q) return c.json({ error: "This question isn’t on Open by notaghost.jobs." }, 404);
   // a tester walks both sides on one number: "as=candidate" lets them answer their own question
   const both = isTester(u) && c.req.query("as") === "candidate";
   if (q.owner === u.id && !both) return c.json({ owner: true, tester: isTester(u) });
@@ -493,7 +493,7 @@ open.get("/q/:id/me", async (c) => {
 });
 open.post("/q/:id/answers", async (c) => {
   const u = c.get("user"); const q = await store.get<Question>(qKey(c.req.param("id")));
-  if (!q) return c.json({ error: "This question isn’t on Ghosted Open." }, 404);
+  if (!q) return c.json({ error: "This question isn’t on Open by notaghost.jobs." }, 404);
   if (!isLive(q)) return c.json({ error: "This role has closed." }, 409);
   if (q.owner === u.id && !(isTester(u) && c.req.query("as") === "candidate")) return c.json({ error: "This is your own question." }, 403);
   const b = z.object({ text: z.string().trim().min(80).max(1500), ms: z.number().min(0).max(36e5).default(0), pasted: z.boolean().default(false) }).safeParse(await c.req.json().catch(() => ({})));

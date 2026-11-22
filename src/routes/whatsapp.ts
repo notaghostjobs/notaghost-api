@@ -58,7 +58,7 @@ export const TEMPLATES = [
       { type: "BUTTONS", buttons: [{ type: "URL", text: "See your list", url: "https://notaghost.jobs/app.html#/radar/test" }] },
     ] },
 
-  // Ghosted Open: each hand-off between an employer and a candidate. Nobody is watching the page, and a follow-up runs
+  // Open: each hand-off between an employer and a candidate. Nobody is watching the page, and a follow-up runs
   // on a fifteen-minute clock, so each one is told on WhatsApp. No name of a candidate ever goes in a message.
   { name: "ghosted_open_followup", category: "UTILITY", language: "en",
     components: [
@@ -103,6 +103,45 @@ export const TEMPLATES = [
       { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my desk", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
     ] },
 
+  // 22 Nov: the product is "Open by notaghost.jobs". The same seven notices under the new name, as new templates, because
+  // Meta reviews a template's wording: the earlier ones stay, and each notice goes out under the new name as soon as Meta
+  // has approved it and under the earlier one until then, so none is missed in between.
+  { name: "open_by_followup", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open by notaghost.jobs: *{{1}}* has one follow-up to your answer for *{{2}}*. It is private. Once you open it you have 15 minutes to reply, so pick your moment.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my answers", url: "https://notaghost.jobs/app.html#/v2/open/me" }] },
+    ] },
+  { name: "open_by_invite", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open by notaghost.jobs: *{{1}}* would like to talk to you about *{{2}}*. You choose what they receive. If you decline, they never learn who you were.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Accept or decline", url: "https://notaghost.jobs/app.html#/v2/open/me" }] },
+    ] },
+  { name: "open_by_closed", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open by notaghost.jobs: *{{1}}* has closed the role *{{2}}*. See how it ended and how far your answer went.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "See how it ended", url: "https://notaghost.jobs/app.html#/v2/open/q/{{1}}", example: ["7c41ad92e0"] }] },
+    ] },
+  { name: "open_by_answer", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open by notaghost.jobs: a new answer has arrived for *{{1}}*. Answers so far: {{2}}. No names are attached to them.", example: { body_text: [["Assistant Manager, Operations", "3"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Read the answers", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+  { name: "open_by_reply", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open by notaghost.jobs: Candidate {{1}} has replied to your follow-up for *{{2}}*. Their reply is on your desk.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Read the reply", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+  { name: "open_by_agreed", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open by notaghost.jobs: Candidate {{1}} has agreed to talk about *{{2}}*. The next step is waiting on your desk.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my desk", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+  { name: "open_by_declined", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open by notaghost.jobs: Candidate {{1}} has declined a conversation about *{{2}}*. Their identity stays private, and nothing is charged.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my desk", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+
   // nudges 3 and 4 go out more than 24 hours after the person's last message, so they must be templates (Meta reviews them)
   { name: "ghosted_nudge_morning", category: "MARKETING", language: "en",
     components: [{ type: "BODY", text: NUDGE_TEXT[2] }] },
@@ -113,7 +152,7 @@ export const TEMPLATES = [
 /** Creates any template we don't have yet. Called at boot (idempotent) and from POST /templates. */
 export async function ensureTemplates(): Promise<any[]> {
   if (!env.waWabaId || !env.waToken) return [];
-  const have = await (await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status&limit=50`, { headers: { authorization: `Bearer ${env.waToken}` } })).json();
+  const have = await (await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status&limit=200`, { headers: { authorization: `Bearer ${env.waToken}` } })).json();
   const names = new Set(((have as any).data ?? []).map((t: any) => t.name));
   const results: any[] = [];
   for (const t of TEMPLATES) {
@@ -131,7 +170,7 @@ async function templateApproved(name: string): Promise<boolean> {
 }
 whatsapp.get("/templates", async (c) => {
   if (!env.waWabaId || !env.waToken) return c.json({ error: "WA_WABA_ID / WA_TOKEN not set" }, 500);
-  const r = await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status,category,rejected_reason&limit=50`, { headers: { authorization: `Bearer ${env.waToken}` } });
+  const r = await fetch(`${GRAPH}/${env.waWabaId}/message_templates?fields=name,status,category,rejected_reason&limit=200`, { headers: { authorization: `Bearer ${env.waToken}` } });
   return c.json(await r.json());
 });
 whatsapp.post("/templates", async (c) => {
@@ -385,13 +424,13 @@ export async function notifyOpen(userId: string, kind: OpenNote, d: { company?: 
     const to = String(u?.phone ?? "").replace(/\D/g, ""); if (!to || /^910{6}/.test(to)) return;   // the automated walk's accounts are never messaged
     const title = String(d.title ?? "").slice(0, 60), company = String(d.company ?? "").slice(0, 40), n = String(d.n ?? ""), base = "https://notaghost.jobs/app.html#/v2/open";
     const M: Record<OpenNote, { params: string[]; text: string; button: string; url: string; btn?: string }> = {
-      followup: { params: [company, title], text: `Ghosted Open: *${company}* has one follow-up to your answer for *${title}*. It is private. Once you open it you have 15 minutes to reply, so pick your moment.`, button: "Open my answers", url: `${base}/me` },
-      invite: { params: [company, title], text: `Ghosted Open: *${company}* would like to talk to you about *${title}*. You choose what they receive. If you decline, they never learn who you were.`, button: "Accept or decline", url: `${base}/me` },
-      closed: { params: [company, title], text: `Ghosted Open: *${company}* has closed the role *${title}*. See how it ended and how far your answer went.`, button: "See how it ended", url: `${base}/q/${d.id ?? ""}`, btn: String(d.id ?? "") },
-      answer: { params: [title, String(d.count ?? 1)], text: `Ghosted Open: a new answer has arrived for *${title}*. Answers so far: ${d.count ?? 1}. No names are attached to them.`, button: "Read the answers", url: `${base}/desk` },
-      reply: { params: [n, title], text: `Ghosted Open: Candidate ${n} has replied to your follow-up for *${title}*. Their reply is on your desk.`, button: "Read the reply", url: `${base}/desk` },
-      accepted: { params: [n, title], text: `Ghosted Open: Candidate ${n} has agreed to talk about *${title}*. The next step is waiting on your desk.`, button: "Open my desk", url: `${base}/desk` },
-      declined: { params: [n, title], text: `Ghosted Open: Candidate ${n} has declined a conversation about *${title}*. Their identity stays private, and nothing is charged.`, button: "Open my desk", url: `${base}/desk` },
+      followup: { params: [company, title], text: `Open by notaghost.jobs: *${company}* has one follow-up to your answer for *${title}*. It is private. Once you open it you have 15 minutes to reply, so pick your moment.`, button: "Open my answers", url: `${base}/me` },
+      invite: { params: [company, title], text: `Open by notaghost.jobs: *${company}* would like to talk to you about *${title}*. You choose what they receive. If you decline, they never learn who you were.`, button: "Accept or decline", url: `${base}/me` },
+      closed: { params: [company, title], text: `Open by notaghost.jobs: *${company}* has closed the role *${title}*. See how it ended and how far your answer went.`, button: "See how it ended", url: `${base}/q/${d.id ?? ""}`, btn: String(d.id ?? "") },
+      answer: { params: [title, String(d.count ?? 1)], text: `Open by notaghost.jobs: a new answer has arrived for *${title}*. Answers so far: ${d.count ?? 1}. No names are attached to them.`, button: "Read the answers", url: `${base}/desk` },
+      reply: { params: [n, title], text: `Open by notaghost.jobs: Candidate ${n} has replied to your follow-up for *${title}*. Their reply is on your desk.`, button: "Read the reply", url: `${base}/desk` },
+      accepted: { params: [n, title], text: `Open by notaghost.jobs: Candidate ${n} has agreed to talk about *${title}*. The next step is waiting on your desk.`, button: "Open my desk", url: `${base}/desk` },
+      declined: { params: [n, title], text: `Open by notaghost.jobs: Candidate ${n} has declined a conversation about *${title}*. Their identity stays private, and nothing is charged.`, button: "Open my desk", url: `${base}/desk` },
     };
     const m = M[kind];
     const send = (name: string) => graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name, language: { code: "en" }, components: [
@@ -399,7 +438,7 @@ export async function notifyOpen(userId: string, kind: OpenNote, d: { company?: 
       ...(m.btn ? [{ type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: m.btn }] }] : []),
     ] } });
     // "accepted" goes out as the plain notice once Meta has approved it; until then the earlier one (same two blanks) still lands
-    const ok = kind === "accepted" ? (await send("ghosted_open_agreed")) || (await send("ghosted_open_accepted")) : await send(`ghosted_open_${kind}`);
+    const ok = kind === "accepted" ? (await send("open_by_agreed")) || (await send("ghosted_open_agreed")) || (await send("ghosted_open_accepted")) : (await send(`open_by_${kind}`)) || (await send(`ghosted_open_${kind}`));
     if (!ok) await sendCard(to, { body: m.text, button: m.button, url: m.url });
   } catch (e: any) { console.error("[whatsapp] open", kind, e?.message ?? e); }
 }

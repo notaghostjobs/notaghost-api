@@ -94,7 +94,7 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
   if (!pay) throw new Error("unknown order");
   if (userId && pay.user_id !== userId) throw new Error("order belongs to another user");
 
-  // Ghosted Open: ₹499 for one accepted conversation. No plan is opened; the answer on the employer's desk becomes "paid".
+  // Open by notaghost.jobs: ₹499 for one accepted conversation. No plan is opened; the answer on the employer's desk becomes "paid".
   if (pay.product === "open_intro") {
     if (pay.status !== "paid") {
       const { data: receipt } = await db.rpc("next_receipt_no");

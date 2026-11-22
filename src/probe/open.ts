@@ -1,4 +1,4 @@
-// The Open walk (14 Nov): the whole of Ghosted Open the way two people meet it, run by a machine after every deploy and
+// The Open walk (14 Nov): the whole of Open by notaghost.jobs the way two people meet it, run by a machine after every deploy and
 // nightly. An employer account verifies a company and posts a question; the candidate account (the fixed test résumé)
 // is read as the same function, answers, gets a follow-up, replies inside the window, is invited, accepts; the employer pays (the
 // tester path) and receives the contact; the role closes and the public page says how it ended. A second question, for
