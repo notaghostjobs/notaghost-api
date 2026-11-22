@@ -46,6 +46,27 @@ resumes.get("/current/file-link", async (c) => {
   return c.json({ url: data.signedUrl, name });
 });
 /** What they typed last time, so a line can be changed and the résumé made again without typing it all twice. */
+// "Let employers find me": one yes/no per person, and when they said it. Off until they tick it; they can untick it any
+// time. Saying yes lets an employer on Open see their skills and experience without a name or contact details; those are
+// shared only when they accept a conversation. Kept as find:<user id>. `v` is the wording they agreed to.
+const FIND_WORDING = 1;
+resumes.get("/findable", async (c) => {
+  const { data } = await db.from("reader_control").select("value").eq("key", `find:${c.get("user").id}`).maybeSingle();
+  const v = (data?.value as { on?: boolean; at?: string } | null) ?? null;
+  return c.json({ on: v?.on === true, at: v?.at ?? null });
+});
+resumes.post("/findable", async (c) => {
+  const body = z.object({ on: z.boolean() }).safeParse(await c.req.json().catch(() => null));
+  if (!body.success) return c.json({ error: "bad_request", message: "Say yes or no." }, 400);
+  const key = `find:${c.get("user").id}`; const at = new Date().toISOString();
+  const { data } = await db.from("reader_control").select("value").eq("key", key).maybeSingle();
+  const had = (data?.value as { first_on_at?: string } | null) ?? null;
+  const value = { on: body.data.on, at, first_on_at: had?.first_on_at ?? (body.data.on ? at : null), v: FIND_WORDING };
+  const { error } = await db.from("reader_control").upsert({ key, value, updated_at: at }, { onConflict: "key" });
+  if (error) return c.json({ error: "not_saved", message: "That did not save. Try again." }, 500);
+  return c.json({ on: value.on, at });
+});
+
 resumes.get("/form", async (c) => {
   const { data } = await db.from("reader_control").select("value").eq("key", `form:${c.get("user").id}`).maybeSingle();
   return c.json({ form: (data?.value as any) ?? null });
