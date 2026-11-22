@@ -103,6 +103,8 @@ export const eightfold: System = {
   },
 };
 
+/** The country/language prefixes a Phenom site puts before /job/<id>, most common first. */
+export const OWN_PAGE_PATHS = ["global/en", "us/en", "in/en"];
 /** Phenom-powered career sites (Cognizant, Dell, Capgemini, Intel and many more). ref: the site host. Server-side city filter. */
 export const phenom: System = {
   id: "phenom",
@@ -121,6 +123,21 @@ export const phenom: System = {
       if (list.length < 100 || jobs.length >= total) break;
     }
     diag.push(`totalHits ${total}`);
+    // Where the site's apply link leaves for Workday (*.myworkdayjobs.com), that address is closed to our reader, so the
+    // posting could never be read for its description. The same job has a page on the employer's own careers site:
+    // https://<host>/<country>/<language>/job/<id>. Find which country/language this site uses, once, from the first job,
+    // and link every job to its own page. If none answers, the apply links stay as they were.
+    const away = (u: string) => /^https?:\/\/[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com\//i.test(u);
+    const first = jobs.find((j) => away(j.url));
+    if (first) {
+      let base: string | null = null;
+      for (const loc of OWN_PAGE_PATHS) {
+        const r = await getText(`https://${host}/${loc}/job/${encodeURIComponent(first.id)}`, { timeoutMs: 20000, gapMs: 700, retries: 0 });
+        if (r.ok && /phApp\.ddo\s*=/.test(r.text) && /"jobDetail"/.test(r.text)) { base = `https://${host}/${loc}/job/`; break; }
+      }
+      if (base) for (const j of jobs) if (away(j.url)) j.url = base + encodeURIComponent(j.id);
+      diag.push(base ? `own job pages at ${base}` : "own job pages not found; apply links kept");
+    }
     return { system: "phenom", ref: host, board_url: `https://${host}/search-jobs?location=Bengaluru`, company_name: null, jobs, debug: diag.join("; ") };
   },
 };
