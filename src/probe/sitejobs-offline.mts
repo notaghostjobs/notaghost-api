@@ -1,7 +1,7 @@
 // Offline check of the own-site sitemap reader (Hitachi, GE Vernova, Nike) against stand-in pages.
 // Run: npx tsx src/probe/sitejobs-offline.mts   Nothing here touches the network or the database.
 process.env.SITEJOBS_DETAIL_CAP = "3";
-const { sitejobs, __deps, englishFiles, jobPages, fromPage, SITES } = await import("../reader/systems/sitejobs.js");
+const { sitejobs, __deps, englishFiles, jobPages, fromPage, SITES, plainPlace } = await import("../reader/systems/sitejobs.js");
 const { isBlr } = await import("../reader/blr.js");
 const { detect } = await import("../reader/systems/index.js");
 let fail = 0; const ok = (n: string, c: boolean, d = "") => { if (c) console.log("  ✓", n); else { fail++; console.log("  ✗", n, d); } };
@@ -29,6 +29,7 @@ ok("job pages: only /job/<id> on this host", jobPages(EN, H).size === 6 && jobPa
 ok("page: title and place", fromPage(page("Data Engineer", "Bengaluru"), "x").place.startsWith("Bengaluru") && fromPage(page("X", null), "x").place === "");
 ok("page without JobPosting: place fields in the page", fromPage(`<h1>Lead</h1><script>{"addressLocality":"Bengaluru","addressCountry":"India"}</script>`, "x").place === "Bengaluru, India");
 ok("page without JobPosting: the place in the page title", (() => { const r = fromPage(`<html><head><title>Power Apps, Power Automate Developer | Chennai, Tamil Nadu | Hitachi</title></head></html>`, "x"); return r.title === "Power Apps, Power Automate Developer" && r.place === "Chennai, Tamil Nadu"; })());
+ok("a place read through Workday keeps Bengaluru", plainPlace("Bengaluru (Bengaluru facet)") === "Bengaluru" && isBlr(plainPlace("2 Locations (Bengaluru facet)")) && isBlr(plainPlace("3 Locations (incl. Bengaluru)")) && plainPlace("Chennai") === "Chennai" && !isBlr(plainPlace("2 Locations")));
 ok("no URL is detected as this system", detect(`${B}/energy`)?.system !== "sitejobs" && detect(`${B}/data-engineer/job/R0100006`)?.system !== "sitejobs");
 ok("a host that is not listed is not read", (await sitejobs.read("careers.example.com")) === null && calls.length === 0);
 const f = (await sitejobs.read(H))!;

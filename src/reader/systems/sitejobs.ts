@@ -62,7 +62,8 @@ async function loadKnown(host: string): Promise<Map<string, Known>> {
       for (const r of (data ?? []) as { source_id: string; title: string | null; location: string | null; posted_at: string | null }[]) {
         const id = r.source_id.slice(prefix.length); const title = (r.title ?? "").trim(); if (!id || !title) continue;
         // the Workday read wrote the place as "Bengaluru (Bengaluru facet)" or "N Locations (incl. Bengaluru)": here it is said plainly
-        const location = (r.location ?? "").replace(/\s*\((?:Bengaluru facet|incl\. Bengaluru)\)\s*$/i, (x) => (/incl/i.test(x) ? ", incl. Bengaluru" : "")).trim();
+        // ("3 Locations (Bengaluru facet)" must keep Bengaluru: without it the place would no longer say the role is here)
+        const location = plainPlace(r.location ?? "");
         known.set(id, { title, location, posted_at: r.posted_at });
       }
       if (!data || data.length < 1000) break;
@@ -70,6 +71,8 @@ async function loadKnown(host: string): Promise<Map<string, Known>> {
   }
   return known;
 }
+/** The place as the Workday read wrote it, said plainly. Exported for the offline check. */
+export const plainPlace = (rawIn: string) => { const raw = rawIn.trim(); const bare = raw.replace(/\s*\((?:Bengaluru facet|incl\. Bengaluru)\)\s*$/i, "").trim(); return bare === raw || /bengaluru|bangalore/i.test(bare) ? bare : `${bare}, incl. Bengaluru`; };
 export const __deps = { loadKnown };
 
 const clean = (s: string) => s.replace(/&amp;/g, "&").replace(/&#0?39;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
