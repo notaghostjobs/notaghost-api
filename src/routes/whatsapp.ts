@@ -172,6 +172,13 @@ export const TEMPLATES = [
       { type: "BODY", text: "Open: a new answer has arrived for *{{1}}*. Answers so far: {{2}}. No names are attached to them.", example: { body_text: [["Assistant Manager, Operations", "3"]] } },
       { type: "BUTTONS", buttons: [{ type: "URL", text: "Read the answers", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
     ] },
+  // 22 Nov, evening: Meta moved open_wa_answer to MARKETING too, with no web address in it, so "a new answer has arrived"
+  // is being read as a nudge. Said again as what it is: something that happened to a question this employer posted.
+  { name: "open_wa_answered", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open: your question for *{{1}}* has received a new answer. It now has {{2}}. No names are attached.", example: { body_text: [["Assistant Manager, Operations", "3"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Read the answers", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
   { name: "open_wa_reply", category: "UTILITY", language: "en",
     components: [
       { type: "BODY", text: "Open: Candidate {{1}} has replied to your follow-up for *{{2}}*. Their reply is on your desk.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
@@ -487,7 +494,7 @@ export async function notifyOpen(userId: string, kind: OpenNote, d: { company?: 
       followup: { params: [company, title], text: `Open by notaghost.jobs: *${company}* has one follow-up to your answer for *${title}*. It is private. Once you open it you have 15 minutes to reply, so pick your moment.`, button: "Open my answers", url: `${base}/me` },
       invite: { params: [company, title], text: `Open by notaghost.jobs: *${company}* has invited you to a conversation about your answer for *${title}*. You choose what they receive. If you decline, they never learn who you were.`, button: "Accept or decline", url: `${base}/me` },
       closed: { params: [company, title], text: `Open by notaghost.jobs: *${company}* has closed the role *${title}*. See how it ended and how far your answer went.`, button: "See how it ended", url: `${base}/q/${d.id ?? ""}`, btn: String(d.id ?? "") },
-      answer: { params: [title, String(d.count ?? 1)], text: `Open by notaghost.jobs: a new answer has arrived for *${title}*. Answers so far: ${d.count ?? 1}. No names are attached to them.`, button: "Read the answers", url: `${base}/desk` },
+      answer: { params: [title, String(d.count ?? 1)], text: `Open by notaghost.jobs: your question for *${title}* has received a new answer. It now has ${d.count ?? 1}. No names are attached.`, button: "Read the answers", url: `${base}/desk` },
       reply: { params: [n, title], text: `Open by notaghost.jobs: Candidate ${n} has replied to your follow-up for *${title}*. Their reply is on your desk.`, button: "Read the reply", url: `${base}/desk` },
       accepted: { params: [n, title], text: `Open by notaghost.jobs: Candidate ${n} has agreed to talk about *${title}*. The next step is waiting on your desk.`, button: "Open my desk", url: `${base}/desk` },
       declined: { params: [n, title], text: `Open by notaghost.jobs: Candidate ${n} has declined a conversation about *${title}*. Their identity stays private, and nothing is charged.`, button: "Open my desk", url: `${base}/desk` },
@@ -499,7 +506,7 @@ export async function notifyOpen(userId: string, kind: OpenNote, d: { company?: 
     ] } });
     // "accepted" goes out as the plain notice once Meta has approved it; until then the earlier one (same two blanks) still lands
     // the new name only where Meta holds it as an approved UTILITY template; otherwise the earlier template, which is one
-    const fresh = kind === "accepted" ? ["open_wa_agreed", "open_by_agreed"] : kind === "invite" ? ["open_wa_invite", "open_by_invited", "open_by_invite"] : [`open_wa_${kind}`, `open_by_${kind}`];
+    const fresh = kind === "accepted" ? ["open_wa_agreed", "open_by_agreed"] : kind === "invite" ? ["open_wa_invite", "open_by_invited", "open_by_invite"] : kind === "answer" ? ["open_wa_answered", "open_wa_answer", "open_by_answer"] : [`open_wa_${kind}`, `open_by_${kind}`];
     const earlier = kind === "accepted" ? ["ghosted_open_agreed", "ghosted_open_accepted"] : [`ghosted_open_${kind}`];
     let ok = false;
     for (const name of fresh) { if (ok) break; if (await templateUtility(name)) ok = !!(await send(name)); }
