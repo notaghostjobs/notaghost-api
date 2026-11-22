@@ -44,6 +44,12 @@ export async function probeUrl(url: string): Promise<Record<string, unknown>> {
     out.job_like_anchors = anchors.slice(0, 15);
     const i = anchors.length ? page.text.indexOf(anchors[0].h) : -1;
     out.raw_excerpt = i >= 0 ? page.text.slice(Math.max(0, i - 1200), i + 1200) : page.text.slice(0, 1500);
+    // a sitemap: how many addresses it lists, how many name Bengaluru, and a few of each, so its shape can be seen without another deploy
+    if (/<(urlset|sitemapindex)\b/i.test(page.text)) {
+      const locs = [...page.text.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]);
+      const blr = locs.filter((u) => /bengaluru|bangalore|karnataka/i.test(u));
+      out.sitemap = { kind: /<sitemapindex\b/i.test(page.text) ? "index" : "urls", total: locs.length, bengaluru: blr.length, sample: locs.slice(0, 4), bengaluru_sample: blr.slice(0, 6), lastmod: /<lastmod>/i.test(page.text) };
+    }
   } catch { /* ignore */ }
   // 4. any JSON-looking XHR endpoints the page mentions
   const apis = [...new Set([...page.text.matchAll(/["'](\/[a-z0-9_\-/.]*(?:api|search|jobs|positions|requisition)[a-z0-9_\-/.]*)["']/gi)].map((m) => m[1]))].slice(0, 12);
