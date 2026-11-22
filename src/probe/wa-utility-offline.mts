@@ -10,5 +10,6 @@ ok("another template's row does not count", !utilityOk([{ name: "open_by_invite_
 ok("unknown template: not used", !utilityOk([], "open_by_invited"));
 const names = TEMPLATES.map((t: any) => t.name);
 ok("the reworded invitation is submitted, and the earlier ones are kept", names.includes("open_by_invited") && names.includes("ghosted_open_invite") && names.includes("open_by_invite"));
+ok("the seven notices exist with the short opening, and none of those names a web address in its text", ["followup", "invite", "closed", "answer", "reply", "agreed", "declined"].every((k) => { const t: any = TEMPLATES.find((x: any) => x.name === `open_wa_${k}`); const body = t?.components.find((c: any) => c.type === "BODY")?.text ?? ""; return body.startsWith("Open: ") && !/notaghost\.jobs/.test(body); }));
 ok("no template name is listed twice", new Set(names).size === names.length);
 console.log(fail ? `FAILED ${fail}` : "all passed"); process.exit(fail ? 1 : 0);

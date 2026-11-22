@@ -149,6 +149,45 @@ export const TEMPLATES = [
       { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my desk", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
     ] },
 
+  // 22 Nov, later: Meta moved open_by_invite and open_by_answer to MARKETING within minutes of each other. The words were
+  // the ones it had passed as UTILITY under "Ghosted Open:", so the likeliest cause is the web address now opening every
+  // message. On WhatsApp the notices therefore open with "Open:" alone; the full name is on the page the button leads to.
+  { name: "open_wa_followup", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open: *{{1}}* has one follow-up to your answer for *{{2}}*. It is private. Once you open it you have 15 minutes to reply, so pick your moment.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my answers", url: "https://notaghost.jobs/app.html#/v2/open/me" }] },
+    ] },
+  { name: "open_wa_invite", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open: *{{1}}* has invited you to a conversation about your answer for *{{2}}*. You choose what they receive. If you decline, they never learn who you were.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Accept or decline", url: "https://notaghost.jobs/app.html#/v2/open/me" }] },
+    ] },
+  { name: "open_wa_closed", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open: *{{1}}* has closed the role *{{2}}*. See how it ended and how far your answer went.", example: { body_text: [["Amazon", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "See how it ended", url: "https://notaghost.jobs/app.html#/v2/open/q/{{1}}", example: ["7c41ad92e0"] }] },
+    ] },
+  { name: "open_wa_answer", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open: a new answer has arrived for *{{1}}*. Answers so far: {{2}}. No names are attached to them.", example: { body_text: [["Assistant Manager, Operations", "3"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Read the answers", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+  { name: "open_wa_reply", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open: Candidate {{1}} has replied to your follow-up for *{{2}}*. Their reply is on your desk.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Read the reply", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+  { name: "open_wa_agreed", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open: Candidate {{1}} has agreed to talk about *{{2}}*. The next step is waiting on your desk.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my desk", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+  { name: "open_wa_declined", category: "UTILITY", language: "en",
+    components: [
+      { type: "BODY", text: "Open: Candidate {{1}} has declined a conversation about *{{2}}*. Their identity stays private, and nothing is charged.", example: { body_text: [["412", "Assistant Manager, Operations"]] } },
+      { type: "BUTTONS", buttons: [{ type: "URL", text: "Open my desk", url: "https://notaghost.jobs/app.html#/v2/open/desk" }] },
+    ] },
+
   // nudges 3 and 4 go out more than 24 hours after the person's last message, so they must be templates (Meta reviews them)
   { name: "ghosted_nudge_morning", category: "MARKETING", language: "en",
     components: [{ type: "BODY", text: NUDGE_TEXT[2] }] },
@@ -460,7 +499,7 @@ export async function notifyOpen(userId: string, kind: OpenNote, d: { company?: 
     ] } });
     // "accepted" goes out as the plain notice once Meta has approved it; until then the earlier one (same two blanks) still lands
     // the new name only where Meta holds it as an approved UTILITY template; otherwise the earlier template, which is one
-    const fresh = kind === "accepted" ? ["open_by_agreed"] : kind === "invite" ? ["open_by_invited", "open_by_invite"] : [`open_by_${kind}`];
+    const fresh = kind === "accepted" ? ["open_wa_agreed", "open_by_agreed"] : kind === "invite" ? ["open_wa_invite", "open_by_invited", "open_by_invite"] : [`open_wa_${kind}`, `open_by_${kind}`];
     const earlier = kind === "accepted" ? ["ghosted_open_agreed", "ghosted_open_accepted"] : [`ghosted_open_${kind}`];
     let ok = false;
     for (const name of fresh) { if (ok) break; if (await templateUtility(name)) ok = !!(await send(name)); }
