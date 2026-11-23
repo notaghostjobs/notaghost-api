@@ -1,0 +1,30 @@
+# The US reader's trial run. It is separate from the API and the Bengaluru reader: it deploys nothing and touches no
+# database. It runs when asked, or when the us-reader branch changes, and leaves its findings on the us-reader-data branch.
+name: US reader (trial)
+on:
+  workflow_dispatch:
+  push:
+    branches: [us-reader]
+    paths: ["us-reader/**", ".github/workflows/us-reader.yml"]
+permissions:
+  contents: write
+concurrency: us-reader
+jobs:
+  trial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: node us-reader/test.mjs
+      - run: node us-reader/discover.mjs || echo "discovery did not finish"
+        env: { MAX_PAGES: "5" }
+      - run: node us-reader/run.mjs
+        env: { LIMIT: "60" }
+      - name: Leave the findings on the us-reader-data branch
+        run: |
+          mkdir /tmp/out && cp us-reader/out/*.json /tmp/out/
+          git config user.name "us-reader" && git config user.email "hello@notaghost.jobs"
+          git checkout --orphan us-reader-data && git rm -rfq . && cp /tmp/out/*.json . && git add *.json
+          git commit -qm "US reader trial findings" && git push -fq origin us-reader-data
