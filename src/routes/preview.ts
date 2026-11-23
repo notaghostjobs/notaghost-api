@@ -22,10 +22,15 @@ async function knownPosting(url: string): Promise<string | null> {
   const bare = url.trim().replace(/[?#].*$/, "").replace(/\/$/, "");
   // The link reaches us with its path in lower case (one posting, one address), while the employer's own address may carry
   // capitals (…/job/R-01369895, …/sites/CX_1/…). So the role is found whatever the case of the letters.
-  const like = bare.replace(/[\\%_]/g, (ch) => "\\" + ch) + "%";
-  const { data } = await db.from("sightings").select("url, title, company_name, location, description").ilike("url", like).not("description", "is", null).limit(8);
-  const same = (u: string) => u.trim().replace(/[?#].*$/, "").replace(/\/$/, "").toLowerCase() === bare.toLowerCase();
-  const s: any = (data ?? []).find((r: any) => same(String(r.url ?? "")));
+  // Case-insensitive equality, never a prefix: a link whose job number sits after "?" (…/jobs/search?gh_jid=…) must find
+  // that job and no other. The full link is tried first, then the link without its query.
+  const esc = (v: string) => v.replace(/[\\%_]/g, (ch) => "\\" + ch);
+  let s: any = null;
+  for (const cand of [url.trim(), bare, bare + "/"]) {
+    const { data } = await db.from("sightings").select("title, company_name, location, description").ilike("url", esc(cand)).not("description", "is", null).limit(2);
+    if (data?.length === 1 || (data?.length === 2 && data[0].description === data[1].description)) { s = data[0]; break; }
+    if (data?.length) break;   // two different jobs behind one address: do not guess
+  }
   if (!s || String(s.description ?? "").length < 200) return null;
   return `${cleanTitle(s.title)}\n${s.company_name ?? ""}${/bengaluru|bangalore/i.test(s.location ?? "") ? " · Bengaluru" : ""}\n\n${s.description}`;
 }
