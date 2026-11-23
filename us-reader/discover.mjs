@@ -16,9 +16,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const info = await getJson("https://index.commoncrawl.org/collinfo.json", { gapMs: 1500, timeoutMs: 40000 });
 const idx = (info.data ?? [])[0];
 const out = { archive: idx?.id ?? null, at: new Date().toISOString(), greenhouse: new Set(), lever: new Set(), ashby: new Set(), blocks: {}, notes: [] };
+// "OpenAI" and "openai" are one board: one entry per name whatever its capitals, the all-lower-case form when there is one
+const one = (set) => { const m = new Map(); for (const v of [...set].sort()) { const k = v.toLowerCase(); if (!m.has(k) || v === k) m.set(k, v); } return [...m.values()].sort(); };
 const done = () => {
   mkdirSync(new URL("./out/", import.meta.url), { recursive: true });
-  const json = { archive: out.archive, at: out.at, blocks: out.blocks, notes: out.notes, counts: { greenhouse: out.greenhouse.size, lever: out.lever.size, ashby: out.ashby.size }, greenhouse: [...out.greenhouse].sort(), lever: [...out.lever].sort(), ashby: [...out.ashby].sort() };
+  const json = { archive: out.archive, at: out.at, blocks: out.blocks, notes: out.notes, counts: { greenhouse: out.greenhouse.size, lever: out.lever.size, ashby: out.ashby.size }, greenhouse: one(out.greenhouse), lever: one(out.lever), ashby: one(out.ashby) };
+  json.counts = { greenhouse: json.greenhouse.length, lever: json.lever.length, ashby: json.ashby.length };
   writeFileSync(new URL("./out/boards.json", import.meta.url), JSON.stringify(json));
   console.log("boards found", json.counts);
 };
