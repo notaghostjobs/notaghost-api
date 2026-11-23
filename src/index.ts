@@ -1,3 +1,4 @@
+import { scoutRoute } from "./routes/scout.js";
 import { doc } from "./routes/doc.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -60,6 +61,7 @@ app.route("/check", check);
 app.route("/radar/public", radarPublic);
 app.route("/radar", radar);
 app.route("/ig", ig);
+app.route("/scout", scoutRoute);   // a test kept apart: candidate shortlists from web search
 app.route("/open/public", openPublic);
 app.route("/open", open);
 app.route("/events", events);
