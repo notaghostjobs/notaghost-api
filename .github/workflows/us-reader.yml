@@ -12,7 +12,7 @@ concurrency: us-reader
 jobs:
   trial:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,7 +21,7 @@ jobs:
       - run: node us-reader/discover.mjs || echo "discovery did not finish"
         env: { MAX_BLOCKS: "400" }
       - run: node us-reader/run.mjs
-        env: { LIMIT: "60" }
+        env: { LIMIT: "all" }
       - name: Leave the findings on the us-reader-data branch
         run: |
           mkdir /tmp/out && cp us-reader/out/*.json /tmp/out/
