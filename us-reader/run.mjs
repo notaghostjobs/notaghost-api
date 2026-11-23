@@ -21,6 +21,6 @@ for (const system of ["greenhouse", "lever", "ashby"]) {
   }
 }
 tot.seconds = Math.round((Date.now() - started) / 1000);
-writeFileSync(new URL("./out/summary.json", import.meta.url), JSON.stringify({ at: new Date().toISOString(), limit: LIMIT, found: found.counts ?? null, archive: found.archive ?? null, pages: found.pages ?? null, notes: found.notes ?? null, totals: tot, boards }, null, 1));
+writeFileSync(new URL("./out/summary.json", import.meta.url), JSON.stringify({ at: new Date().toISOString(), limit: LIMIT, found: found.counts ?? null, archive: found.archive ?? null, blocks: found.blocks ?? null, notes: (found.notes ?? []).slice(0, 12), totals: tot, boards }, null, 1));
 writeFileSync(new URL("./out/sample.json", import.meta.url), JSON.stringify(sample, null, 1));
 console.log(tot);

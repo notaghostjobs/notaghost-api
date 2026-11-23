@@ -19,7 +19,7 @@ jobs:
         with: { node-version: 20 }
       - run: node us-reader/test.mjs
       - run: node us-reader/discover.mjs || echo "discovery did not finish"
-        env: { MAX_PAGES: "5" }
+        env: { MAX_BLOCKS: "400" }
       - run: node us-reader/run.mjs
         env: { LIMIT: "60" }
       - name: Leave the findings on the us-reader-data branch
