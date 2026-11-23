@@ -28,7 +28,7 @@ const FUNCS = [["engineering", /\b(engineer|developer|software|sre|devops|archit
 export const func = (title) => (FUNCS.find(([, re]) => re.test(title)) ?? ["other"])[0];
 
 /** One employer's US roles in, the roles worth showing out, with the reason each of the others was left behind. */
-export function curate(jobs, { now = Date.now(), freshDays = 30, ref = "" } = {}) {
+export function curate(jobs, { now = Date.now(), freshDays = 60, ref = "" } = {}) {
   const us = jobs.filter((j) => j.us);
   const why = { not_fresh: 0, thin_text: 0, same_role_elsewhere: 0, middleman: 0, commission: 0 };
   // a board where most postings speak of "our client" belongs to a middleman, not to the employer that is hiring

@@ -16,7 +16,7 @@ eq("ashby", ab.map((j) => [j.id, j.us, j.location]), [["q", true, "London; New Y
 // curation
 const T = "x".repeat(420), day = 86400e3, now = Date.parse("2026-11-23T00:00:00Z");
 const J = (o) => ({ us: true, title: "Data Analyst", text: T, posted_at: new Date(now - 5 * day).toISOString(), ...o });
-const c1 = curate([J({}), J({ title: "Data Analyst - Austin" }), J({ title: "Data Analyst (Remote)" }), J({ title: "Old one", posted_at: new Date(now - 60 * day).toISOString() }), J({ title: "Thin", text: "short" }), J({ title: "Agent", text: T + " This is a commission-only role." }), J({ title: "Not US", us: false })], { now });
+const c1 = curate([J({}), J({ title: "Data Analyst - Austin" }), J({ title: "Data Analyst (Remote)" }), J({ title: "Old one", posted_at: new Date(now - 75 * day).toISOString() }), J({ title: "Thin", text: "short" }), J({ title: "Agent", text: T + " This is a commission-only role." }), J({ title: "Not US", us: false })], { now });
 eq("curate keeps", c1.keep.map((j) => [j.title, j.places]), [["Data Analyst", 3]]);
 eq("curate why", c1.why, { not_fresh: 1, thin_text: 1, same_role_elsewhere: 2, middleman: 0, commission: 1 });
 const c2 = curate(Array.from({ length: 6 }, (_, i) => J({ title: "Role " + i, text: T + (i < 3 ? " We are hiring on behalf of our client, a leading bank." : "") })), { now });
