@@ -1,3 +1,4 @@
+import { us } from "./routes/us.js";
 import { doc } from "./routes/doc.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -60,6 +61,7 @@ app.route("/check", check);
 app.route("/radar/public", radarPublic);
 app.route("/radar", radar);
 app.route("/ig", ig);
+app.route("/us", us);   // the US job-search pilot: live count and sample requests
 app.route("/open/public", openPublic);
 app.route("/open", open);
 app.route("/events", events);
