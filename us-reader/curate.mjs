@@ -3,7 +3,10 @@
 // with nothing that is commission-only or reposted by a middleman.
 
 const words = (re, s) => re.test(s);
-const MIDDLEMAN = /\b(on behalf of (?:a|our|one of our) (?:partner|client)|our client(?:'s| is| has|,)|for one of our clients|posted by \w+ on behalf|we are a (?:staffing|recruit\w+) (?:agency|firm)|staffing agency|recruitment agency|this (?:job|position|role) is (?:posted|sourced) (?:by|from))\b/i;
+// A middleman's own words. "Our clients" alone is not enough: law firms and consultancies say it about the people they serve.
+const MIDDLEMAN = /\b(on behalf of (?:a|an|our|one of our|its) (?:partner|client|customer)s?(?: compan(?:y|ies))?|posted by \w+ on behalf|(?:we are|is) (?:a|an) (?:staffing|recruit\w+|talent acquisition) (?:agency|firm|partner)|(?:staffing|recruitment) agency|this (?:job|position|role) is (?:posted|sourced|advertised) (?:by|from|on behalf))\b/i;
+// Boards known to repost other employers' roles. Their roles are left out whatever the wording.
+export const REPOSTERS = new Set(["jobgether"]);
 const COMMISSION = /\b(commission[- ]only|100% commission|1099 (?:contractor|position|independent)|be your own boss|unlimited (?:income|earning) potential|no experience (?:needed|necessary|required)[^.]{0,80}(?:sales|agent)|licensed? (?:life|insurance) agent)\b/i;
 /** What a posting says about visas, when it says anything. */
 export function visa(text) {
@@ -25,12 +28,12 @@ const FUNCS = [["engineering", /\b(engineer|developer|software|sre|devops|archit
 export const func = (title) => (FUNCS.find(([, re]) => re.test(title)) ?? ["other"])[0];
 
 /** One employer's US roles in, the roles worth showing out, with the reason each of the others was left behind. */
-export function curate(jobs, { now = Date.now(), freshDays = 30 } = {}) {
+export function curate(jobs, { now = Date.now(), freshDays = 30, ref = "" } = {}) {
   const us = jobs.filter((j) => j.us);
   const why = { not_fresh: 0, thin_text: 0, same_role_elsewhere: 0, middleman: 0, commission: 0 };
   // a board where most postings speak of "our client" belongs to a middleman, not to the employer that is hiring
   const mm = us.filter((j) => words(MIDDLEMAN, j.text)).length;
-  const middleman = us.length >= 5 && mm / us.length > 0.3;
+  const middleman = REPOSTERS.has(String(ref).toLowerCase()) || (us.length >= 5 && mm / us.length > 0.3);
   if (middleman) { why.middleman = us.length; return { keep: [], why, middleman: true }; }
   const seen = new Map(), keep = [];
   for (const j of us) {

@@ -21,7 +21,7 @@ await Promise.all(["greenhouse", "lever", "ashby"].map(async (system) => {
     const r = await readBoard(system, ref); const us = r.jobs.filter((j) => j.us);
     tot.boards++; if (r.ok) tot.answered++; else if (r.status === 404) tot.gone++; else tot.other_status++;
     tot.roles += r.jobs.length; tot.us += us.length; if (us.length) tot.us_employers++;
-    const c = curate(r.jobs);
+    const c = curate(r.jobs, { ref });
     for (const k of Object.keys(why)) why[k] += c.why[k];
     if (c.middleman) middlemen.push({ system, ref, us: us.length });
     if (c.keep.length) tot.curated_employers++;

@@ -56,9 +56,12 @@ export function plain(html) {
 // ---- one shape for a role, whatever system it came from
 const job = (system, ref, x) => ({ system, ref, id: String(x.id), title: String(x.title ?? "").trim(), location: x.location ?? "", us: x.us, remote: x.remote, url: x.url, posted_at: x.posted_at ?? null, text: x.text ?? "" });
 
+// A Greenhouse role also lists the offices it belongs to. They decide only when the location itself names no place
+// ("Remote", "Hybrid", blank): a role located in "EU & UK" is not a US role because the company has a US office.
+const VAGUE = /^(|remote|hybrid|anywhere|distributed|flexible|multiple locations?|various|global|worldwide|tbd|n\/a)$/i;
 export function fromGreenhouse(data, ref) {
   return (data?.jobs ?? []).map((j) => { const loc = j.location?.name ?? "", offices = (j.offices ?? []).map((o) => o.location || o.name).filter(Boolean).join("; ");
-    return job("greenhouse", ref, { id: j.id, title: j.title, location: loc, us: isUS(loc) || isUS(offices), remote: isRemote(loc), url: j.absolute_url, posted_at: j.first_published ?? j.updated_at, text: plain(j.content) }); });
+    return job("greenhouse", ref, { id: j.id, title: j.title, location: loc, us: isUS(loc) || (VAGUE.test(loc.trim()) && isUS(offices)), remote: isRemote(loc), url: j.absolute_url, posted_at: j.first_published ?? j.updated_at, text: plain(j.content) }); });
 }
 export function fromLever(data, ref) {
   return (Array.isArray(data) ? data : []).map((j) => { const all = (j.categories?.allLocations ?? []).join("; "), loc = all || j.categories?.location || "";

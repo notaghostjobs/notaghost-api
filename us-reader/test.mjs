@@ -19,9 +19,14 @@ const J = (o) => ({ us: true, title: "Data Analyst", text: T, posted_at: new Dat
 const c1 = curate([J({}), J({ title: "Data Analyst - Austin" }), J({ title: "Data Analyst (Remote)" }), J({ title: "Old one", posted_at: new Date(now - 60 * day).toISOString() }), J({ title: "Thin", text: "short" }), J({ title: "Agent", text: T + " This is a commission-only role." }), J({ title: "Not US", us: false })], { now });
 eq("curate keeps", c1.keep.map((j) => [j.title, j.places]), [["Data Analyst", 3]]);
 eq("curate why", c1.why, { not_fresh: 1, thin_text: 1, same_role_elsewhere: 2, middleman: 0, commission: 1 });
-const c2 = curate(Array.from({ length: 6 }, (_, i) => J({ title: "Role " + i, text: T + (i < 3 ? " Our client is a leading bank." : "") })), { now });
+const c2 = curate(Array.from({ length: 6 }, (_, i) => J({ title: "Role " + i, text: T + (i < 3 ? " We are hiring on behalf of our client, a leading bank." : "") })), { now });
 eq("middleman board", [c2.middleman, c2.keep.length], [true, 0]);
 eq("visa", [visa("We are unable to sponsor visas for this role."), visa("Visa sponsorship is available."), visa("Great team."), visa("Must be a US citizen.")], ["no", "yes", "unstated", "no"]);
 eq("level", ["Software Engineering Intern", "Junior Analyst", "Senior Engineer", "Director of Sales", "Product Designer", "Software Engineer II"].map(level), ["intern", "entry", "senior", "leader", "mid", "mid"]);
 eq("func", ["Staff Software Engineer", "Data Analyst", "Account Executive", "Registered Nurse", "Barista"].map(func), ["engineering", "data", "sales", "healthcare", "other"]);
+const gh2 = fromGreenhouse({ jobs: [{ id: 3, title: "SE", location: { name: "EU & UK" }, offices: [{ name: "US", location: "United States" }], absolute_url: "u", content: "" }, { id: 4, title: "SE", location: { name: "Hybrid" }, offices: [{ name: "HQ", location: "Austin, TX" }], absolute_url: "u", content: "" }] }, "x");
+eq("offices decide only a vague location", gh2.map((j) => j.us), [false, true]);
+const c3 = curate(Array.from({ length: 6 }, (_, i) => J({ title: "Associate " + i, text: T + " Our clients include leading insurers." })), { now });
+eq("a law firm is not a middleman", [c3.middleman, c3.keep.length], [false, 6]);
+eq("a known reposter", curate([J({})], { now, ref: "Jobgether" }).middleman, true);
 console.log(bad ? `${bad} wrong` : "all right"); process.exit(bad ? 1 : 0);
