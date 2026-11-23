@@ -1,4 +1,5 @@
 import { doc } from "./routes/doc.js";
+import { us } from "./routes/us.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -60,6 +61,7 @@ app.route("/check", check);
 app.route("/radar/public", radarPublic);
 app.route("/radar", radar);
 app.route("/ig", ig);
+app.route("/us", us);
 app.route("/open/public", openPublic);
 app.route("/open", open);
 app.route("/events", events);
