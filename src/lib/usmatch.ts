@@ -70,3 +70,12 @@ export function homeCity(h: { city?: string | null; state?: string | null; count
   if (!new RegExp(`\\b${city.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s,]+${state}\\b`, "i").test(head)) return null;
   return city.replace(/\s+/g, " ");
 }
+
+/** A title's level, by its own words (the same rule the US reader uses when it stores a role). */
+export function levelOf(title: string): Level {
+  if (/\b(intern|internship|co-?op|apprentice|trainee)\b/i.test(title)) return "intern";
+  if (/\b(new grad|graduate|entry[- ]level|fresher|junior|jr\.?|associate|early career|i\b(?!i))\b/i.test(title) && !/\b(senior|sr\.?|director|manager|lead|principal|staff)\b/i.test(title)) return "entry";
+  if (/\b(chief|vp|vice president|head of|director|principal|distinguished|fellow)\b/i.test(title)) return "leader";
+  if (/\b(senior|sr\.?|staff|lead|manager|iii|iv)\b/i.test(title)) return "senior";
+  return "mid";
+}

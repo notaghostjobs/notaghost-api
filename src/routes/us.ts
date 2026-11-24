@@ -8,7 +8,7 @@ import { env } from "../lib/env.js";
 import { extractText } from "../engine/extract.js";
 import { json } from "../engine/claude.js";
 import { withMeter } from "../engine/meter.js";
-import { FUNCS, LEVELS, closest, keywords, near, place, pretty, homeCity, type Level, type Row } from "../lib/usmatch.js";
+import { FUNCS, LEVELS, closest, keywords, near, place, pretty, homeCity, levelOf, type Level, type Row } from "../lib/usmatch.js";
 
 export const us = new Hono();
 const PER_IP_A_DAY = 5, ALL_A_DAY = 300;   // a free list costs a few cents; these keep one visitor or one bad day from running up a bill
@@ -18,33 +18,44 @@ const ipHash = (c: any) => createHash("sha256").update(((c.req.header("x-forward
 
 /** What the landing page states: roles and employers confirmed in the last day, when the last check was, and five real
  *  open roles to show as an example. Counted from the tables each time (kept ten minutes), so the page claims only what is there. */
-let poolAt = 0, pool: any = null;
-async function readPool() {
-  if (pool && Date.now() - poolAt < 10 * 60e3) return pool;
-  const since = new Date(Date.now() - DAY).toISOString();
-  const [roles, emp, last, ex] = await Promise.all([
-    live().gte("last_seen", since),
-    db.from("us_employers").select("ref", { count: "exact", head: true }).gt("curated", 0).gte("last_checked", since),
-    db.from("us_roles").select("last_seen").eq("curated", true).is("gone_at", null).order("last_seen", { ascending: false }).limit(1),
-    db.from("us_roles").select("title, ref, location, remote").eq("curated", true).is("gone_at", null).eq("func", "design").ilike("title", "%product designer%").gte("last_seen", since).order("posted_at", { ascending: false }).limit(60),
-  ]);
-  const seen = new Set<string>(), example: { title: string; company: string; place: string }[] = [];
-  for (const r of ex.data ?? []) {
-    if (example.length >= 5) break;
-    if (seen.has(r.ref.toLowerCase()) || r.title.length > 34) continue;
-    seen.add(r.ref.toLowerCase()); example.push({ title: r.title, company: pretty(r.ref), place: place(r.location, r.remote) });
+/** The two versions of the product: US roles from the US reader's own tables, and Bengaluru roles from the main reader's. */
+type Market = "us" | "in";
+const market = (v: unknown): Market => (String(v ?? "") === "in" ? "in" : "us");
+const inOpen = (cols: string, opt?: any) => db.from("sightings").select(cols, opt).eq("blr", true).is("gone_at", null).not("description", "is", null).gte("last_seen", new Date(Date.now() - 2 * DAY).toISOString());
+/** An employer's name as people say it: the legal tail ("Private Limited") is dropped, and a name in capitals is set in ordinary case. */
+const tidy = (n: string) => { const t = String(n ?? "").replace(/\s+(software\s+)?((private|pvt\.?)\s+)?(limited|ltd\.?)$/i, "").replace(/\s+India$/i, "").trim() || String(n ?? ""); return /[a-z]/.test(t) ? t : t.toLowerCase().replace(/\b[a-z]/g, (ch) => ch.toUpperCase()); };
+const pools: Partial<Record<Market, { at: number; v: any }>> = {};
+async function readPool(m: Market = "us") {
+  const hit = pools[m]; if (hit && Date.now() - hit.at < 10 * 60e3) return hit.v;
+  const five = (rows: { title: string; company: string; key: string; place: string }[]) => { const seen = new Set<string>(), out: { title: string; company: string; place: string }[] = []; for (const r of rows) { if (out.length >= 5) break; if (seen.has(r.key) || r.title.length > 34 || r.title.length < 8) continue; seen.add(r.key); out.push({ title: r.title, company: r.company, place: r.place }); } return out.length === 5 ? out : []; };
+  let v: any;
+  if (m === "in") {
+    const [roles, last, ex] = await Promise.all([
+      inOpen("id", { count: "exact", head: true }),
+      inOpen("last_seen").order("last_seen", { ascending: false }).limit(1),
+      inOpen("title, company_name, employer_key").ilike("title", "%product designer%").order("first_seen", { ascending: false }).limit(80),
+    ]);
+    v = { roles: roles.count ?? 0, employers: 0, checked_at: (last.data as any)?.[0]?.last_seen ?? null, example: five(((ex.data ?? []) as any[]).map((r) => ({ title: r.title, company: tidy(r.company_name), key: String(r.employer_key ?? r.company_name).toLowerCase(), place: "Bengaluru" }))) };
+  } else {
+    const since = new Date(Date.now() - DAY).toISOString();
+    const [roles, emp, last, ex] = await Promise.all([
+      live().gte("last_seen", since),
+      db.from("us_employers").select("ref", { count: "exact", head: true }).gt("curated", 0).gte("last_checked", since),
+      db.from("us_roles").select("last_seen").eq("curated", true).is("gone_at", null).order("last_seen", { ascending: false }).limit(1),
+      db.from("us_roles").select("title, ref, location, remote").eq("curated", true).is("gone_at", null).eq("func", "design").ilike("title", "%product designer%").gte("last_seen", since).order("posted_at", { ascending: false }).limit(60),
+    ]);
+    v = { roles: roles.count ?? 0, employers: emp.count ?? 0, checked_at: last.data?.[0]?.last_seen ?? null, example: five((ex.data ?? []).map((r: any) => ({ title: r.title, company: pretty(r.ref), key: r.ref.toLowerCase(), place: place(r.location, r.remote) }))) };
   }
-  pool = { roles: roles.count ?? 0, employers: emp.count ?? 0, checked_at: last.data?.[0]?.last_seen ?? null, example: example.length === 5 ? example : [] };
-  poolAt = Date.now();
-  return pool;
+  pools[m] = { at: Date.now(), v };
+  return v;
 }
 us.get("/pool", async (c) => {
-  const p = await readPool();
+  const p = await readPool(market(c.req.query("m")));
   if (!p.roles || !p.checked_at) return c.json({ error: "The list of open roles isn’t ready. Try again in a few minutes." }, 503);
   return c.json(p);
 });
 
-type Profile = { func: string; level: Level; titles: string[]; field: string; home?: { city?: string | null; state?: string | null; country?: string | null } | null };
+type Profile = { func: string; level: Level; titles: string[]; field: string; home?: { city?: string | null; state?: string | null; country?: string | null } | null; m?: Market };
 const PROFILE = `You read one résumé and say what jobs this person should be looking at now. Return:
 {"func": one of ${FUNCS.join(" | ")}, "level": one of ${LEVELS.join(" | ")}, "titles": [3 to 5 job titles they would realistically be hired for next, most likely first, as employers write them], "field": two or three plain words naming their line of work, lower case, e.g. "product design"}
 Level: intern = still studying; entry = under 2 years of work; mid = 2 to 5; senior = 6 to 10 or a senior title; leader = manages managers, or director and above.
@@ -68,24 +79,49 @@ Return {"questions":[{"id":"q1","ask":"...","answers":["...","...","..."]}]}. Th
 const cols = "system, ref, job_id, title, location, remote, url, posted_at, level, func";
 type Prefs = { where: "remote" | "city" | "any"; city: string; visa: boolean };
 /** The few dozen open roles closest to this person, with the postings' own words. Before the place is known (no prefs) it looks everywhere. */
-async function nearest(profile: Profile, prefs?: Prefs) {
+async function nearest(profile: Profile, prefs?: Prefs, m: Market = "us") {
   const levels = near(profile.level), kw = keywords(profile.titles);
-  const scoped = (q: any): any => {
-    let x: any = q.in("level", levels);
-    if (prefs?.where === "remote") x = x.eq("remote", true);
-    if (prefs?.where === "city") x = x.or(`location.ilike.%${prefs.city}%,remote.eq.true`);
-    if (prefs?.visa) x = x.neq("visa", "no");
-    return x;
-  };
-  const [field, named] = await Promise.all([
-    scoped(live()).eq("func", FUNCS.includes(profile.func as any) ? profile.func : "other"),
-    kw.length ? scoped(db.from("us_roles").select(cols).eq("curated", true).is("gone_at", null)).or(kw.map((w) => `title.ilike.%${w}%`).join(",")).order("posted_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [] }),
-  ]);
-  const rows = closest((named.data ?? []) as Row[], profile.titles, profile.level);
-  const full = rows.length ? await db.from("us_roles").select("system, ref, job_id, description").in("job_id", rows.map((r) => r.job_id)).eq("curated", true) : { data: [] };
-  const textOf = new Map((full.data ?? []).map((d: any) => [`${d.system}/${d.ref}/${d.job_id}`, d.description as string | null]));
-  const postings = (chars: number, n = rows.length) => rows.slice(0, n).map((r, i) => `[${i + 1}] ${r.title} | ${pretty(r.ref)} | ${place(r.location, r.remote)}\n${(textOf.get(`${r.system}/${r.ref}/${r.job_id}`) ?? "(no description held; judge by the title)").slice(0, chars)}`).join("\n\n");
-  return { rows, postings, inField: (field.count as number | null) ?? rows.length };
+  let rows: Row[] = [], inField = 0; const textOf = new Map<string, string | null>(), names = new Map<string, string>();
+  const key = (r: Row) => `${r.system}/${r.ref}/${r.job_id}`;
+  if (m === "in") {
+    if (kw.length) {
+      const any = kw.map((w) => `title.ilike.%${w}%`).join(",");
+      const scoped = (q: any): any => (prefs?.where === "remote" ? q.ilike("location", "%remote%") : q).or(any);
+      const [count, got] = await Promise.all([scoped(inOpen("id", { count: "exact", head: true })), scoped(inOpen("id, employer_key, company_name, title, location, url, posted_at, first_seen")).order("first_seen", { ascending: false }).limit(1000)]);
+      inField = count.count ?? 0;
+      // one row for one job: the same title at the same employer is listed many times over in India
+      const seen = new Set<string>(); const all: Row[] = [];
+      for (const r of (got.data ?? []) as any[]) {
+        const lv = levelOf(r.title); if (!levels.includes(lv)) continue;
+        const k = `${String(r.company_name).toLowerCase()}|${String(r.title).toLowerCase().replace(/\s+/g, " ").trim()}`; if (seen.has(k)) continue; seen.add(k);
+        const ref = String(r.employer_key ?? r.company_name); names.set(ref, tidy(r.company_name));
+        all.push({ system: "in", ref, job_id: String(r.id), title: r.title, location: r.location ?? "Bengaluru", remote: /remote/i.test(r.location ?? ""), url: r.url, posted_at: r.posted_at ?? r.first_seen, level: lv, func: null });
+      }
+      rows = closest(all, profile.titles, profile.level);
+      const full = rows.length ? await db.from("sightings").select("id, description").in("id", rows.map((r) => Number(r.job_id))) : { data: [] };
+      for (const d of (full.data ?? []) as any[]) textOf.set(`in/${rows.find((r) => r.job_id === String(d.id))?.ref}/${d.id}`, d.description);
+    }
+  } else {
+    const scoped = (q: any): any => {
+      let x: any = q.in("level", levels);
+      if (prefs?.where === "remote") x = x.eq("remote", true);
+      if (prefs?.where === "city") x = x.or(`location.ilike.%${prefs.city}%,remote.eq.true`);
+      if (prefs?.visa) x = x.neq("visa", "no");
+      return x;
+    };
+    const [field, named] = await Promise.all([
+      scoped(live()).eq("func", FUNCS.includes(profile.func as any) ? profile.func : "other"),
+      kw.length ? scoped(db.from("us_roles").select(cols).eq("curated", true).is("gone_at", null)).or(kw.map((w) => `title.ilike.%${w}%`).join(",")).order("posted_at", { ascending: false }).limit(1000) : Promise.resolve({ data: [] }),
+    ]);
+    rows = closest((named.data ?? []) as Row[], profile.titles, profile.level);
+    const full = rows.length ? await db.from("us_roles").select("system, ref, job_id, description").in("job_id", rows.map((r) => r.job_id)).eq("curated", true) : { data: [] };
+    for (const d of (full.data ?? []) as any[]) textOf.set(`${d.system}/${d.ref}/${d.job_id}`, d.description);
+    inField = (field.count as number | null) ?? rows.length;
+  }
+  const company = (r: Row) => names.get(r.ref) ?? pretty(r.ref);
+  const spot = (r: Row) => (m === "in" ? (r.remote ? "Remote" : "Bengaluru") : place(r.location, r.remote));
+  const postings = (chars: number, n = rows.length) => rows.slice(0, n).map((r, i) => `[${i + 1}] ${r.title} | ${company(r)} | ${spot(r)}\n${(textOf.get(key(r)) ?? "(no description held; judge by the title)").slice(0, chars)}`).join("\n\n");
+  return { rows, postings, inField: inField || rows.length, company, spot };
 }
 
 /** Step one. The résumé is read, the closest roles are found, and the questions those roles raise are worked out.
@@ -97,6 +133,7 @@ us.post("/start", async (c) => {
   if (!/\.(pdf|docx|doc)$/i.test(file.name)) return c.json({ error: "That file isn’t a PDF or Word document. Choose your résumé as a PDF or .docx." }, 400);
   if (file.size > 5 * 1024 * 1024) return c.json({ error: "That file is over 5 MB. Export a smaller PDF and try again." }, 400);
 
+  const m = market(form!.get("m"));
   const ip = ipHash(c), since = new Date(Date.now() - DAY).toISOString();
   const [mine, all] = await Promise.all([
     db.from("us_lists").select("id", { count: "exact", head: true }).eq("ip_hash", ip).gte("created_at", since),
@@ -115,21 +152,21 @@ us.post("/start", async (c) => {
     const out = await withMeter({ tag: "us:start" }, async () => {
       const profile = await json<Profile>(PROFILE, resume, 500);
       if (!profile.titles?.length || !LEVELS.includes(profile.level)) return { none: "That doesn’t read as a résumé. Upload the one you send to employers." };
-      const n = await nearest(profile);
+      const n = await nearest(profile, undefined, m);
       if (n.rows.length < 3) return { none: "We don’t have enough open roles in your line of work yet. We add employers every week; try again soon." };
       // the questions are a help, never a gate: if they cannot be worked out, the list is made without them
       const got = await json<{ questions: Q[] }>(QUESTIONS, `RÉSUMÉ\n${resume}\n\nPOSTINGS\n${n.postings(900, 24)}`, 900).catch(() => ({ questions: [] as Q[] }));
       const questions = (got.questions ?? []).filter((q) => q && typeof q.ask === "string" && q.ask.length > 8 && Array.isArray(q.answers) && q.answers.length === 3 && q.answers.every((a) => typeof a === "string" && a.length > 1))
         .slice(0, 5).map((q, i) => ({ id: `q${i + 1}`, ask: q.ask.slice(0, 140), answers: q.answers.map((a) => a.slice(0, 80)) as [string, string, string] }));
-      return { profile, questions, close: n.rows.length, city: homeCity(profile.home, resume) };
+      return { profile, questions, close: n.rows.length, city: m === "us" ? homeCity(profile.home, resume) : null };
     });
     if ("none" in out) return c.json({ error: out.none }, 422);
     const id = randomBytes(12).toString("base64url");
-    const saved = await db.from("us_lists").insert({ id, ip_hash: ip, prefs: {}, profile: { ...out.profile, questions: out.questions }, resume_text: resume });
+    const saved = await db.from("us_lists").insert({ id, ip_hash: ip, prefs: {}, profile: { ...out.profile, questions: out.questions, m }, resume_text: resume });
     if (saved.error) { console.error("[us] start not saved", saved.error.message); return c.json({ error: "We couldn’t start your list. Try again in a minute." }, 503); }
     // lists nobody asked to keep are not held: a week on, they go
     db.from("us_lists").delete().is("email", null).lt("created_at", new Date(Date.now() - 7 * DAY).toISOString()).then(() => {}, () => {});
-    const total = await readPool();
+    const total = await readPool(m);
     return c.json({ id, field: out.profile.field, roles: total.roles, close: out.close, questions: out.questions, city: out.city });
   } catch (e) {
     console.error("[us] start", (e as Error).message);
@@ -151,17 +188,18 @@ us.post("/finish", async (c) => {
   const asked = new Map((profile.questions ?? []).map((q) => [q.id, q]));
   // only answers we offered are taken; anything else in the request is ignored
   const told = (Array.isArray(b.answers) ? b.answers : []).map((a: any) => { const q = asked.get(String(a?.id)); const pick = Number(a?.pick); return q && [0, 1, 2].includes(pick) ? { id: q.id, ask: q.ask, answer: q.answers[pick] } : null; }).filter(Boolean) as { id: string; ask: string; answer: string }[];
-  const resume = row.resume_text as string, prefs: Prefs = { where, city, visa };
+  const m = market(profile.m);
+  const resume = row.resume_text as string, prefs: Prefs = { where: m === "in" && where === "city" ? "any" : where, city: m === "in" ? "" : city, visa: m === "in" ? false : visa };
   try {
     const out = await withMeter({ tag: "us:list" }, async () => {
-      const [total, n] = await Promise.all([readPool(), nearest(profile, prefs)]);
-      if (n.rows.length < 3) return { none: where === "any" ? "We don’t have enough open roles in your line of work yet. We add employers every week; try again soon." : "We don’t have enough open roles for you there yet. Try “Anywhere in the US”." };
+      const [total, n] = await Promise.all([readPool(m), nearest(profile, prefs, m)]);
+      if (n.rows.length < 3) return { none: m === "in" ? "We don’t have enough open roles for you there yet. Try “Bengaluru, or remote”." : where === "any" ? "We don’t have enough open roles in your line of work yet. We add employers every week; try again soon." : "We don’t have enough open roles for you there yet. Try “Anywhere in the US”." };
       const facts = told.length ? `\n\nWHAT THEY TOLD US (true facts about them that the résumé may not show)\n${told.map((t) => `- ${t.ask} ${t.answer}`).join("\n")}` : "";
       const got = await json<{ picks: { n: number; score: number; company?: string; why: string; gap: string }[] }>(PICK + (told.length ? `\nWhat they told us counts exactly as if it were written in the résumé: use it in the score, and never name as missing something they said they have.` : ""), `RÉSUMÉ\n${resume}${facts}\n\nPOSTINGS\n${n.postings(1300)}`, 1800);
       const used = new Set<number>();
       const picks = (got.picks ?? []).filter((p) => Number.isInteger(p.n) && n.rows[p.n - 1] && p.score >= 60 && !used.has(p.n) && used.add(p.n)).sort((a, b2) => b2.score - a.score).slice(0, 5).map((p) => {
         const r = n.rows[p.n - 1];
-        return { title: r.title, company: (p.company || pretty(r.ref)).slice(0, 60), place: place(r.location, r.remote), posted_at: r.posted_at ?? new Date().toISOString(), score: Math.round(Math.min(99, p.score)), why: String(p.why ?? "").slice(0, 320), gap: String(p.gap ?? "").slice(0, 260), url: r.url };
+        return { title: r.title, company: (m === "in" ? n.company(r) : p.company || pretty(r.ref)).slice(0, 60), place: n.spot(r), posted_at: r.posted_at ?? new Date().toISOString(), score: Math.round(Math.min(99, p.score)), why: String(p.why ?? "").slice(0, 320), gap: String(p.gap ?? "").slice(0, 260), url: r.url };
       });
       if (!picks.length) return { none: "Nothing open today is a real shot for this résumé. That’s rare; try again tomorrow when new roles are in." };
       const cut = [{ n: total.roles, label: "open roles" }, { n: n.inField, label: `in ${profile.field || "your field"}` }, { n: n.rows.length, label: "read closely" }, { n: picks.length, label: "for you" }];
