@@ -22,6 +22,20 @@ const entities = (s: string) => s.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, e: st
 const tags = (s: string) => s.replace(/<\s*(br|\/p|\/li|\/div|\/h[1-6]|\/tr)\s*\/?>/gi, "\n").replace(/<li[^>]*>/gi, "• ").replace(/<[^>]{1,400}>/g, " ");
 const tidy = (s: string) => s.replace(/\r/g, "").replace(/[ \t ]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 
+/** JSON whose strings hold real line breaks or tabs is not JSON to a parser. This escapes control characters inside strings only. */
+function inStrings(s: string): string {
+  let out = "", inside = false, esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i], code = s.charCodeAt(i);
+    if (!inside) { if (ch === '"') inside = true; out += ch; continue; }
+    if (esc) { esc = false; out += ch; continue; }
+    if (ch === "\\") { esc = true; out += ch; continue; }
+    if (ch === '"') { inside = false; out += ch; continue; }
+    out += code < 0x20 ? (ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : ch === "\t" ? "\\t" : " ") : ch;
+  }
+  return out;
+}
+
 /** A page that says the job is not there: nothing in it is a requirement. */
 const NOT_LOADED = /couldn[’']t load job details|the job may have been removed or is no longer available/i;
 /** SmartRecruiters' own section order, the job first: the employer's "about us" is kept, after what the role asks for. */
@@ -56,7 +70,8 @@ export function postingBody(raw: string | null | undefined): PostingBody {
   // 1. a hiring system's raw JSON: the sections, as text
   if (t.trimStart().startsWith("{") && /"sections"\s*:/.test(t)) {
     try {
-      const j = JSON.parse(t); const sec = j?.content?.sections ?? j?.jobAd?.sections ?? j?.sections;
+      let j: any; try { j = JSON.parse(t); } catch { j = JSON.parse(inStrings(t)); }   // stored with real line breaks inside its strings (1,314 of 1,322 on 24 Nov 2026)
+      const sec = j?.content?.sections ?? j?.jobAd?.sections ?? j?.sections;
       if (sec && typeof sec === "object") {
         const keys = [...SR_ORDER.filter((k) => sec[k]), ...Object.keys(sec).filter((k) => !SR_ORDER.includes(k))];
         const parts = keys.map((k) => { const s = sec[k] ?? {}; const body = tidy(entities(tags(String(s.text ?? "")))); return body ? `${String(s.title ?? k).trim()}\n${body}` : ""; }).filter(Boolean);
