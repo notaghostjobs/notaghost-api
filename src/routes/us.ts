@@ -6,10 +6,10 @@ import { createHash, randomBytes } from "node:crypto";
 import { db } from "../lib/db.js";
 import { env } from "../lib/env.js";
 import { extractText } from "../engine/extract.js";
-import { json } from "../engine/claude.js";
+import { json, MODEL } from "../engine/claude.js";
 import { withMeter } from "../engine/meter.js";
 import { livePool, titleIdf, shortlistFor, fwords, type Sighting } from "./radar.js";
-import { evaluate, shortlist, memoryStore, JUDGE, type Judged } from "../lib/evaluate.js";
+import { evaluate, shortlist, memoryStore, JUDGE, AUDIT, type Judged } from "../lib/evaluate.js";
 import { parsePosting, type PostingProfile } from "../engine/sharpen.js";
 import { postingProblem, corpus, resumeTerms, textFit, forReading, type Idf } from "../lib/textfit.js";
 import { FUNCS, LEVELS, closest, lastFive, titleScore, keywords, near, place, pretty, homeCity, levelOf, type Level, type Row } from "../lib/usmatch.js";
@@ -235,7 +235,7 @@ us.post("/start", async (c) => {
       const profile = await json<Profile>(PROFILE, resume, 500);
       if (!profile.titles?.length || !LEVELS.includes(profile.level)) return { none: "That doesn’t read as a résumé. Upload the one you send to employers." };
       const n = await nearest(profile, undefined, m, resume);
-      if (n.rows.length < 3) return { none: "We don’t have enough open roles in your line of work yet. We add employers every week; try again soon." };
+      if (n.rows.length < (m === "in" ? 1 : 3)) return { none: "We don’t have enough open roles in your line of work yet. We add employers every week; try again soon." };
       // the questions are a help, never a gate: if they cannot be worked out, the list is made without them
       const got = await json<{ questions: Q[] }>(QUESTIONS, `RÉSUMÉ\n${resume}\n\nPOSTINGS\n${n.postings(900, 24)}`, 900).catch(() => ({ questions: [] as Q[] }));
       const questions = (got.questions ?? []).filter((q) => q && typeof q.ask === "string" && q.ask.length > 8 && Array.isArray(q.answers) && q.answers.length === 3 && q.answers.every((a) => typeof a === "string" && a.length > 1))
@@ -295,17 +295,19 @@ us.post("/finish", async (c) => {
     at(row.id, 1);
     const out = await withMeter({ tag: "us:list" }, async () => {
       const [total, n] = await Promise.all([readPool(m), nearest(profile, prefs, m, resume)]);
-      if (n.rows.length < 3) return { none: m === "in" ? "We don’t have enough open roles for you there yet. Try “Bengaluru, or remote”." : where === "any" ? "We don’t have enough open roles in your line of work yet. We add employers every week; try again soon." : "We don’t have enough open roles for you there yet. Try “Anywhere in the US”." };
+      if (n.rows.length < (m === "in" ? 1 : 3)) return { none: m === "in" ? "We don’t have enough open roles for you there yet. Try “Bengaluru, or remote”." : where === "any" ? "We don’t have enough open roles in your line of work yet. We add employers every week; try again soon." : "We don’t have enough open roles for you there yet. Try “Anywhere in the US”." };
       at(row.id, 2);
       if (m === "in" && process.env.IN_EVAL === "on") {
         // Requirement by requirement, with the résumé's own lines as evidence; the score and every limit are in code.
-        const lines = told.length ? `${resume}\n${told.map((t) => `Told us: ${t.ask} ${t.answer}`).join("\n")}` : resume;
+        // what they told us goes to the judge apart from the résumé and is never credited to the résumé (lib/evaluate)
         const cand = n.rows.slice(0, EVAL_N).filter((r) => n.text(r)).map((r) => ({ id: r.job_id, title: r.title, company: n.company(r), text: n.text(r)!.slice(0, 9000) }));
-        const ev = await evaluate(lines, cand, { store: requirementsKept, read: parsePosting, judge: (postings, pinned) => json<Judged>(JUDGE, postings, 2600, undefined, undefined, `RÉSUMÉ, as numbered lines:\n${pinned}`) });
+        const ev = await evaluate(resume, cand, { store: requirementsKept, read: parsePosting, model: MODEL,
+          judge: (postings, person) => json<Judged>(JUDGE, postings, 2600, undefined, undefined, person),
+          audit: (items) => json<{ a: [string, string][] }>(AUDIT, items, 1500) }, { answers: told });
         at(row.id, 3);
         const rowOf = new Map(n.rows.map((r) => [r.job_id, r]));
         const picks = shortlist(ev.evals, (id) => rowOf.get(id)!.ref).map((e) => { const r = rowOf.get(e.id)!; return { title: r.title, company: n.company(r).slice(0, 60), place: n.spot(r), posted_at: r.posted_at ?? new Date().toISOString(), score: e.score, why: e.why, gap: e.gap ? `Not on your résumé yet: ${e.gap}`.slice(0, 260) : "", url: r.url }; });
-        console.log(`[us] evaluated ${cand.length}: ${picks.length} shown, ${ev.readNow} postings read now, ${ev.calls} judging calls`);
+        console.log(`[us] evaluated ${cand.length}: ${picks.length} shown, ${ev.readNow} postings read now, ${ev.calls} judging calls, ${ev.audited} roles audited in ${ev.auditCalls} calls`);
         if (!picks.length) return { none: "Nothing open today is a real shot for this résumé. That’s rare; try again tomorrow when new roles are in." };
         return { cut: [{ n: total.roles, label: "open roles" }, { n: n.inField, label: `in ${profile.field || "your field"}` }, { n: n.rows.length, label: "read closely" }, { n: picks.length, label: "for you" }], picks };
       }
