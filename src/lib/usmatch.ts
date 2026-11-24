@@ -54,3 +54,19 @@ export function closest(rows: Row[], targets: string[], level: Level, keep = 40,
 export const pretty = (ref: string) => ref.replace(/[-_.]+/g, " ").replace(/\b[a-z]/g, (c) => c.toUpperCase()).trim();
 /** One short place for a card: remote roles say so; otherwise the first place named. */
 export const place = (location: string | null, remote: boolean) => (remote && !/[A-Z]{2}\b|,/.test(location ?? "") ? "Remote (US)" : (location ?? "United States").split(/;|\|/)[0].trim().slice(0, 40) || "United States");
+
+const STATES = new Set("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split(" "));
+/** The city to offer on the "where" card, or null. It is offered only when we are sure: the model read it from the contact
+ *  block, it is in the United States, and the same city name is really written in the first lines of the résumé (before any
+ *  job is listed). Anything less and no city is shown, so nobody is told they live where they once worked. */
+export function homeCity(h: { city?: string | null; state?: string | null; country?: string | null } | null | undefined, resume: string): string | null {
+  const city = (h?.city ?? "").trim(); const state = (h?.state ?? "").trim().toUpperCase();
+  if (!city || city.length < 3 || city.length > 40 || !/^[A-Za-z .'-]+$/.test(city)) return null;
+  if (!STATES.has(state) || (h?.country && !/^(US|USA)$/i.test(h.country))) return null;
+  // the contact block is whatever comes before the first section heading; with no heading in sight, only the first few lines count
+  const top = resume.slice(0, 600), first = top.search(/^\s*(work\s+)?(experience|employment|work history|professional (summary|experience)|summary|profile|objective|education|skills|projects)\b/im);
+  const head = first >= 0 ? top.slice(0, first) : top.split(/\n/).slice(0, 4).join("\n").slice(0, 240);
+  // the city must be written there with its state right beside it, as a contact line writes it ("Austin, TX")
+  if (!new RegExp(`\\b${city.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s,]+${state}\\b`, "i").test(head)) return null;
+  return city.replace(/\s+/g, " ");
+}

@@ -8,7 +8,7 @@ import { env } from "../lib/env.js";
 import { extractText } from "../engine/extract.js";
 import { json } from "../engine/claude.js";
 import { withMeter } from "../engine/meter.js";
-import { FUNCS, LEVELS, closest, keywords, near, place, pretty, type Level, type Row } from "../lib/usmatch.js";
+import { FUNCS, LEVELS, closest, keywords, near, place, pretty, homeCity, type Level, type Row } from "../lib/usmatch.js";
 
 export const us = new Hono();
 const PER_IP_A_DAY = 5, ALL_A_DAY = 300;   // a free list costs a few cents; these keep one visitor or one bad day from running up a bill
@@ -44,10 +44,11 @@ us.get("/pool", async (c) => {
   return c.json(p);
 });
 
-type Profile = { func: string; level: Level; titles: string[]; field: string };
+type Profile = { func: string; level: Level; titles: string[]; field: string; home?: { city?: string | null; state?: string | null; country?: string | null } | null };
 const PROFILE = `You read one résumé and say what jobs this person should be looking at now. Return:
 {"func": one of ${FUNCS.join(" | ")}, "level": one of ${LEVELS.join(" | ")}, "titles": [3 to 5 job titles they would realistically be hired for next, most likely first, as employers write them], "field": two or three plain words naming their line of work, lower case, e.g. "product design"}
 Level: intern = still studying; entry = under 2 years of work; mid = 2 to 5; senior = 6 to 10 or a senior title; leader = manages managers, or director and above.
+Also return "home": {"city", "state", "country"}: where the person lives NOW, taken ONLY from the contact block at the very top of the résumé (the line beside their name, phone or email). Never take it from a job, an employer's location, a school, or anywhere else in the document. If the top of the résumé gives no city, or you are not certain, return "home": null. "state" is the two-letter US state code if in the United States, else null; "country" is the two-letter country code, or null if not stated and not obvious from the state.
 Go by what the résumé shows, not what it hopes. If the text is not a résumé, return {"func":"other","level":"mid","titles":[],"field":""}.`;
 const PICK = `You choose, for one person, the open roles they have a real shot at. You get their résumé and a numbered set of postings.
 Pick the five best, fewer if fewer are reasonable, and order them best first. Be strict: a role two levels above them, or in a field they have not worked in, is not a real shot.
@@ -120,7 +121,7 @@ us.post("/start", async (c) => {
       const got = await json<{ questions: Q[] }>(QUESTIONS, `RÉSUMÉ\n${resume}\n\nPOSTINGS\n${n.postings(900, 24)}`, 900).catch(() => ({ questions: [] as Q[] }));
       const questions = (got.questions ?? []).filter((q) => q && typeof q.ask === "string" && q.ask.length > 8 && Array.isArray(q.answers) && q.answers.length === 3 && q.answers.every((a) => typeof a === "string" && a.length > 1))
         .slice(0, 5).map((q, i) => ({ id: `q${i + 1}`, ask: q.ask.slice(0, 140), answers: q.answers.map((a) => a.slice(0, 80)) as [string, string, string] }));
-      return { profile, questions, close: n.rows.length };
+      return { profile, questions, close: n.rows.length, city: homeCity(profile.home, resume) };
     });
     if ("none" in out) return c.json({ error: out.none }, 422);
     const id = randomBytes(12).toString("base64url");
@@ -129,7 +130,7 @@ us.post("/start", async (c) => {
     // lists nobody asked to keep are not held: a week on, they go
     db.from("us_lists").delete().is("email", null).lt("created_at", new Date(Date.now() - 7 * DAY).toISOString()).then(() => {}, () => {});
     const total = await readPool();
-    return c.json({ id, field: out.profile.field, roles: total.roles, close: out.close, questions: out.questions });
+    return c.json({ id, field: out.profile.field, roles: total.roles, close: out.close, questions: out.questions, city: out.city });
   } catch (e) {
     console.error("[us] start", (e as Error).message);
     return c.json({ error: "We couldn’t read your résumé just now. Try again in a minute." }, 500);
