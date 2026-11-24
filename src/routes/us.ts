@@ -248,7 +248,10 @@ us.post("/finish", async (c) => {
       const facts = told.length ? `\n\nWHAT THEY TOLD US (true facts about them that the résumé may not show)\n${told.map((t) => `- ${t.ask} ${t.answer}`).join("\n")}` : "";
       const got = await json<{ picks: { n: number; score: number; company?: string; why: string; gap: string }[] }>(PICK + (told.length ? `\nWhat they told us counts exactly as if it were written in the résumé: use it in the score, and never name as missing something they said they have.` : ""), `RÉSUMÉ\n${resume}${facts}\n\nPOSTINGS\n${n.postings(1300)}`, 1800);
       at(row.id, 3);
-      const picks = lastFive(got.picks ?? [], n.rows).map((p) => {
+      // India: the final list's limits are applied in code (lastFive). The US list keeps the selection it has always had.
+      const used = new Set<number>();
+      const chosen = m === "in" ? lastFive(got.picks ?? [], n.rows) : (got.picks ?? []).filter((p) => Number.isInteger(p.n) && n.rows[p.n - 1] && p.score >= 60 && !used.has(p.n) && used.add(p.n)).sort((a, b2) => b2.score - a.score).slice(0, 5);
+      const picks = chosen.map((p) => {
         const r = n.rows[p.n - 1];
         return { title: r.title, company: (m === "in" ? n.company(r) : p.company || pretty(r.ref)).slice(0, 60), place: n.spot(r), posted_at: r.posted_at ?? new Date().toISOString(), score: Math.round(Math.min(99, p.score)), why: String(p.why ?? "").slice(0, 320), gap: String(p.gap ?? "").slice(0, 260), url: r.url };
       });
