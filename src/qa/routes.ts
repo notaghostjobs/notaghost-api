@@ -19,6 +19,7 @@ import { qaPoolMode } from "./pool.js";
 import { DISCOVERY_ON, REAL_ON } from "./guard.js";
 import { store, setFault, faultState, now, type FaultKind } from "./state.js";
 import { qaSpend, promptVersion } from "./budget.js";
+import { benchRoutes } from "./bench.js";
 import { EMPLOYERS, FUNCTIONS, JOBS, GM, CANDIDATES, BAND } from "./fixtures.js";
 import { MODEL, HOUSEKEEPING } from "../engine/claude.js";
 import { isolationReport, runPilot, pilotBusy } from "./selftest.js";
@@ -85,6 +86,9 @@ export function qaRoutes(app: App) {
 
   /** QA's own evidence, readable without the access code: pass/fail lines and synthetic results only, never a secret. */
   qa.get("/report", async (c) => c.json({ env: "qa", isolation: await store.get("qa:report:isolation"), pilot: await store.get("qa:report:pilot"), pilot_running: pilotBusy(), ai: await qaSpend() }));
+
+  // the benchmark pass-through has its own token and its own closing time (src/qa/bench.ts); temporary
+  qa.route("/bench", benchRoutes());
 
   // ---------- everything below needs the access token ----------
   qa.use("*", async (c, next) => { if (!hasQaAccess(c.req.header("x-qa-access"))) return c.json({ error: "QA access required, or it has expired." }, 401); await next(); });
