@@ -9,7 +9,8 @@ import { extractText } from "../engine/extract.js";
 import { json } from "../engine/claude.js";
 import { withMeter } from "../engine/meter.js";
 import { livePool, titleIdf, shortlistFor, fwords, type Sighting } from "./radar.js";
-import { FUNCS, LEVELS, closest, lastFive, keywords, near, place, pretty, homeCity, levelOf, type Level, type Row } from "../lib/usmatch.js";
+import { postingProblem, corpus, resumeTerms, textFit, forReading, type Idf } from "../lib/textfit.js";
+import { FUNCS, LEVELS, closest, lastFive, titleScore, keywords, near, place, pretty, homeCity, levelOf, type Level, type Row } from "../lib/usmatch.js";
 
 export const us = new Hono();
 const PER_IP_A_DAY = 5, ALL_A_DAY = 300;   // a free list costs a few cents; these keep one visitor or one bad day from running up a bill
@@ -110,7 +111,26 @@ export function inRows(raw: any[], levels: Level[], names: Map<string, string>):
   return all;
 }
 
-async function nearest(profile: Profile, prefs?: Prefs, m: Market = "us") {
+/** How often each term turns up across open postings and employers: what textFit weighs words by. Built from a fair
+ *  sample of the open Bengaluru postings (every nth, up to 1,500), kept in memory for twelve hours. Null when it cannot be
+ *  built: the list is then made by titles alone, as before. */
+let words: { at: number; idf: Idf } | null = null;
+async function wordTable(pool: Sighting[]): Promise<Idf | null> {
+  if (words && Date.now() - words.at < 12 * 3600e3) return words.idf;
+  try {
+    const ids = pool.filter((r) => r.readable).map((r) => r.id); const step = Math.max(1, Math.ceil(ids.length / 1500));
+    const pick = ids.filter((_, i) => i % step === 0); const texts: { text: string; employer: string }[] = [];
+    for (let i = 0; i < pick.length; i += 400) {
+      const got = await Promise.all([0, 100, 200, 300].map((o) => pick.slice(i + o, i + o + 100)).filter((c) => c.length).map((c) => db.from("sightings").select("title, employer_key, company_name, description").in("id", c)));
+      for (const g of got) { if (g.error) throw new Error(g.error.message); for (const d of (g.data ?? []) as any[]) { const v = postingProblem(d.title ?? "", d.description); if (!v.problem) texts.push({ text: v.text, employer: String(d.employer_key ?? d.company_name) }); } }
+    }
+    if (texts.length < 300) return null;
+    words = { at: Date.now(), idf: corpus(texts) }; return words.idf;
+  } catch (e) { console.error("[us] word table", (e as Error).message); return null; }
+}
+const READ_TEXT_OF = 320;   // the best-titled candidates whose text is read before the forty are chosen
+
+async function nearest(profile: Profile, prefs?: Prefs, m: Market = "us", resume = "") {
   const levels = near(profile.level), kw = keywords(profile.titles);
   let rows: Row[] = [], inField = 0; const textOf = new Map<string, string | null>(), names = new Map<string, string>();
   const key = (r: Row) => `${r.system}/${r.ref}/${r.job_id}`;
@@ -126,10 +146,23 @@ async function nearest(profile: Profile, prefs?: Prefs, m: Market = "us") {
       raw = [...long, ...((more.data ?? []) as any[]).filter((r) => !have.has(r.id))]; inField = Math.max(inField, count.count ?? 0);
     }
     {
-      const all = inRows(raw, levels, names);
-      rows = closest(all, profile.titles, profile.level, 40, Date.now(), true);
-      const full = rows.length ? await db.from("sightings").select("id, description").in("id", rows.map((r) => Number(r.job_id))) : { data: [] };
-      for (const d of (full.data ?? []) as any[]) textOf.set(`in/${rows.find((r) => r.job_id === String(d.id))?.ref}/${d.id}`, d.description);
+      // Before the forty are chosen, the text of the best-titled candidates is read: postings that are not postings are
+      // dropped, and the résumé's own words decide among the rest (lib/textfit). No model is involved.
+      const now = Date.now();
+      const all = inRows(raw, levels, names).map((r) => ({ r, t: titleScore(r, profile.titles, profile.level, now) })).filter((x) => x.t > 0.2).sort((a, b) => b.t - a.t).slice(0, READ_TEXT_OF).map((x) => x.r);
+      const body = new Map<string, string>(), bad = new Set<string>();
+      for (let i = 0; i < all.length; i += 80) {
+        const got = await db.from("sightings").select("id, description").in("id", all.slice(i, i + 80).map((r) => Number(r.job_id)));
+        if (got.error) throw new Error(got.error.message);
+        for (const d of (got.data ?? []) as any[]) { const r = all.find((x) => x.job_id === String(d.id)); if (!r) continue; const v = postingProblem(r.title, d.description); if (v.problem) bad.add(r.job_id); else body.set(r.job_id, v.text); }
+      }
+      const real = all.filter((r) => !bad.has(r.job_id));
+      const idf = resume ? await wordTable(await livePool()) : null;
+      if (idf) {
+        const mine = resumeTerms(resume, idf); const fit = new Map(real.map((r) => [r.job_id, body.has(r.job_id) ? textFit(mine, body.get(r.job_id)!, idf).fit : null] as [string, number | null]));
+        rows = forReading(real, profile.titles, profile.level, (r) => fit.get(r.job_id) ?? null, 40, now);
+      } else rows = closest(real, profile.titles, profile.level, 40, now, true);
+      for (const r of rows) textOf.set(`in/${r.ref}/${r.job_id}`, body.get(r.job_id) ?? null);   // the posting itself, without the page around it
     }
   } else {
     const scoped = (q: any): any => {
@@ -182,7 +215,7 @@ us.post("/start", async (c) => {
     const out = await withMeter({ tag: "us:start" }, async () => {
       const profile = await json<Profile>(PROFILE, resume, 500);
       if (!profile.titles?.length || !LEVELS.includes(profile.level)) return { none: "That doesn’t read as a résumé. Upload the one you send to employers." };
-      const n = await nearest(profile, undefined, m);
+      const n = await nearest(profile, undefined, m, resume);
       if (n.rows.length < 3) return { none: "We don’t have enough open roles in your line of work yet. We add employers every week; try again soon." };
       // the questions are a help, never a gate: if they cannot be worked out, the list is made without them
       const got = await json<{ questions: Q[] }>(QUESTIONS, `RÉSUMÉ\n${resume}\n\nPOSTINGS\n${n.postings(900, 24)}`, 900).catch(() => ({ questions: [] as Q[] }));
@@ -242,7 +275,7 @@ us.post("/finish", async (c) => {
   try {
     at(row.id, 1);
     const out = await withMeter({ tag: "us:list" }, async () => {
-      const [total, n] = await Promise.all([readPool(m), nearest(profile, prefs, m)]);
+      const [total, n] = await Promise.all([readPool(m), nearest(profile, prefs, m, resume)]);
       if (n.rows.length < 3) return { none: m === "in" ? "We don’t have enough open roles for you there yet. Try “Bengaluru, or remote”." : where === "any" ? "We don’t have enough open roles in your line of work yet. We add employers every week; try again soon." : "We don’t have enough open roles for you there yet. Try “Anywhere in the US”." };
       at(row.id, 2);
       const facts = told.length ? `\n\nWHAT THEY TOLD US (true facts about them that the résumé may not show)\n${told.map((t) => `- ${t.ask} ${t.answer}`).join("\n")}` : "";
