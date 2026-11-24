@@ -177,8 +177,8 @@ export type Deps = {
   /** the model that reads postings: part of the key of what is kept */
   model: string;
   judge: (postings: string, person: string) => Promise<Judged>;
-  /** the second reader; without it only the checks in code are made */
-  audit?: (items: string) => Promise<{ a: [string, string][] }>;
+  /** the second reader. Required: there is no way to run this evaluation without the audit. */
+  audit: (items: string) => Promise<{ a: [string, string][] }>;
 };
 /** The whole reading: requirements (kept), judgement in batches with the person's text pinned, the audit of every role
  *  that would be shown, then the rules. A call that fails leaves its roles unshown ("could not be judged", "its evidence
@@ -198,14 +198,14 @@ export async function evaluate(resume: string, postings: Posting[], deps: Deps, 
   const done = batches.length ? [await run(batches[0]), ...(await Promise.all(batches.slice(1).map(run)))] : [];
   for (const { b, got } of done) b.forEach((p, i) => { const v = got?.jobs?.find((j) => Number(j.n) === i + 1); verdictOf.set(p.id, v); out.set(p.id, settle(p, by.get(p.id)!, v, lines, years, { answersFrom: person.answersFrom })); });
   // the audit: every role that would be shown has each piece of its evidence read again, on its own
-  if (deps.audit) {
+  {
     const cand = ready.filter((p) => out.get(p.id)?.shown); const items: string[] = [];
     cand.forEach((p, pi) => out.get(p.id)!.matches.forEach((m, ri) => { if (m.bucket !== "missing") items.push(`[${pi + 1}.${ri + 1}] REQUIREMENT: ${m.requirement}\nLINE: ${m.evidence}`); }));
     const got = new Map<string, Support>(); let failed = false;
-    for (let i = 0; i < items.length && !failed; i += 90) { auditCalls++; try { const r = await deps.audit(items.slice(i, i + 90).join("\n\n")); for (const [id, s] of r?.a ?? []) got.set(String(id).replace(/[\[\]]/g, ""), s === "yes" || s === "partial" ? s : "no"); } catch { failed = true; } }
+    for (let i = 0; i < items.length && !failed; i += 90) { auditCalls++; try { if (typeof deps.audit !== "function") throw new Error("no auditor"); const r = await deps.audit(items.slice(i, i + 90).join("\n\n")); for (const [id, s] of r?.a ?? []) got.set(String(id).replace(/[\[\]]/g, ""), s === "yes" || s === "partial" ? s : "no"); } catch { failed = true; } }
     cand.forEach((p, pi) => {
       const support = new Map<number, Support>(); out.get(p.id)!.matches.forEach((m, ri) => { if (m.bucket !== "missing") support.set(ri + 1, got.get(`${pi + 1}.${ri + 1}`) ?? "no"); });   // an item the auditor skipped is not taken on trust
-      out.set(p.id, settle(p, by.get(p.id)!, verdictOf.get(p.id), lines, years, { answersFrom: person.answersFrom, support, auditFailed: failed })); audited++;
+      out.set(p.id, settle(p, by.get(p.id)!, verdictOf.get(p.id), lines, years, { answersFrom: person.answersFrom, support, auditFailed: failed })); if (!failed) audited++;
     });
   }
   const none = (p: Posting): Evaluation => ({ id: p.id, score: 0, shown: false, reason: "its requirements could not be read", same_work: false, seniority: "out_of_reach", why: "", gap: "", matches: [], said: 0, musts: 0, unsupported: 0, weakened: 0, from_answers: 0, audited: false });

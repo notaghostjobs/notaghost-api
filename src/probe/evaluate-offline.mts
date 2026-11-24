@@ -54,18 +54,19 @@ check("no verdict for a posting: not shown", settle(post("1", "t"), strong, unde
 check("bands are read from the posting's own words", JSON.stringify([bandOf("5-8 years"), bandOf("8+ years of experience"), bandOf("Minimum 3 yrs"), bandOf("not stated")]) === JSON.stringify([{ min: 5, max: 8 }, { min: 8, max: null }, { min: 3, max: null }, null]), [bandOf("5-8 years"), bandOf("8+ years of experience"), bandOf("Minimum 3 yrs"), bandOf("not stated")]);
 
 // the whole reading
+const yesToAll = async (items: string) => ({ a: [...items.matchAll(/\[(\d+\.\d+)\]/g)].map((m) => [m[1], "yes"] as [string, string]) });
 { const store = memoryStore<PostingProfile>(); const order: string[] = []; let live = 0, peakFirst = 0;
   const ps = Array.from({ length: 20 }, (_, i) => post(String(i + 1), `posting text ${i + 1}`, i === 8 ? "boom" : `emp${i % 3}`));
   const read = async () => strong;
   const judge = async (text: string, resume: string): Promise<Judged> => { live++; if (order.length === 0) peakFirst = live; order.push(text.slice(0, 12)); await new Promise((r) => setTimeout(r, 5)); live--;
     if (text.includes("| boom")) throw new Error("timeout");
     const n = (text.match(/POSTING \d+/g) ?? []).length; return { years: 8, jobs: Array.from({ length: n }, (_, i) => ({ ...v, n: i + 1 })) }; };
-  const r = await evaluate(lines.join("\n"), ps, { store, read, model: "m1", judge });
+  const r = await evaluate(lines.join("\n"), ps, { store, read, model: "m1", judge, audit: yesToAll });
   check("20 postings are judged in 3 calls of up to 8", r.calls === 3 && r.evals.length === 20, r.calls);
   check("the first call runs alone, so the résumé is cached before the rest read it", peakFirst === 1);
   check("a call that fails leaves its postings unjudged and unshown, never guessed", r.evals.slice(8, 16).every((e) => !e.shown && e.reason === "it could not be judged") && r.evals.slice(0, 8).every((e) => e.shown));
   check("the person's years come from the judgement", r.years === 8);
-  const again = await evaluate(lines.join("\n"), ps, { store, read: async () => { throw new Error("should not be read again"); }, model: "m1", judge });
+  const again = await evaluate(lines.join("\n"), ps, { store, read: async () => { throw new Error("should not be read again"); }, model: "m1", judge, audit: yesToAll });
   check("a second reading takes every posting's requirements from what is kept", again.readNow === 0 && again.evals.filter((e) => e.shown).length === 12, again.readNow);
   const five = shortlist(r.evals, (id) => `emp${(Number(id) - 1) % 3}`);
   check("the list: at most five, at most two from one employer", five.length === 5 && Math.max(...Object.values(five.reduce((m: Record<string, number>, e) => { const k = `emp${(Number(e.id) - 1) % 3}`; m[k] = (m[k] ?? 0) + 1; return m; }, {}))) === 2, five.map((e) => e.id));
@@ -84,6 +85,8 @@ check("bands are read from the posting's own words", JSON.stringify([bandOf("5-8
   check("evidence the auditor confirms stands", r.evals[0].shown && r.evals[0].score === 97 && r.evals[0].audited);
   check("evidence the auditor rejects is counted as missing, and the role drops out", !r.evals[1].shown && r.evals[1].unsupported === 2 && r.evals[1].matches[1].bucket === "missing", [r.evals[1].reason, r.evals[1].unsupported]);
   check("'partial' counts one step lower; an item the auditor skipped is not taken on trust", r.evals[2].weakened === 2 && r.evals[2].matches[0].evidence_kind === "line" && r.evals[2].matches[2].bucket === "missing" && !r.evals[2].shown, [r.evals[2].weakened, r.evals[2].matches.map((m) => m.bucket)]);
+  const none = await evaluate(lines.join("\n"), ps, { store, read: async () => three, model: "m1", judge, audit: undefined as any });
+  check("there is no way round the audit: called without an auditor, nothing is shown", none.evals.every((e) => !e.shown) && none.evals[0].reason === "its evidence could not be checked" && none.audited === 0, none.evals.map((e) => e.reason));
   const down = await evaluate(lines.join("\n"), ps, { store, read: async () => three, model: "m1", judge, audit: async () => { throw new Error("timeout"); } });
   check("if the audit cannot run, nothing unaudited is shown", down.evals.every((e) => !e.shown) && down.evals[0].reason === "its evidence could not be checked", down.evals.map((e) => e.reason)); }
 
