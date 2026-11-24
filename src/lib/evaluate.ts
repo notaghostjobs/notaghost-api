@@ -183,19 +183,26 @@ export type Deps = {
 /** The whole reading: requirements (kept), judgement in batches with the person's text pinned, the audit of every role
  *  that would be shown, then the rules. A call that fails leaves its roles unshown ("could not be judged", "its evidence
  *  could not be checked"), never guessed. */
-export async function evaluate(resume: string, postings: Posting[], deps: Deps, o: { answers?: Answer[]; perCall?: number } = {}): Promise<{ evals: Evaluation[]; years: number; readNow: number; calls: number; auditCalls: number; audited: number }> {
+export async function evaluate(resume: string, postings: Posting[], deps: Deps, o: { answers?: Answer[]; perCall?: number } = {}): Promise<{ evals: Evaluation[]; years: number; readNow: number; calls: number; retries: number; auditCalls: number; audited: number }> {
   const person = personText(resume, o.answers), lines = person.lines, perCall = o.perCall ?? 8;
   const { by, readNow } = await requirementsFor(postings, deps.store, deps.read, deps.model);
   const ready = postings.filter((p) => by.has(p.id)); const out = new Map<string, Evaluation>(); let years = 0, calls = 0, auditCalls = 0, audited = 0;
   const batches: Posting[][] = []; for (let i = 0; i < ready.length; i += perCall) batches.push(ready.slice(i, i + perCall));
   const verdictOf = new Map<string, Verdict | undefined>();
-  const run = async (b: Posting[]) => {
+  let retries = 0;
+  const once = async (b: Posting[]) => {
     calls++; let got: Judged | null = null; try { got = await deps.judge(ask(b, by), person.text); } catch { got = null; }
+    if (got && !Array.isArray(got.jobs)) got = null;
     if (got && Number.isFinite(Number(got.years)) && Number(got.years) > 0 && !years) years = Math.min(50, Number(got.years));
     return { b, got };
   };
+  // a batch that fails (a reply cut short, a timeout) is tried once more as two smaller batches; what fails again stays unjudged
+  const run = async (b: Posting[]): Promise<{ b: Posting[]; got: Judged | null }[]> => {
+    const first = await once(b); if (first.got || b.length < 2) return [first];
+    retries++; const half = Math.ceil(b.length / 2); return Promise.all([once(b.slice(0, half)), once(b.slice(half))]);
+  };
   // the first batch alone, so the pinned text is written to the cache once; the rest together, reading it
-  const done = batches.length ? [await run(batches[0]), ...(await Promise.all(batches.slice(1).map(run)))] : [];
+  const done = batches.length ? [...(await run(batches[0])), ...(await Promise.all(batches.slice(1).map(run))).flat()] : [];
   for (const { b, got } of done) b.forEach((p, i) => { const v = got?.jobs?.find((j) => Number(j.n) === i + 1); verdictOf.set(p.id, v); out.set(p.id, settle(p, by.get(p.id)!, v, lines, years, { answersFrom: person.answersFrom })); });
   // the audit: every role that would be shown has each piece of its evidence read again, on its own
   {
@@ -209,7 +216,7 @@ export async function evaluate(resume: string, postings: Posting[], deps: Deps, 
     });
   }
   const none = (p: Posting): Evaluation => ({ id: p.id, score: 0, shown: false, reason: "its requirements could not be read", same_work: false, seniority: "out_of_reach", why: "", gap: "", matches: [], said: 0, musts: 0, unsupported: 0, weakened: 0, from_answers: 0, audited: false });
-  return { evals: postings.map((p) => out.get(p.id) ?? none(p)), years, readNow, calls, auditCalls, audited };
+  return { evals: postings.map((p) => out.get(p.id) ?? none(p)), years, readNow, calls, retries, auditCalls, audited };
 }
 
 /** Up to `keep`, best first, at most `perEmployer` from one employer, only roles that passed every rule. One or two is a

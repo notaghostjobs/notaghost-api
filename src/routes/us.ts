@@ -149,6 +149,9 @@ async function textsOf(rows: Row[]): Promise<Map<string, { problem: string | nul
 }
 /** What postings ask, kept by the fingerprint of their text for as long as this process runs (lib/evaluate). */
 const requirementsKept = memoryStore<PostingProfile>(5000);
+/** Room for the judge's reply. The model reasons before it answers and that reasoning counts against this allowance:
+ *  at 2,600 a batch of eight was cut short and a third of one person's roles went unjudged (benchmark, 24 Nov 2026). */
+const JUDGE_MAX = 12000;
 const EVAL_N = 25;   // how many of the roles read closely are judged requirement by requirement
 const READ_TEXT_OF = 320;   // the best-titled candidates whose text is read before the forty are chosen
 
@@ -302,7 +305,7 @@ us.post("/finish", async (c) => {
         // what they told us goes to the judge apart from the résumé and is never credited to the résumé (lib/evaluate)
         const cand = n.rows.slice(0, EVAL_N).filter((r) => n.text(r)).map((r) => ({ id: r.job_id, title: r.title, company: n.company(r), text: n.text(r)!.slice(0, 9000) }));
         const ev = await evaluate(resume, cand, { store: requirementsKept, read: parsePosting, model: MODEL,
-          judge: (postings, person) => json<Judged>(JUDGE, postings, 2600, undefined, undefined, person),
+          judge: (postings, person) => json<Judged>(JUDGE, postings, JUDGE_MAX, undefined, undefined, person),
           audit: (items) => json<{ a: [string, string][] }>(AUDIT, items, 1500) }, { answers: told });
         at(row.id, 3);
         const rowOf = new Map(n.rows.map((r) => [r.job_id, r]));

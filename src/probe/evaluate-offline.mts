@@ -62,12 +62,12 @@ const yesToAll = async (items: string) => ({ a: [...items.matchAll(/\[(\d+\.\d+)
     if (text.includes("| boom")) throw new Error("timeout");
     const n = (text.match(/POSTING \d+/g) ?? []).length; return { years: 8, jobs: Array.from({ length: n }, (_, i) => ({ ...v, n: i + 1 })) }; };
   const r = await evaluate(lines.join("\n"), ps, { store, read, model: "m1", judge, audit: yesToAll });
-  check("20 postings are judged in 3 calls of up to 8", r.calls === 3 && r.evals.length === 20, r.calls);
+  check("20 postings are judged in 3 calls of up to 8; the batch that failed is tried again as two halves", r.calls === 5 && r.retries === 1 && r.evals.length === 20, [r.calls, r.retries]);
   check("the first call runs alone, so the résumé is cached before the rest read it", peakFirst === 1);
-  check("a call that fails leaves its postings unjudged and unshown, never guessed", r.evals.slice(8, 16).every((e) => !e.shown && e.reason === "it could not be judged") && r.evals.slice(0, 8).every((e) => e.shown));
+  check("the half that fails again stays unjudged and unshown, never guessed; the other half is judged", r.evals.slice(8, 12).every((e) => !e.shown && e.reason === "it could not be judged") && r.evals.slice(12, 16).every((e) => e.shown) && r.evals.slice(0, 8).every((e) => e.shown), r.evals.slice(8, 16).map((e) => e.reason));
   check("the person's years come from the judgement", r.years === 8);
   const again = await evaluate(lines.join("\n"), ps, { store, read: async () => { throw new Error("should not be read again"); }, model: "m1", judge, audit: yesToAll });
-  check("a second reading takes every posting's requirements from what is kept", again.readNow === 0 && again.evals.filter((e) => e.shown).length === 12, again.readNow);
+  check("a second reading takes every posting's requirements from what is kept", again.readNow === 0 && again.evals.filter((e) => e.shown).length === 16, again.readNow);
   const five = shortlist(r.evals, (id) => `emp${(Number(id) - 1) % 3}`);
   check("the list: at most five, at most two from one employer", five.length === 5 && Math.max(...Object.values(five.reduce((m: Record<string, number>, e) => { const k = `emp${(Number(e.id) - 1) % 3}`; m[k] = (m[k] ?? 0) + 1; return m; }, {}))) === 2, five.map((e) => e.id));
   check("only two reasonable roles: a list of two, not five", shortlist(r.evals.map((e, i) => (i < 2 ? e : { ...e, shown: false })), (id) => id).length === 2);
