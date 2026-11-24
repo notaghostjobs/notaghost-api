@@ -31,7 +31,7 @@ const SR_ORDER = ["jobDescription", "qualifications", "additionalInformation", "
  *  furniture before the job text. The LAST one found in the opening stretch wins, so repeated menus are all skipped. */
 const HEAD_AFTER: { rule: string; re: RegExp }[] = [
   { rule: "head:amazon", re: /Apply now\s+(?=Description\s)/g },                    // "… Job ID: 10587294 | ADCI - Karnataka Apply now Description …"
-  { rule: "head:successfactors", re: /Please wait\.\.\.\s*|Apply now »\s*(?!Find similar jobs)/g },   // not the "Apply now »" that closes the posting      // "… Apply now » Apply now Start applying with LinkedIn Apply Now Start Please wait... "
+  { rule: "head:successfactors", re: /Please wait\.\.\.\s*|Apply now »(?!\s*Find similar jobs)\s*/g },   // not the "Apply now »" that closes the posting      // "… Apply now » Apply now Start applying with LinkedIn Apply Now Start Please wait... "
 ];
 /** Where the posting ends: the first of these after the job text has begun. */
 const TAIL_FROM: { rule: string; re: RegExp }[] = [
