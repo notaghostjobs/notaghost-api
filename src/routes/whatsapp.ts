@@ -382,13 +382,13 @@ async function sendFive(from: string, code: string): Promise<boolean> {
   const { data: row } = await db.from("us_lists").select("id, picks, profile").eq("id", code).maybeSingle();
   const picks: any[] = Array.isArray(row?.picks) ? row!.picks : [];
   if (!row || !picks.length || (row.profile as any)?.m !== "in") return false;
-  const lines = picks.slice(0, 5).map((p, i) => `${i + 1}. *${String(p.title ?? "").slice(0, 90)}*\n${String(p.company ?? "")} · ${Number(p.score) || 0}% match\n${String(p.url ?? "")}`);
+  const lines = picks.slice(0, 5).map((p, i) => `${i + 1}. *${String(p.title ?? "").slice(0, 90)}*\n${String(p.company ?? "")} · ${Number(p.score) || 0}/100 match score\n${String(p.url ?? "")}`);
   await send(from, [`*Your five* — open today, each on the employer’s own page`, "", lines.join("\n\n"), "", "_notaghost.jobs_"].join("\n"));
   await db.from("us_lists").update({ kept_at: new Date().toISOString() }).eq("id", row.id);
   const user = await userFor(from);
   await stampUser(user.id, { first: "wa-five", last: "wa-five" });
   const token = await createSession(user.id);
-  await sendCard(from, { body: "*Finding the match is step one.*\n\nRadar sends you the new roles in your reach each morning, here on WhatsApp, and sharpens your résumé for the ones you pick: 10 Sharpens.\n\n₹2,499 for 30 days. One payment.", button: "See Radar", url: `${SITE}/app.html#/v2/radar?t=${token}&src=wa`, footer: "notaghost.jobs" });
+  await sendCard(from, { body: "*Today’s five were free.*\n\nWant fresh matches every morning? Radar keeps finding relevant jobs, here on WhatsApp, and tailors your résumé for the roles you choose: 10 tailored résumés.\n\n₹2,499 · 30 days · One payment.", button: "See Radar", url: `${SITE}/app.html#/v2/radar?t=${token}&src=wa`, footer: "notaghost.jobs" });
   return true;
 }
 
