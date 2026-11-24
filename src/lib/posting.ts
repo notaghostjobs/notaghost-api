@@ -58,6 +58,10 @@ const TAIL_FROM: { rule: string; re: RegExp }[] = [
 ];
 /** "… Apply now » Apply now Start applying with LinkedIn Apply Now Start Please wait..." as the last words of the text. */
 const APPLY_BLOCK = /(?:Apply now »\s*)?Apply now\s[\s\S]{0,80}?Please wait\.\.\.\s*$/;
+/** "Apply for this job * indicates a required field First Name * Last Name * …": the employer's application form. */
+const FORM_FROM = /Apply for this job\s*\*\s*indicates a required field/;
+/** "Job Application for Product Analyst II at HackerRank " before the posting on the same pages. */
+const FORM_HEAD = /^\s*Job Application for [^\n]{3,160}? at [A-Z][\w&.' -]{1,60}?\s+(?=[A-Z])/;
 const OPENING = 6000;   // menus and notices sit in the opening stretch; a marker further in is the posting's own words
 const LEAST = 200;      // a cut that would leave less than this is not made, unless the start of the posting was found: better the page than a stub
 
@@ -101,6 +105,10 @@ export function postingBody(raw: string | null | undefined): PostingBody {
   if (end >= 0) { t = t.slice(0, end); rules.push(endRule); }
   // the apply buttons a SuccessFactors page repeats under the posting: only as the very last words, only button labels
   if (paged) { const m = APPLY_BLOCK.exec(t); if (m && m.index >= (known ? 1 : LEAST)) { t = t.slice(0, m.index); rules.push("tail:apply-buttons"); } }
+
+  // 5. a Greenhouse page stored with its application form: the form starts at one fixed sentence and holds no job text
+  { const m = FORM_FROM.exec(t); if (m && m.index >= LEAST) { t = t.slice(0, m.index); rules.push("tail:application-form"); } }
+  { const m = FORM_HEAD.exec(t); if (m && t.length - m[0].length >= LEAST) { t = t.slice(m[0].length); rules.push("head:application-form"); } }
 
   t = tidy(t);
   return { text: t, state: t ? "ok" : "empty", rules };
