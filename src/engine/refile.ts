@@ -122,6 +122,9 @@ export function sanitizeProfile(profile: ResumeProfile): { profile: ResumeProfil
     // a cut-off copy of a longer line in the same role (an earlier recovery left one): the longer line stands
     r.bullets = keep.filter((b, i) => { const n = norm(b); return !keep.some((o, j) => j !== i && norm(o).length > n.length && norm(o).startsWith(n) && words(n).length >= 6) || (log.push(`cut-off copy dropped in ${r.company}: ${b.slice(0, 50)}`), false); });
   }
+  // ...and a cut-off copy of a longer line under ANOTHER role (the same recovery, across employers): the whole line stands where it is
+  const every = (next.roles ?? []).flatMap((r) => r.bullets ?? []).map(norm);
+  for (const r of next.roles ?? []) r.bullets = (r.bullets ?? []).filter((b) => { const n = norm(b); return !(words(n).length >= 6 && every.some((o) => o.length > n.length && o.startsWith(n + " "))) || (log.push(`cut-off copy of another role's line dropped in ${r.company}: ${b.slice(0, 50)}`), false); });
   return { profile: next, log };
 }
 
@@ -209,8 +212,20 @@ export function refileBullets(profile: ResumeProfile, text: string): { profile: 
     flush();
     const found: string[] = [];
     const mine = " " + norm(JSON.stringify(r.bullets ?? [])) + " ";
-    for (const { text: s, glyph } of sents) {
+    const stretch = hay.slice(start, end === Infinity ? undefined : end) + " ";
+    const allB = next.roles.flatMap((o) => o.bullets ?? []);
+    const stops = allB.length >= 4 && allB.filter((b) => /[.!?]$/.test(b.trim())).length / allB.length >= 0.8;   // this résumé ends its lines with a full stop
+    for (const { text: s0, glyph } of sents) {
       if (glyphs && !glyph) continue;
+      // the company line read together with the line under it ("IGT Solutions Pvt. Ltd Executed hiring…"): the company comes off
+      const co = norm(r.company);
+      const s = co && norm(s0).startsWith(co + " ") ? s0.trim().split(/\s+/).slice(words(r.company).length).join(" ") : s0;
+      // a line is only recovered whole and from this role's own stretch of the page. Two roles whose lines open with the same
+      // words ("Managed bulk and volume hiring…", 24 Nov) each matched the other's first printed line: a cut-off piece of
+      // another employer's line is not this role's lost bullet.
+      if (!stretch.includes(" " + norm(s) + " ")) continue;
+      if (stops && !/[.!?]$/.test(s.trim())) continue;                                    // cut off mid-sentence
+      if (allB.some((b) => norm(b).length > norm(s).length && norm(b).startsWith(norm(s)))) continue;   // the opening of a longer line some role already has
       const w = words(s); if (w.length < 7) continue;                                   // headers, one-word lines
       if (norm(s).includes(norm(r.company)) && w.length < 10) continue;                  // the company line itself
       if (norm(s).includes(norm(r.title))) continue;                                      // the title line

@@ -55,7 +55,7 @@ export async function processResume(resumeId: string) {
     (parsed as any).parse_check = await verifyParse(parsed, refiled.log, text, pages, isPdf ? buf : null);
     if (!(parsed as any).parse_check.verified) console.error("[resume] PARSE UNVERIFIED", resumeId, (parsed as any).parse_check);
     const tidy2 = sanitizeProfile(parsed); if (tidy2.log.length) { parsed = tidy2.profile; console.error("[resume] SANITIZED", resumeId, tidy2.log); }
-    (parsed as any).refiled = 6;
+    (parsed as any).refiled = 7;
   }
   await db.from("resumes").update({ text, parsed }).eq("id", resumeId);
   return parsed;
@@ -144,7 +144,7 @@ export async function checkedProfile(resumeId: string, tag = "shot"): Promise<Re
   const { data: res } = await db.from("resumes").select("parsed, text, storage_path, filename").eq("id", resumeId).single();
   if (!res?.parsed) return null;
   let profile = res.parsed as ResumeProfile;
-  if (res.text && (profile as any).refiled !== 6 && !(profile as any).read_from_page) {
+  if (res.text && (profile as any).refiled !== 7 && !(profile as any).read_from_page) {
     let text: string = res.text; let buf: Buffer | null = null; let pages = Number((profile as any).pages) || 1;
     try {
       const file = await db.storage.from("resumes").download(res.storage_path);
@@ -153,7 +153,7 @@ export async function checkedProfile(resumeId: string, tag = "shot"): Promise<Re
     const tidy = sanitizeProfile(profile); if (tidy.log.length) console.error(`[${tag}] SANITIZED`, resumeId, tidy.log);
     const refiled = refileBullets(tidy.profile, text);
     const isPdf = !/\.docx?$/i.test(res.filename ?? "");
-    profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 6 } as ResumeProfile;
+    profile = { ...sanitizeProfile(refiled.profile).profile, refiled: 7 } as ResumeProfile;
     (profile as any).parse_check = await verifyParse(profile, refiled.log, text, pages, isPdf ? buf : null);
     if (!(profile as any).parse_check.verified) console.error(`[${tag}] PARSE UNVERIFIED`, resumeId, (profile as any).parse_check);
     if (refiled.log.length) console.error(`[${tag}] REFILED`, resumeId, refiled.log);
