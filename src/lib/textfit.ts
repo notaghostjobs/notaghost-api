@@ -97,8 +97,15 @@ export const resumeTerms = (resume: string, idf: Idf) => new Set(terms(resume).f
  *  systems") shares nothing with anyone and scores 0, which says nothing against it. `shared` are the heaviest shared
  *  terms, for showing why. */
 export function textFit(mine: Set<string>, posting: string, idf: Idf, chars = 6000): { fit: number; shared: string[] } {
+  return fitTo(mine, postingTerms(posting, idf, chars));
+}
+/** The forty terms that most mark a posting out, with their weights: what an index keeps for it, computed once. */
+export function postingTerms(posting: string, idf: Idf, chars = 6000): { w: string; x: number }[] {
   const tf = new Map<string, number>(); for (const w of terms(posting.slice(0, chars))) tf.set(w, (tf.get(w) ?? 0) + 1);
-  const marked = [...tf].map(([w, n]) => ({ w, x: weight(idf, w) * Math.min(3, n) })).filter((t) => t.x > 0).sort((a, b) => b.x - a.x).slice(0, 40);
+  return [...tf].map(([w, n]) => ({ w, x: weight(idf, w) * Math.min(3, n) })).filter((t) => t.x > 0).sort((a, b) => b.x - a.x).slice(0, 40);
+}
+/** The fit of a résumé's terms to a posting's kept terms. Same number as textFit. */
+export function fitTo(mine: Set<string>, marked: { w: string; x: number }[]): { fit: number; shared: string[] } {
   const hit = marked.filter((t) => mine.has(t.w));
   const mass = hit.reduce((s, t) => s + t.x, 0);
   return { fit: mass / (mass + EVIDENCE), shared: hit.slice(0, 6).map((t) => t.w) };
