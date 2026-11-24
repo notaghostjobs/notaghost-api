@@ -60,7 +60,7 @@ us.get("/pool", async (c) => {
 });
 
 type Profile = { func: string; level: Level; titles: string[]; field: string; home?: { city?: string | null; state?: string | null; country?: string | null } | null; m?: Market };
-const PROFILE = `You read one résumé and say what jobs this person should be looking at now. Return:
+export const PROFILE = `You read one résumé and say what jobs this person should be looking at now. Return:
 {"func": one of ${FUNCS.join(" | ")}, "level": one of ${LEVELS.join(" | ")}, "titles": [3 to 5 job titles they would realistically be hired for next, most likely first, as employers write them], "field": two or three plain words naming their line of work, lower case, e.g. "product design"}
 Level: intern = still studying; entry = under 2 years of work; mid = 2 to 5; senior = 6 to 10 or a senior title; leader = manages managers, or director and above.
 Also return "home": {"city", "state", "country"}: where the person lives NOW, taken ONLY from the contact block at the very top of the résumé (the line beside their name, phone or email). Never take it from a job, an employer's location, a school, or anywhere else in the document. If the top of the résumé gives no city, or you are not certain, return "home": null. "state" is the two-letter US state code if in the United States, else null; "country" is the two-letter country code, or null if not stated and not obvious from the state.
