@@ -388,7 +388,7 @@ async function rescore(_userId: string, run: Run, _requirement: string, _apply: 
 
 /** The long list, ₹0: the best hundred live roles for each title we search with — the recruiter's titles plus the résumé's
  *  own recent ones — twenty per employer, the union. */
-function shortlistFor(pool: Sighting[], parsed: ResumeProfile, answers: Answers): Sighting[] {
+export function shortlistFor(pool: Sighting[], parsed: ResumeProfile, answers: Answers): Sighting[] {
   const ownTitles = (parsed.roles ?? []).slice(0, 3).map((r) => (r.title ?? "").replace(/[|/,(].*$/, "").trim()).filter((t) => t.length > 3);
   const titles = [...new Set([...answers.titles, ...ownTitles])];
   const targetWords = titles.map(words).filter((w) => w.length);

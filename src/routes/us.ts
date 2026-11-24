@@ -8,6 +8,7 @@ import { env } from "../lib/env.js";
 import { extractText } from "../engine/extract.js";
 import { json } from "../engine/claude.js";
 import { withMeter } from "../engine/meter.js";
+import { livePool, titleIdf, shortlistFor } from "./radar.js";
 import { FUNCS, LEVELS, closest, keywords, near, place, pretty, homeCity, levelOf, type Level, type Row } from "../lib/usmatch.js";
 
 export const us = new Hono();
@@ -84,11 +85,27 @@ async function nearest(profile: Profile, prefs?: Prefs, m: Market = "us") {
   let rows: Row[] = [], inField = 0; const textOf = new Map<string, string | null>(), names = new Map<string, string>();
   const key = (r: Row) => `${r.system}/${r.ref}/${r.job_id}`;
   if (m === "in") {
-    if (kw.length) {
+    // The long list is Radar's (24 Nov): every open role in the city scored by how much of a target title's meaning its own
+    // title carries, each word weighted by how rare it is across the live titles, so "category" counts and "manager" does not.
+    // It replaces a search for any title word among the newest 1,000 matches, which "manager" and "operations" filled before
+    // the right roles were reached (a category director was read 40 roles and shown three). Same pool, same scoring and
+    // same caps as a paying Radar customer's list: 100 per target title, 20 per employer.
+    const since = Date.now() - 2 * DAY;
+    const pool = (await livePool()).filter((r) => r.readable && Date.parse(r.last_seen ?? "") >= since && (prefs?.where !== "remote" || /remote/i.test(r.location ?? "")));
+    titleIdf(pool);
+    const rung = profile.level === "leader" ? "head" : profile.level === "intern" || profile.level === "entry" ? "ic" : "manager";
+    const long = shortlistFor(pool, { roles: [] } as any, { titles: profile.titles, level: rung, stretch: false, avoid: [] });
+    let got: { data: any[] } = { data: long }; inField = long.length;
+    // a profile whose titles carry no telling word ("General Manager") gives Radar's list nothing to go on: the old search stands in
+    if (long.length < 40 && kw.length) {
       const any = kw.map((w) => `title.ilike.%${w}%`).join(",");
       const scoped = (q: any): any => (prefs?.where === "remote" ? q.ilike("location", "%remote%") : q).or(any);
-      const [count, got] = await Promise.all([scoped(inOpen("id", { count: "exact", head: true })), scoped(inOpen("id, employer_key, company_name, title, location, url, posted_at, first_seen")).order("first_seen", { ascending: false }).limit(1000)]);
-      inField = count.count ?? 0;
+      const [count, more] = await Promise.all([scoped(inOpen("id", { count: "exact", head: true })), scoped(inOpen("id, employer_key, company_name, title, location, url, posted_at, first_seen")).order("first_seen", { ascending: false }).limit(1000)]);
+      if (more.error) throw new Error(more.error.message);
+      const have = new Set(long.map((r) => r.id));
+      got = { data: [...long, ...((more.data ?? []) as any[]).filter((r) => !have.has(r.id))] }; inField = Math.max(inField, count.count ?? 0);
+    }
+    {
       // one row for one job: the same title at the same employer is listed many times over in India
       const seen = new Set<string>(); const all: Row[] = [];
       for (const r of (got.data ?? []) as any[]) {
