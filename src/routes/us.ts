@@ -165,7 +165,7 @@ us.post("/start", async (c) => {
     const saved = await db.from("us_lists").insert({ id, ip_hash: ip, prefs: {}, profile: { ...out.profile, questions: out.questions, m }, resume_text: resume });
     if (saved.error) { console.error("[us] start not saved", saved.error.message); return c.json({ error: "We couldn’t start your list. Try again in a minute." }, 503); }
     // lists nobody asked to keep are not held: a week on, they go
-    db.from("us_lists").delete().is("email", null).lt("created_at", new Date(Date.now() - 7 * DAY).toISOString()).then(() => {}, () => {});
+    db.from("us_lists").delete().is("email", null).is("kept_at", null).lt("created_at", new Date(Date.now() - 7 * DAY).toISOString()).then(() => {}, () => {});
     const total = await readPool(m);
     return c.json({ id, field: out.profile.field, roles: total.roles, close: out.close, questions: out.questions, city: out.city });
   } catch (e) {

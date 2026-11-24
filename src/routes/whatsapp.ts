@@ -333,6 +333,9 @@ async function handle(m: any) {
   await markRead(m.id);
   // a prefilled message from a post carries its channel in a trailing bracket — "(IF)" → wa-if; a hand-typed message is wa-direct
   const { text, tag } = untagMessage(rawText);
+  // "Send me my five #<code>" from the short-list page: the list they just made, sent back in this chat
+  const five = text.match(/(?:^|\s)#([A-Za-z0-9_-]{16})(?=\s|$)/);
+  if (five && await sendFive(from, five[1])) return;
   const url = firstUrl(text);
   if (!url) {
     // first contact from the site arrives as the opener; anything else without a link gets the short ask
@@ -371,6 +374,22 @@ async function handle(m: any) {
   const token = await createSession(user.id);
   void logEvent("check", { src, userId: user.id, meta: { verdict: r.verdict, source: "whatsapp", posting_id: r.posting_id } });
   await sendCard(from, format(r, token, g));
+}
+
+/** The short list a person made on the site (India), sent to the number that asked for it. The person wrote to us first,
+ *  so this is a reply inside the 24-hour window and needs no template. False when the code is not a finished India list. */
+async function sendFive(from: string, code: string): Promise<boolean> {
+  const { data: row } = await db.from("us_lists").select("id, picks, profile").eq("id", code).maybeSingle();
+  const picks: any[] = Array.isArray(row?.picks) ? row!.picks : [];
+  if (!row || !picks.length || (row.profile as any)?.m !== "in") return false;
+  const lines = picks.slice(0, 5).map((p, i) => `${i + 1}. *${String(p.title ?? "").slice(0, 90)}*\n${String(p.company ?? "")} · ${Number(p.score) || 0}% match\n${String(p.url ?? "")}`);
+  await send(from, [`*Your five* — open today, each on the employer’s own page`, "", lines.join("\n\n"), "", "_notaghost.jobs_"].join("\n"));
+  await db.from("us_lists").update({ kept_at: new Date().toISOString() }).eq("id", row.id);
+  const user = await userFor(from);
+  await stampUser(user.id, { first: "wa-five", last: "wa-five" });
+  const token = await createSession(user.id);
+  await sendCard(from, { body: "*Finding the match is step one.*\n\nRadar sends you the new roles in your reach each morning, here on WhatsApp, and sharpens your résumé for the ones you pick: 10 Sharpens.\n\n₹2,499 for 30 days. One payment.", button: "See Radar", url: `${SITE}/app.html#/v2/radar?t=${token}&src=wa`, footer: "notaghost.jobs" });
+  return true;
 }
 
 /** The card, as a WhatsApp message: verdict + count, three facts (positives first on a Real, flags first otherwise),
