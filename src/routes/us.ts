@@ -9,6 +9,8 @@ import { extractText } from "../engine/extract.js";
 import { json } from "../engine/claude.js";
 import { withMeter } from "../engine/meter.js";
 import { livePool, titleIdf, shortlistFor, fwords, type Sighting } from "./radar.js";
+import { evaluate, shortlist, memoryStore, JUDGE, type Judged } from "../lib/evaluate.js";
+import { parsePosting, type PostingProfile } from "../engine/sharpen.js";
 import { postingProblem, corpus, resumeTerms, textFit, forReading, type Idf } from "../lib/textfit.js";
 import { FUNCS, LEVELS, closest, lastFive, titleScore, keywords, near, place, pretty, homeCity, levelOf, type Level, type Row } from "../lib/usmatch.js";
 
@@ -128,6 +130,26 @@ async function wordTable(pool: Sighting[]): Promise<Idf | null> {
     words = { at: Date.now(), idf: corpus(texts) }; return words.idf;
   } catch (e) { console.error("[us] word table", (e as Error).message); return null; }
 }
+/** The cleaned text of postings already read, by sighting id, for six hours: the second step of a list, and the next
+ *  person in the same line of work, do not fetch and clean the same descriptions again. */
+const texts = new Map<string, { at: number; problem: string | null; text: string }>();
+const TEXT_FOR = 6 * 3600e3, TEXTS_MAX = 8000;
+export const textStats = { fetched: 0, reused: 0, ms: 0 };
+async function textsOf(rows: Row[]): Promise<Map<string, { problem: string | null; text: string }>> {
+  const now = Date.now(), t0 = now, out = new Map<string, { problem: string | null; text: string }>(), need: Row[] = [];
+  for (const r of rows) { const c = texts.get(r.job_id); if (c && now - c.at < TEXT_FOR) out.set(r.job_id, c); else need.push(r); }
+  const chunks: Row[][] = []; for (let i = 0; i < need.length; i += 80) chunks.push(need.slice(i, i + 80));
+  for (const got of await Promise.all(chunks.map((c) => db.from("sightings").select("id, description").in("id", c.map((r) => Number(r.job_id)))))) {
+    if (got.error) throw new Error(got.error.message);
+    for (const d of (got.data ?? []) as any[]) { const r = need.find((x) => x.job_id === String(d.id)); if (!r) continue; const v = postingProblem(r.title, d.description); const e = { at: now, problem: v.problem, text: v.text }; if (texts.size >= TEXTS_MAX) texts.delete(texts.keys().next().value as string); texts.set(r.job_id, e); out.set(r.job_id, e); }
+  }
+  textStats.fetched += need.length; textStats.reused += rows.length - need.length; textStats.ms += Date.now() - t0;
+  if (need.length) console.log(`[us] texts: fetched ${need.length}, reused ${rows.length - need.length}, ${Date.now() - t0} ms`);
+  return out;
+}
+/** What postings ask, kept by the fingerprint of their text for as long as this process runs (lib/evaluate). */
+const requirementsKept = memoryStore<PostingProfile>(5000);
+const EVAL_N = 25;   // how many of the roles read closely are judged requirement by requirement
 const READ_TEXT_OF = 320;   // the best-titled candidates whose text is read before the forty are chosen
 
 async function nearest(profile: Profile, prefs?: Prefs, m: Market = "us", resume = "") {
@@ -150,12 +172,8 @@ async function nearest(profile: Profile, prefs?: Prefs, m: Market = "us", resume
       // dropped, and the résumé's own words decide among the rest (lib/textfit). No model is involved.
       const now = Date.now();
       const all = inRows(raw, levels, names).map((r) => ({ r, t: titleScore(r, profile.titles, profile.level, now) })).filter((x) => x.t > 0.2).sort((a, b) => b.t - a.t).slice(0, READ_TEXT_OF).map((x) => x.r);
-      const body = new Map<string, string>(), bad = new Set<string>();
-      for (let i = 0; i < all.length; i += 80) {
-        const got = await db.from("sightings").select("id, description").in("id", all.slice(i, i + 80).map((r) => Number(r.job_id)));
-        if (got.error) throw new Error(got.error.message);
-        for (const d of (got.data ?? []) as any[]) { const r = all.find((x) => x.job_id === String(d.id)); if (!r) continue; const v = postingProblem(r.title, d.description); if (v.problem) bad.add(r.job_id); else body.set(r.job_id, v.text); }
-      }
+      const got = await textsOf(all); const body = new Map<string, string>(), bad = new Set<string>();
+      for (const r of all) { const v = got.get(r.job_id); if (!v || v.problem) bad.add(r.job_id); else body.set(r.job_id, v.text); }
       const real = all.filter((r) => !bad.has(r.job_id));
       const idf = resume ? await wordTable(await livePool()) : null;
       if (idf) {
@@ -184,7 +202,8 @@ async function nearest(profile: Profile, prefs?: Prefs, m: Market = "us", resume
   const company = (r: Row) => names.get(r.ref) ?? pretty(r.ref);
   const spot = (r: Row) => (m === "in" ? (r.remote ? "Remote" : "Bengaluru") : place(r.location, r.remote));
   const postings = (chars: number, n = rows.length) => rows.slice(0, n).map((r, i) => `[${i + 1}] ${r.title} | ${company(r)} | ${spot(r)}\n${(textOf.get(key(r)) ?? "(no description held; judge by the title)").slice(0, chars)}`).join("\n\n");
-  return { rows, postings, inField: inField || rows.length, company, spot };
+  const text = (r: Row) => textOf.get(key(r)) ?? null;
+  return { rows, postings, inField: inField || rows.length, company, spot, text };
 }
 
 /** Step one. The résumé is read, the closest roles are found, and the questions those roles raise are worked out.
@@ -278,6 +297,18 @@ us.post("/finish", async (c) => {
       const [total, n] = await Promise.all([readPool(m), nearest(profile, prefs, m, resume)]);
       if (n.rows.length < 3) return { none: m === "in" ? "We don’t have enough open roles for you there yet. Try “Bengaluru, or remote”." : where === "any" ? "We don’t have enough open roles in your line of work yet. We add employers every week; try again soon." : "We don’t have enough open roles for you there yet. Try “Anywhere in the US”." };
       at(row.id, 2);
+      if (m === "in" && process.env.IN_EVAL === "on") {
+        // Requirement by requirement, with the résumé's own lines as evidence; the score and every limit are in code.
+        const lines = told.length ? `${resume}\n${told.map((t) => `Told us: ${t.ask} ${t.answer}`).join("\n")}` : resume;
+        const cand = n.rows.slice(0, EVAL_N).filter((r) => n.text(r)).map((r) => ({ id: r.job_id, title: r.title, company: n.company(r), text: n.text(r)!.slice(0, 9000) }));
+        const ev = await evaluate(lines, cand, { store: requirementsKept, read: parsePosting, judge: (postings, pinned) => json<Judged>(JUDGE, postings, 2600, undefined, undefined, `RÉSUMÉ, as numbered lines:\n${pinned}`) });
+        at(row.id, 3);
+        const rowOf = new Map(n.rows.map((r) => [r.job_id, r]));
+        const picks = shortlist(ev.evals, (id) => rowOf.get(id)!.ref).map((e) => { const r = rowOf.get(e.id)!; return { title: r.title, company: n.company(r).slice(0, 60), place: n.spot(r), posted_at: r.posted_at ?? new Date().toISOString(), score: e.score, why: e.why, gap: e.gap ? `Not on your résumé yet: ${e.gap}`.slice(0, 260) : "", url: r.url }; });
+        console.log(`[us] evaluated ${cand.length}: ${picks.length} shown, ${ev.readNow} postings read now, ${ev.calls} judging calls`);
+        if (!picks.length) return { none: "Nothing open today is a real shot for this résumé. That’s rare; try again tomorrow when new roles are in." };
+        return { cut: [{ n: total.roles, label: "open roles" }, { n: n.inField, label: `in ${profile.field || "your field"}` }, { n: n.rows.length, label: "read closely" }, { n: picks.length, label: "for you" }], picks };
+      }
       const facts = told.length ? `\n\nWHAT THEY TOLD US (true facts about them that the résumé may not show)\n${told.map((t) => `- ${t.ask} ${t.answer}`).join("\n")}` : "";
       const got = await json<{ picks: { n: number; score: number; company?: string; why: string; gap: string }[] }>(PICK + (told.length ? `\nWhat they told us counts exactly as if it were written in the résumé: use it in the score, and never name as missing something they said they have.` : ""), `RÉSUMÉ\n${resume}${facts}\n\nPOSTINGS\n${n.postings(1300)}`, 1800);
       at(row.id, 3);
