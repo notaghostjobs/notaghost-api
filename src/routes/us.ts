@@ -8,7 +8,7 @@ import { env } from "../lib/env.js";
 import { extractText } from "../engine/extract.js";
 import { json } from "../engine/claude.js";
 import { withMeter } from "../engine/meter.js";
-import { livePool, titleIdf, shortlistFor } from "./radar.js";
+import { livePool, titleIdf, shortlistFor, fwords, type Sighting } from "./radar.js";
 import { FUNCS, LEVELS, closest, keywords, near, place, pretty, homeCity, levelOf, type Level, type Row } from "../lib/usmatch.js";
 
 export const us = new Hono();
@@ -80,40 +80,53 @@ Return {"questions":[{"id":"q1","ask":"...","answers":["...","...","..."]}]}. Th
 const cols = "system, ref, job_id, title, location, remote, url, posted_at, level, func";
 type Prefs = { where: "remote" | "city" | "any"; city: string; visa: boolean };
 /** The few dozen open roles closest to this person, with the postings' own words. Before the place is known (no prefs) it looks everywhere. */
+/** Whether any target title says what the work is. "General Manager" does not: every word in it is a rank or a filler, so
+ *  Radar's list has nothing to score by, and only then does the old title-word search stand in. A short long list is not a
+ *  reason to add to it: on the test corpus a credit head's four credit roles were joined by sixteen "analyst" roles that way. */
+export const telling = (titles: string[]) => titles.some((t) => fwords(t).length > 0);
+/** India's long list (24 Nov): Radar's own. Every open, readable role in the city scored by how much of a target title's
+ *  meaning its title carries, each word weighted by how rare it is across the live titles, so "category" counts and
+ *  "manager" does not. It replaces a search for any title word among the newest 1,000 matches, which "manager" and
+ *  "operations" filled before the right roles were reached. Same scoring and caps as a paying Radar customer's list: 100 per
+ *  target title, 20 per employer. The word weights are taken over the whole pool, exactly as Radar takes them, so this
+ *  never changes what Radar sees. Pure: no database, no model. */
+export function inLongList(pool: Sighting[], profile: { titles: string[]; level: Level }, remoteOnly = false, now = Date.now()): Sighting[] {
+  titleIdf(pool);
+  const since = now - 2 * DAY;
+  const open = pool.filter((r) => r.readable && Date.parse(r.last_seen ?? "") >= since && (!remoteOnly || /remote/i.test(r.location ?? "")));
+  const rung = profile.level === "leader" ? "head" : profile.level === "intern" || profile.level === "entry" ? "ic" : "manager";
+  return shortlistFor(open, { roles: [] } as any, { titles: profile.titles, level: rung, stretch: false, avoid: [] });
+}
+/** Raw sightings as the rows the rest of the list works on: only the levels near the person, and one row for one job
+ *  (the same title at the same employer is listed many times over in India). */
+export function inRows(raw: any[], levels: Level[], names: Map<string, string>): Row[] {
+  const seen = new Set<string>(); const all: Row[] = [];
+  for (const r of raw) {
+    const lv = levelOf(r.title); if (!levels.includes(lv)) continue;
+    const k = `${String(r.company_name).toLowerCase()}|${String(r.title).toLowerCase().replace(/\s+/g, " ").trim()}`; if (seen.has(k)) continue; seen.add(k);
+    const ref = String(r.employer_key ?? r.company_name); names.set(ref, tidy(r.company_name));
+    all.push({ system: "in", ref, job_id: String(r.id), title: r.title, location: r.location ?? "Bengaluru", remote: /remote/i.test(r.location ?? ""), url: r.url, posted_at: r.posted_at ?? r.first_seen, level: lv, func: null });
+  }
+  return all;
+}
+
 async function nearest(profile: Profile, prefs?: Prefs, m: Market = "us") {
   const levels = near(profile.level), kw = keywords(profile.titles);
   let rows: Row[] = [], inField = 0; const textOf = new Map<string, string | null>(), names = new Map<string, string>();
   const key = (r: Row) => `${r.system}/${r.ref}/${r.job_id}`;
   if (m === "in") {
-    // The long list is Radar's (24 Nov): every open role in the city scored by how much of a target title's meaning its own
-    // title carries, each word weighted by how rare it is across the live titles, so "category" counts and "manager" does not.
-    // It replaces a search for any title word among the newest 1,000 matches, which "manager" and "operations" filled before
-    // the right roles were reached (a category director was read 40 roles and shown three). Same pool, same scoring and
-    // same caps as a paying Radar customer's list: 100 per target title, 20 per employer.
-    const since = Date.now() - 2 * DAY;
-    const pool = (await livePool()).filter((r) => r.readable && Date.parse(r.last_seen ?? "") >= since && (prefs?.where !== "remote" || /remote/i.test(r.location ?? "")));
-    titleIdf(pool);
-    const rung = profile.level === "leader" ? "head" : profile.level === "intern" || profile.level === "entry" ? "ic" : "manager";
-    const long = shortlistFor(pool, { roles: [] } as any, { titles: profile.titles, level: rung, stretch: false, avoid: [] });
-    let got: { data: any[] } = { data: long }; inField = long.length;
-    // a profile whose titles carry no telling word ("General Manager") gives Radar's list nothing to go on: the old search stands in
-    if (long.length < 40 && kw.length) {
+    const long = inLongList(await livePool(), profile, prefs?.where === "remote");
+    let raw: any[] = long; inField = long.length;
+    if (!telling(profile.titles) && kw.length) {
       const any = kw.map((w) => `title.ilike.%${w}%`).join(",");
       const scoped = (q: any): any => (prefs?.where === "remote" ? q.ilike("location", "%remote%") : q).or(any);
       const [count, more] = await Promise.all([scoped(inOpen("id", { count: "exact", head: true })), scoped(inOpen("id, employer_key, company_name, title, location, url, posted_at, first_seen")).order("first_seen", { ascending: false }).limit(1000)]);
       if (more.error) throw new Error(more.error.message);
       const have = new Set(long.map((r) => r.id));
-      got = { data: [...long, ...((more.data ?? []) as any[]).filter((r) => !have.has(r.id))] }; inField = Math.max(inField, count.count ?? 0);
+      raw = [...long, ...((more.data ?? []) as any[]).filter((r) => !have.has(r.id))]; inField = Math.max(inField, count.count ?? 0);
     }
     {
-      // one row for one job: the same title at the same employer is listed many times over in India
-      const seen = new Set<string>(); const all: Row[] = [];
-      for (const r of (got.data ?? []) as any[]) {
-        const lv = levelOf(r.title); if (!levels.includes(lv)) continue;
-        const k = `${String(r.company_name).toLowerCase()}|${String(r.title).toLowerCase().replace(/\s+/g, " ").trim()}`; if (seen.has(k)) continue; seen.add(k);
-        const ref = String(r.employer_key ?? r.company_name); names.set(ref, tidy(r.company_name));
-        all.push({ system: "in", ref, job_id: String(r.id), title: r.title, location: r.location ?? "Bengaluru", remote: /remote/i.test(r.location ?? ""), url: r.url, posted_at: r.posted_at ?? r.first_seen, level: lv, func: null });
-      }
+      const all = inRows(raw, levels, names);
       rows = closest(all, profile.titles, profile.level);
       const full = rows.length ? await db.from("sightings").select("id, description").in("id", rows.map((r) => Number(r.job_id))) : { data: [] };
       for (const d of (full.data ?? []) as any[]) textOf.set(`in/${rows.find((r) => r.job_id === String(d.id))?.ref}/${d.id}`, d.description);

@@ -1,0 +1,14 @@
+[
+ {"id":"B01","what":"software engineer","level":"mid","titles":["Software Engineer","Software Development Engineer"]},
+ {"id":"B03","what":"lead software engineer","level":"senior","titles":["Lead Software Engineer","Software Engineer"]},
+ {"id":"B04","what":"operations and admin","level":"senior","titles":["Deputy Manager Operations","Operations Manager","Administration Manager"]},
+ {"id":"B05","what":"category head (engine targets)","level":"leader","titles":["Director of Operations","Head of Category Management","Business Unit Head","Head of Business Operations","General Manager"]},
+ {"id":"B07","what":"B2B sales, key accounts","level":"senior","titles":["Assistant Manager Key Accounts","Senior Business Development Manager","Key Account Manager"]},
+ {"id":"B08","what":"regulatory reporting ops","level":"entry","titles":["Regulatory Reporting Operations Associate"]},
+ {"id":"B09","what":"FP&A","level":"senior","titles":["Senior Manager Financial Planning and Analysis","Manager Business Finance"]},
+ {"id":"B10","what":"application support","level":"mid","titles":["Application Support Analyst","Senior Application Support","Application Support Manager"]},
+ {"id":"B12","what":"Salesforce lead","level":"senior","titles":["Salesforce Technical Lead","Senior Salesforce Developer"]},
+ {"id":"B16","what":"credit head","level":"senior","titles":["Regional Credit Head","Credit Manager","Credit Analyst"]},
+ {"id":"B18","what":"marketing operations","level":"mid","titles":["Marketing Operations Analyst","Growth Automation Specialist"]},
+ {"id":"GM","what":"only generic titles","level":"leader","titles":["General Manager","Managing Director"]}
+]
