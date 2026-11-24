@@ -27,11 +27,14 @@ const NOT_LOADED = /couldn[’']t load job details|the job may have been removed
 /** SmartRecruiters' own section order, the job first: the employer's "about us" is kept, after what the role asks for. */
 const SR_ORDER = ["jobDescription", "qualifications", "additionalInformation", "companyDescription"];
 
-/** Where the posting starts on a page that opens with its menus. Each entry: the hiring system's own last piece of page
- *  furniture before the job text. The LAST one found in the opening stretch wins, so repeated menus are all skipped. */
+/** Where the posting starts on a page that opens with its menus: the hiring system's own last piece of page furniture
+ *  before the job text. They are tried in this order and the FIRST place one is found, after "Skip to main content", is
+ *  where the posting starts. Never a later one: a short posting has its closing "Apply now »" inside the opening stretch,
+ *  and cutting there removed the whole posting (139 of 424 SuccessFactors pages, measured 24 Nov 2026). */
 const HEAD_AFTER: { rule: string; re: RegExp }[] = [
   { rule: "head:amazon", re: /Apply now\s+(?=Description\s)/g },                    // "… Job ID: 10587294 | ADCI - Karnataka Apply now Description …"
-  { rule: "head:successfactors", re: /Please wait\.\.\.\s*|Apply now »(?!\s*Find similar jobs)\s*/g },   // not the "Apply now »" that closes the posting      // "… Apply now » Apply now Start applying with LinkedIn Apply Now Start Please wait... "
+  { rule: "head:successfactors", re: /Please wait\.\.\.\s*/g },                     // "… Apply now » Apply now Start applying with LinkedIn Apply Now Start Please wait... "
+  { rule: "head:successfactors", re: /Apply now »(?!\s*Find similar jobs)\s*/g },   // pages without the "Please wait..." line; not the "Apply now »" that closes the posting
 ];
 /** Where the posting ends: the first of these after the job text has begun. */
 const TAIL_FROM: { rule: string; re: RegExp }[] = [
@@ -39,8 +42,10 @@ const TAIL_FROM: { rule: string; re: RegExp }[] = [
   { rule: "tail:cookies", re: /Cookie Consent Manager|Consent to all (Required|Functional|Advertising|Performance) Cookies|Modify Cookie Preferences|Confirm My Choices/ },
   { rule: "tail:amazon", re: /Job details\s[\s\S]{0,240}?Share this job|Share this job\s+JOIN US ON/ },
 ];
+/** "… Apply now » Apply now Start applying with LinkedIn Apply Now Start Please wait..." as the last words of the text. */
+const APPLY_BLOCK = /(?:Apply now »\s*)?Apply now\s[\s\S]{0,80}?Please wait\.\.\.\s*$/;
 const OPENING = 6000;   // menus and notices sit in the opening stretch; a marker further in is the posting's own words
-const LEAST = 200;      // a cut that would leave less than this is not made: better the page than a stub
+const LEAST = 200;      // a cut that would leave less than this is not made, unless the start of the posting was found: better the page than a stub
 
 export function postingBody(raw: string | null | undefined): PostingBody {
   const rules: string[] = [];
@@ -65,18 +70,22 @@ export function postingBody(raw: string | null | undefined): PostingBody {
   if (/&(#x?[0-9a-f]+|[a-z]+);/i.test(t)) { const u = entities(t); if (u !== t) { t = u; rules.push("entities"); } }
 
   // 3. the page's opening furniture
+  let known = false;   // the text now starts at the posting itself: what follows a closing marker is furniture however short the posting
   const paged = /Skip to main content/.test(t.slice(0, OPENING));   // a stored web page, not a posting's own text
   if (paged) {
+    const from = t.indexOf("Skip to main content") + "Skip to main content".length;
     let cut = -1, rule = "";
-    for (const h of HEAD_AFTER) { h.re.lastIndex = 0; let m: RegExpExecArray | null; while ((m = h.re.exec(t)) && m.index < OPENING) { const end = m.index + m[0].length; if (end > cut) { cut = end; rule = h.rule; } if (m[0].length === 0) h.re.lastIndex++; } }
-    if (cut < 0) { const i = t.indexOf("Skip to main content"); cut = i + "Skip to main content".length; rule = "head:menu-only"; }   // no known last piece: the notice goes, the menu may remain
-    if (t.length - cut >= LEAST) { t = t.slice(cut); rules.push(rule); }
+    for (const h of HEAD_AFTER) { h.re.lastIndex = from; const m = h.re.exec(t); if (m && m.index < OPENING) { cut = m.index + m[0].length; rule = h.rule; break; } }
+    if (cut < 0) { cut = from; rule = "head:menu-only"; }   // no known last piece: the notice goes, the menu may remain
+    if (t.length - cut >= LEAST) { t = t.slice(cut); rules.push(rule); known = rule !== "head:menu-only"; }
   }
 
   // 4. the page's closing furniture: only on a stored page. A posting's own words may say "cookie" or "Apply now".
   let end = -1, endRule = "";
-  if (paged) for (const x of TAIL_FROM) { const m = x.re.exec(t); if (m && m.index >= LEAST && (end < 0 || m.index < end)) { end = m.index; endRule = x.rule; } }
+  if (paged) for (const x of TAIL_FROM) { const m = x.re.exec(t); if (m && m.index >= (known ? 1 : LEAST) && (end < 0 || m.index < end)) { end = m.index; endRule = x.rule; } }
   if (end >= 0) { t = t.slice(0, end); rules.push(endRule); }
+  // the apply buttons a SuccessFactors page repeats under the posting: only as the very last words, only button labels
+  if (paged) { const m = APPLY_BLOCK.exec(t); if (m && m.index >= (known ? 1 : LEAST)) { t = t.slice(0, m.index); rules.push("tail:apply-buttons"); } }
 
   t = tidy(t);
   return { text: t, state: t ? "ok" : "empty", rules };
