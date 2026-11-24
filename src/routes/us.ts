@@ -9,7 +9,7 @@ import { extractText } from "../engine/extract.js";
 import { json } from "../engine/claude.js";
 import { withMeter } from "../engine/meter.js";
 import { livePool, titleIdf, shortlistFor, fwords, type Sighting } from "./radar.js";
-import { FUNCS, LEVELS, closest, keywords, near, place, pretty, homeCity, levelOf, type Level, type Row } from "../lib/usmatch.js";
+import { FUNCS, LEVELS, closest, lastFive, keywords, near, place, pretty, homeCity, levelOf, type Level, type Row } from "../lib/usmatch.js";
 
 export const us = new Hono();
 const PER_IP_A_DAY = 5, ALL_A_DAY = 300;   // a free list costs a few cents; these keep one visitor or one bad day from running up a bill
@@ -127,7 +127,7 @@ async function nearest(profile: Profile, prefs?: Prefs, m: Market = "us") {
     }
     {
       const all = inRows(raw, levels, names);
-      rows = closest(all, profile.titles, profile.level);
+      rows = closest(all, profile.titles, profile.level, 40, Date.now(), true);
       const full = rows.length ? await db.from("sightings").select("id, description").in("id", rows.map((r) => Number(r.job_id))) : { data: [] };
       for (const d of (full.data ?? []) as any[]) textOf.set(`in/${rows.find((r) => r.job_id === String(d.id))?.ref}/${d.id}`, d.description);
     }
@@ -248,8 +248,7 @@ us.post("/finish", async (c) => {
       const facts = told.length ? `\n\nWHAT THEY TOLD US (true facts about them that the résumé may not show)\n${told.map((t) => `- ${t.ask} ${t.answer}`).join("\n")}` : "";
       const got = await json<{ picks: { n: number; score: number; company?: string; why: string; gap: string }[] }>(PICK + (told.length ? `\nWhat they told us counts exactly as if it were written in the résumé: use it in the score, and never name as missing something they said they have.` : ""), `RÉSUMÉ\n${resume}${facts}\n\nPOSTINGS\n${n.postings(1300)}`, 1800);
       at(row.id, 3);
-      const used = new Set<number>();
-      const picks = (got.picks ?? []).filter((p) => Number.isInteger(p.n) && n.rows[p.n - 1] && p.score >= 60 && !used.has(p.n) && used.add(p.n)).sort((a, b2) => b2.score - a.score).slice(0, 5).map((p) => {
+      const picks = lastFive(got.picks ?? [], n.rows).map((p) => {
         const r = n.rows[p.n - 1];
         return { title: r.title, company: (m === "in" ? n.company(r) : p.company || pretty(r.ref)).slice(0, 60), place: n.spot(r), posted_at: r.posted_at ?? new Date().toISOString(), score: Math.round(Math.min(99, p.score)), why: String(p.why ?? "").slice(0, 320), gap: String(p.gap ?? "").slice(0, 260), url: r.url };
       });

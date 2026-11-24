@@ -24,27 +24,53 @@ export function keywords(titles: string[], max = 8): string[] {
 }
 
 /** 0..1: how much of the closest target title this role's title shares, with a little for the right level and for being recent. */
-export function titleScore(row: Row, targets: string[], level: Level, now = Date.now()): number {
-  const have = new Set(core(row.title));
+/** How much of the nearest target title a role's title carries: 1 is every word, less for each word missing or extra. */
+export function titleFit(title: string, targets: string[]): number {
+  const have = new Set(core(title));
   let best = 0;
   for (const t of targets) {
     const want = core(t); if (!want.length) continue;
     const hit = want.filter((w) => have.has(w)).length;
     best = Math.max(best, hit / want.length - Math.max(0, have.size - want.length) * 0.04);
   }
+  return Math.max(0, best);
+}
+export function titleScore(row: Row, targets: string[], level: Level, now = Date.now()): number {
   const lv = row.level === level ? 0.12 : 0;
   const age = row.posted_at ? Math.max(0, (now - Date.parse(row.posted_at)) / 864e5) : 60;
-  return Math.max(0, best) * 0.8 + lv + Math.max(0, 0.08 - age * 0.0013);
+  return titleFit(row.title, targets) * 0.8 + lv + Math.max(0, 0.08 - age * 0.0013);
 }
 
-/** The few dozen to read closely: best title match first, no more than two from one employer. */
-export function closest(rows: Row[], targets: string[], level: Level, keep = 40, now = Date.now()): Row[] {
+/** A title this near a target title is a close match: most of its words, few others. */
+export const CLOSE = 0.6;
+
+/** The few dozen to read closely: best title match first, no more than two from one employer.
+ *  With `fill`, a close title match is never turned away while a weaker one from another employer is let in: the close
+ *  matches are taken first, two per employer, then one more per employer each round up to `most`; only then the weaker
+ *  ones, two per employer. The limit is there to stop one big employer crowding others out, not to throw away good roles.
+ *  (Measured on the 24 Nov 2026 inventory: a category head had 32 close matches and 14 of them in the 40; a credit head's
+ *  list was 27 roles with 29 close matches turned away.) The final list has its own limit: see lastFive. */
+export function closest(rows: Row[], targets: string[], level: Level, keep = 40, now = Date.now(), fill = false, most = 8): Row[] {
   const per = new Map<string, number>(), out: Row[] = [];
   const scored = rows.map((r) => ({ r, s: titleScore(r, targets, level, now) })).filter((x) => x.s > 0.2).sort((a, b) => b.s - a.s);
-  for (const { r } of scored) {
-    const k = `${r.system}/${r.ref}`.toLowerCase(), n = per.get(k) ?? 0;
-    if (n >= 2) continue;
-    per.set(k, n + 1); out.push(r);
+  const emp = (r: Row) => `${r.system}/${r.ref}`.toLowerCase();
+  const take = (list: Row[], cap: number) => { const left: Row[] = []; for (const r of list) { const k = emp(r), n = per.get(k) ?? 0; if (out.length >= keep || n >= cap) { left.push(r); continue; } per.set(k, n + 1); out.push(r); } return left; };
+  if (!fill) { take(scored.map((x) => x.r), 2); return out; }
+  let close = scored.filter((x) => titleFit(x.r.title, targets) >= CLOSE).map((x) => x.r);
+  for (let cap = 2; cap <= most && close.length && out.length < keep; cap++) close = take(close, cap);
+  take(scored.filter((x) => titleFit(x.r.title, targets) < CLOSE).map((x) => x.r), 2);
+  return out;
+}
+
+/** The final list, in code and not left to the model: best score first, a posting once, at most `perEmployer` from one
+ *  employer, at most `keep`. `picks` carry `n`, the 1-based place of the posting in `rows`. */
+export function lastFive<P extends { n: number; score: number }>(picks: P[], rows: Row[], floor = 60, keep = 5, perEmployer = 2): P[] {
+  const used = new Set<number>(), per = new Map<string, number>(), out: P[] = [];
+  for (const p of [...picks].filter((p) => Number.isInteger(p.n) && rows[p.n - 1] && p.score >= floor).sort((a, b) => b.score - a.score)) {
+    if (used.has(p.n)) continue; used.add(p.n);
+    const r = rows[p.n - 1], k = `${r.system}/${r.ref}`.toLowerCase(), n = per.get(k) ?? 0;
+    if (n >= perEmployer) continue;
+    per.set(k, n + 1); out.push(p);
     if (out.length >= keep) break;
   }
   return out;
