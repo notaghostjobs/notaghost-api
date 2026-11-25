@@ -108,7 +108,7 @@ function pageTitle(html: string): string | null {
 
 export async function enrichOne(s: { id: number; url: string; posted_at: string | null; salary_text: string | null; raw: any }) {
   const fail = (why: string) => db.from("sightings").update({ enriched_at: new Date().toISOString(), enrich_error: why }).eq("id", s.id);
-  let ld: ReturnType<typeof jsonLd> = null, text = "", betterUrl: string | null = null, realTitle: string | null = null;
+  let ld: ReturnType<typeof jsonLd> = null, text = "", betterUrl: string | null = null, realTitle: string | null = null; let sr: ReturnType<typeof srRecord> = null;
   const wd = (await workdayDetail(s.url.replace(/\/apply\/?$/, ""))) ?? (await oracleDetail(s.url));
   if (wd) {
     if (!wd.ok) { await fail(wd.status === ROBOTS_STATUS ? "disallowed by robots.txt" : `HTTP ${wd.status}`); return false; }
@@ -119,7 +119,7 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
     ld = jsonLd(r.text);
     text = (ld?.description && ld.description.length > 300 ? ld.description : htmlToText(r.text)).slice(0, 20000);
     // SmartRecruiters' job page answers with the posting's JSON record: read the record (clean sections, its own date)
-    const sr = /(^|\.)smartrecruiters\.com$/i.test(new URL(s.url).host) ? srRecord(r.text) : null;
+    sr = /(^|\.)smartrecruiters\.com$/i.test(new URL(s.url).host) ? srRecord(r.text) : null;
     if (sr) { text = sr.text; if (sr.postedAt) ld = { ...(ld ?? {}), datePosted: sr.postedAt }; }
     if (s.raw?.title_from === "slug") { const t = pageTitle(r.text); if (t) realTitle = t; }
     if (text.length < 200 || /phApp\.ddo/.test(r.text)) { const ph = await phenomDetail(s.url, r.text); if (ph) { text = ph.text.slice(0, 20000); if (ph.posted && !ld?.datePosted) ld = { ...(ld ?? {}), datePosted: ph.posted }; if (ph.url) betterUrl = ph.url; } }
@@ -140,7 +140,7 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
   if (realTitle) upd.title = realTitle;   // a sitemap row's slug title replaced by the page's own
   if (!s.posted_at && ld?.datePosted) upd.posted_at = iso(ld.datePosted);
   if (!s.salary_text && (ld?.salary || p.salary)) upd.salary_text = ld?.salary ?? p.salary;
-  upd.raw = { ...(s.raw ?? {}), ...(p.exp ? { exp: s.raw?.exp ?? p.exp } : {}), ...(ld?.validThrough ? { valid_through: ld.validThrough } : {}), ...(realTitle ? { title_from: "page" } : {}) };
+  upd.raw = { ...(s.raw ?? {}), ...(sr && sr.postedAt && !s.posted_at ? { posted_from: "smartrecruiters record" } : {}), ...(p.exp ? { exp: s.raw?.exp ?? p.exp } : {}), ...(ld?.validThrough ? { valid_through: ld.validThrough } : {}), ...(realTitle ? { title_from: "page" } : {}) };
   const { error } = await db.from("sightings").update(upd).eq("id", s.id);
   if (error) throw new Error(error.message);
   return true;
