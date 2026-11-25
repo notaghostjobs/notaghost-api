@@ -6,6 +6,7 @@ import { research } from "../engine/ghost/research.js";
 import { getText } from "./http.js";
 import { detect, byId, SYSTEMS, type Feed } from "./systems/index.js";
 import { workdayDiscover } from "./systems/ats.js";
+import { workdayPaused, WorkdayPaused } from "../lib/workdayPause.js";
 import { atsLinksIn, jsonLdJobs, harvestLinks } from "./systems/page.js";
 import { detectBigFromHtml, probeBig } from "./systems/big.js";
 import { successfactors, isSuccessFactors } from "./systems/successfactors.js";
@@ -23,13 +24,14 @@ function sameCompany(ours: string, theirs: string | null) {
 
 /** Try a system ref; accept only if it exists, has jobs, and (when it tells us) is the same company. */
 async function tryRef(name: string, system: string, ref: string): Promise<Feed | null> {
+  if (system === "workday" && workdayPaused()) throw new WorkdayPaused(`resolve ${ref}`);   // not "no feed": the caller leaves the employer untouched
   const s = byId(system); if (!s) return null;
   try {
     const f = await s.read(ref);
     if (!f || !f.jobs.length) return null;
     if (!sameCompany(name, f.company_name)) return null;
     return f;
-  } catch { return null; }
+  } catch (e) { if (e instanceof WorkdayPaused) throw e; return null; }
 }
 
 /** Given any URL (careers page, job link, ATS board), find the system behind it. */
@@ -157,8 +159,11 @@ export async function resolveEmployer(e: { key: string; name: string; website: s
 const withTimeout = <T>(p: Promise<T>, ms: number, what: string) => Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`timeout after ${ms / 1000}s: ${what}`)), ms))]);
 
 export async function resolveBatch(limit = 20, concurrency = 6, onDone?: (key: string, r: Resolution) => Promise<void>, onProgress?: (name: string, r: Resolution | null, err?: string) => void) {
-  let { data } = await db.from("employers").select("key, name, website, careers_url, ats, ats_ref, priority").is("resolved_at", null).order("priority").order("created_at").limit(limit);
-  if (!data) ({ data } = await db.from("employers").select("key, name, website, careers_url, ats, ats_ref, priority").is("resolved_at", null).order("created_at").limit(limit)); // priority column not there yet
+  // paused: Workday employers, and employers whose careers link is on Workday, are left out of the queue (untouched, and
+  // not stuck at its front); they are resolved again when the switch is unset
+  const queue = () => { const q: any = db.from("employers").select("key, name, website, careers_url, ats, ats_ref, priority").is("resolved_at", null); return workdayPaused() ? q.or("ats.is.null,ats.neq.workday").or("careers_url.is.null,careers_url.not.ilike.*myworkday*") : q; };
+  let { data } = (await queue().order("priority").order("created_at").limit(limit)) as { data: { key: string; name: string; website: string | null; careers_url: string | null; ats: string | null; ats_ref: string | null; priority: number }[] | null };
+  if (!data) ({ data } = (await queue().order("created_at").limit(limit)) as any); // priority column not there yet
   const q = [...(data ?? [])]; const stats = { done: 0, found: 0, none: 0, errors: 0 };
   async function worker() {
     for (;;) {
@@ -174,6 +179,7 @@ export async function resolveBatch(limit = 20, concurrency = 6, onDone?: (key: s
         if (onDone) await withTimeout(onDone(e.key, r), 180000, `record ${e.name}`).catch((err) => console.error("[record]", e.name, (err as Error).message));
         onProgress?.(e.name, r);
       } catch (err) {
+        if (err instanceof WorkdayPaused) { onProgress?.(e.name, null, err.message); continue; }   // paused: nothing written; resolved again later
         stats.errors++; onProgress?.(e.name, null, (err as Error).message);
         // an error never erases a ref we hold (a timeout on a big feed is not "no feed"); only a ref-less employer becomes none
         const keep = !!(e.ats && e.ats_ref && e.ats !== "none" && e.ats !== "page");

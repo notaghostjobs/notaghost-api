@@ -1,4 +1,5 @@
 // Read an employer's feed and record sightings. Idempotent: run it twice, nothing doubles.
+import { workdayPaused } from "../lib/workdayPause.js";
 import { db } from "../lib/db.js";
 import { byId, type Feed } from "./systems/index.js";
 import { isBlr } from "./blr.js";
@@ -68,7 +69,8 @@ export async function readEmployer(e: Employer) {
 /** Read every resolved employer whose last read is older than `staleHours`. */
 export async function readDue(limit = 200, staleHours = 20, concurrency = 3) {
   const since = new Date(Date.now() - staleHours * 3600e3).toISOString();
-  const { data } = await db.from("employers").select("key, name, ats, ats_ref").not("ats", "is", null).not("ats", "in", '("none")').or(`read_at.is.null,read_at.lt.${since}`).order("read_at", { ascending: true, nullsFirst: true }).limit(limit);
+  // paused: Workday employers are left out of this pass altogether, untouched
+  const { data } = await db.from("employers").select("key, name, ats, ats_ref").not("ats", "is", null).not("ats", "in", workdayPaused() ? '("none","workday")' : '("none")').or(`read_at.is.null,read_at.lt.${since}`).order("read_at", { ascending: true, nullsFirst: true }).limit(limit);
   // one read per distinct feed: rows that share a system + ref are satisfied by the same read
   const seenFeed = new Set<string>();
   const q = (data ?? []).filter((e) => { const k = `${e.ats}|${e.ats_ref}`; if (seenFeed.has(k)) return false; seenFeed.add(k); return true; });

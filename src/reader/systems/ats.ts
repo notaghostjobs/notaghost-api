@@ -1,6 +1,7 @@
 // The hiring systems with public JSON feeds. Each reader is exact: it returns what the system says, or null if the ref does not exist.
 import { getJson, getText, ROBOTS_STATUS } from "../http.js";
 import { progress, type Feed, type FeedJob, type System } from "./types.js";
+import { workdayPaused, isWorkdayUrl, WorkdayPaused } from "../../lib/workdayPause.js";
 
 const iso = (v: unknown): string | null => {
   if (!v) return null;
@@ -127,6 +128,7 @@ export const workday: System = {
   id: "workday",
   detect: (u) => { const m = u.match(/https?:\/\/([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com\/(?:[a-z]{2}-[a-z]{2}\/)?([^/?#]+)/i); return m ? `${m[1]}/${m[2]}/${m[3]}` : null; },
   async read(ref) {
+    if (workdayPaused()) throw new WorkdayPaused(`read ${ref}`);   // nothing is sent; the caller leaves the employer as it was
     const [tenant, wd, site] = ref.split("/");
     const base = `https://${tenant}.${wd}.myworkdayjobs.com`;
     const api = `${base}/wday/cxs/${tenant}/${site}/jobs`;
@@ -253,6 +255,7 @@ export async function workdayBlrCount(ref: string): Promise<{ blr: number; total
 }
 /** From a company name to the Workday ref with the most Bengaluru roles, or null. ~10–40 cheap requests. */
 export async function workdayDiscover(name: string): Promise<{ ref: string; blr: number; total: number; sites: number; tenant: string; wd: string } | null> {
+  if (workdayPaused()) return null;
   for (const tenant of workdayTenantGuesses(name)) {
     const wd = await workdayTenant(tenant); if (!wd) continue;
     let sites = await workdaySites(tenant, wd);
