@@ -56,14 +56,20 @@ export function roleTitle(title: string): string {
 /** The specialisations a title names, the most specific first: a title rule that matches a longer stretch of the title
  *  (the role phrase, "payroll operations analyst") beats one that matches a single word ("analyst"). */
 function titleHits(title: string): { id: string; len: number }[] {
+  // the role phrase is the first listing piece; in English its head noun comes last, so a match that ends nearer the
+  // end of that piece is the job's own name ("Supply Chain Product FP&A Analyst" is FP&A, not supply chain)
+  const first = title.split(" | ")[0], rest = title.slice(first.length);
   const out: { id: string; len: number }[] = [];
   for (const s of SPECS) {
-    if (!s.title || !titleNames(s, title)) continue;
-    const m = title.match(s.title); out.push({ id: s.id, len: m ? m[0].length : 1 });
+    if (!s.title) continue;
+    for (const [piece, w] of [[first, 1], [rest, 0.4]] as const) {
+      if (!piece || !titleNames(s, piece)) continue;
+      const m = piece.match(s.title)!; const end = (m.index ?? 0) + m[0].length;
+      out.push({ id: s.id, len: w * (m[0].length + 2 * (end / Math.max(1, piece.length)) * 10) }); break;
+    }
   }
   return out.sort((a, b) => b.len - a.len);
 }
-
 // ── 3. the skills line ──────────────────────────────────────────────────────────────────────────────────────────────
 const MUST = /(must[- ]have skills?|primary skills?|mandatory skills?|key skills?|skills? required|skill required|technical skills?)\s*[:\-–]\s*([^\n]{3,200})/i;
 
@@ -101,18 +107,24 @@ export function seniority(title: string, text: string): { level: Level; why: str
 
 // ── the classifier ──────────────────────────────────────────────────────────────────────────────────────────────────
 const GENERAL = new Set(["swe.general"]);
-export const W2 = { title: 3.5, titleShort: 2.2, general: 1.8, fnGeneric: 0.8, duty: 0.55, req: 0.3, other: 0.12, cap: 7, must: 2.6, mustHits: 2 };
+/** Specialisations whose title words name the shape of a role ("Solution Architect", "Operations Associate",
+ *  "Web Developer"), not its subject. When the title or the skills line also names a subject ("Order to Cash",
+ *  "ServiceNow", "Oracle"), the subject decides. */
+const SHAPE = new Set(["swe.general", "swe.frontend", "cloud.arch", "qa.manual", "qa.auto", "support.app", "support.it", "ops.backoffice", "cs.backoffice", "ops.mgmt", "consult.strategy", "consult.process", "pm.project", "pm.program", "pm.delivery", "presales.solution", "cs.success", "ba.business", "data.analyst"]);
+export const W2 = { title: 3.5, titleShort: 2.2, general: 2.4, fnGeneric: 0.8, duty: 0.55, req: 0.3, other: 0.12, cap: 7, must: 2.6, mustHits: 2 };
 export const MIN2 = 2.2, TEXT_ONLY2 = { score: 1.6, lead: 0.5 };
 export function scoreAll2(title: string, text: string): { spec: string; s: number; t: boolean; m: boolean; d: number; r: number }[] {
   const role = roleTitle(title), jt = jobText(text.slice(0, 16000)), must = text.match(MUST)?.[2] ?? "";
   const hits = titleHits(role); const best = hits[0]?.len ?? 0;
   const fnHit = new Set(FUNCTIONS.filter((f) => f.generic && f.generic.test(role) && !(f.genericNot && f.genericNot.test(role))).map((f) => f.id));
   const out: { spec: string; s: number; t: boolean; m: boolean; d: number; r: number }[] = [];
+  const mustNames = new Set(must ? SPECS.filter((s) => !GENERAL.has(s.id) && (titleNames(s, must) || sigHits(s.id, must) >= W2.mustHits)).map((s) => s.id) : []);
+  const subjectNamed = hits.some((x) => !SHAPE.has(x.id)) || [...mustNames].some((id) => !SHAPE.has(id));
   for (const s of SPECS) {
     const h = hits.find((x) => x.id === s.id); const t = !!h;
     const d = sigHits(s.id, jt.duties), r = sigHits(s.id, jt.reqs), o = sigHits(s.id, jt.other);
-    const m = !!must && !GENERAL.has(s.id) && (titleNames(s, must) || sigHits(s.id, must) >= W2.mustHits);
-    const tw = !t ? 0 : GENERAL.has(s.id) ? W2.general : h!.len >= best * 0.8 ? W2.title : W2.titleShort;
+    const m = mustNames.has(s.id);
+    const tw = !t ? 0 : SHAPE.has(s.id) && subjectNamed ? W2.titleShort - 0.4 : GENERAL.has(s.id) ? W2.general : h!.len >= best * 0.8 ? W2.title : W2.titleShort;
     const textScore = Math.min(W2.cap, W2.duty * d + W2.req * r + W2.other * o);
     const score = tw + (fnHit.has(s.fn) && !GENERAL.has(s.id) ? W2.fnGeneric : 0) + textScore + (m ? W2.must : 0);
     if (score > 0) out.push({ spec: s.id, s: Math.round(score * 100) / 100, t, m, d, r });
