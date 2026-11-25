@@ -20,6 +20,7 @@ import { DISCOVERY_ON, REAL_ON } from "./guard.js";
 import { store, setFault, faultState, now, type FaultKind } from "./state.js";
 import { qaSpend, promptVersion } from "./budget.js";
 import { benchRoutes } from "./bench.js";
+import { ibmProbeRoutes } from "./ibmprobe.js";
 import { EMPLOYERS, FUNCTIONS, JOBS, GM, CANDIDATES, BAND } from "./fixtures.js";
 import { MODEL, HOUSEKEEPING } from "../engine/claude.js";
 import { isolationReport, runPilot, pilotBusy } from "./selftest.js";
@@ -89,6 +90,7 @@ export function qaRoutes(app: App) {
 
   // the benchmark pass-through has its own token and its own closing time (src/qa/bench.ts); temporary
   qa.route("/bench", benchRoutes());
+  qa.route("/bench", ibmProbeRoutes());   // one read-only IBM search probe, same token, at most one outbound request (25 Nov)
 
   // ---------- everything below needs the access token ----------
   qa.use("*", async (c, next) => { if (!hasQaAccess(c.req.header("x-qa-access"))) return c.json({ error: "QA access required, or it has expired." }, 401); await next(); });
