@@ -2,11 +2,15 @@
 //   BENCH_TOKEN_FILE=<file holding the token> npx tsx src/selfcheck/bench.ts
 process.env.GHOSTED_ENV = "qa"; process.env.WA_TOKEN = "qa-simulated"; process.env.QA_PUBLIC_URL = "https://ghosted-qa-api.example"; process.env.SUPABASE_URL = "https://qaqaqaqaqaqaqaqaqaqa.supabase.co"; process.env.SUPABASE_SERVICE_ROLE_KEY ??= "selfcheck";
 import { readFileSync } from "node:fs";
-const { refuse, gate, worstCase, allowed, benchRoutes, MAX_OUT, AT_ONCE } = await import("../qa/bench.js"); const { MODEL } = await import("../engine/claude.js");
+const { refuse, gate, worstCase, allowed, benchRoutes, MAX_OUT, AT_ONCE, PILOT_MODELS, pilotPaise, PILOT_CAP_PAISE } = await import("../qa/bench.js"); const MODEL = PILOT_MODELS[0];
 let failed = 0; const ok = (name: string, pass: boolean, detail: unknown = "") => { console.log(`  ${pass ? "✓" : "✗"} ${name}${pass ? "" : ` — ${JSON.stringify(detail)}`}`); if (!pass) failed++; };
 const good = () => ({ model: MODEL, max_tokens: 2600, system: [{ type: "text", text: "instructions", cache_control: { type: "ephemeral" } }, { type: "text", text: "pinned résumé", cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: "postings" }] });
 const but = (f: (b: any) => void) => { const b: any = good(); f(b); return refuse(b); };
-console.log("Benchmark pass-through self-check");
+console.log("Pilot pass-through self-check");
+ok("both pilot models are accepted; any other model is refused", refuse({ ...good(), model: "claude-sonnet-5-5" }) === null && but((b) => (b.model = "claude-fable-5-2")) === "model not allowed");
+ok("pilot prices: a Haiku call of 3,000 in / 500 out costs well under ₹1 and a Sonnet one more", pilotPaise("claude-haiku-5-5", { input_tokens: 3000, output_tokens: 500 }) < pilotPaise("claude-sonnet-5-5", { input_tokens: 3000, output_tokens: 500 }) && pilotPaise("claude-sonnet-5-5", { input_tokens: 3000, output_tokens: 500 }) < 100);
+ok("an unknown model has no price (counts as infinite)", pilotPaise("x", { input_tokens: 1 }) === Infinity);
+ok("the pilot cap is ₹350", PILOT_CAP_PAISE === 35000);
 ok("the engine's own request is accepted, with or without the pinned block", refuse(good()) === null && but((b) => b.system.pop()) === null);
 ok("an unexpected top-level field is refused (tools, stream, metadata, temperature, tool_choice, thinking)", ["tools", "stream", "metadata", "temperature", "tool_choice", "thinking", "mcp_servers", "container"].every((k) => but((b) => (b[k] = k === "stream" ? true : [])) === "unexpected field"));
 ok("another model is refused", but((b) => (b.model = "claude-opus-5-5")) === "model not allowed");
@@ -36,7 +40,7 @@ ok("the worst-case cost is above what such a call can really cost", worstCase(go
   const app = benchRoutes({ create: async (b: any) => { made++; seen.push(Object.keys(b).sort().join(",")); await new Promise((r) => setTimeout(r, 5)); return { id: "msg", content: [{ type: "text", text: "{}" }], usage: { input_tokens: 10, output_tokens: 5 } }; }, left: async () => left, before: async () => {}, after: async () => { after++; } });
   const post = (headers: Record<string, string>, body: unknown) => app.request("/messages", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: typeof body === "string" ? body : JSON.stringify(body) });
   ok("no token, a wrong token, and a token of the right length but wrong value all get 404 and no call", (await post({}, good())).status === 404 && (await post({ "x-bench-token": "nope" }, good())).status === 404 && (await post({ "x-bench-token": "a".repeat(64) }, good())).status === 404 && made === 0, made);
-  ok("after the closing time the right token is refused too", !token || (allowed(token) && !allowed(token, Date.parse("2026-11-26T00:00:01+05:30"))));
+  ok("after the closing time the right token is refused too", !token || (allowed(token) && !allowed(token, Date.parse("2026-11-29T00:00:01+05:30"))));
   if (token) {
     const h = { "x-bench-token": token };
     const r = await post(h, good()); ok("the right token and the right request are forwarded, with only the four fields", r.status === 200 && made === 1 && seen[0] === "max_tokens,messages,model,system" && after === 1, [r.status, seen[0]]);
@@ -44,4 +48,4 @@ ok("the worst-case cost is above what such a call can really cost", worstCase(go
     ok("a body that is not JSON, or too large, is refused before any call", (await post(h, "{oops")).status === 400 && (await post(h, JSON.stringify({ ...good(), messages: [{ role: "user", content: "x".repeat(210000) }] }))).status === 413 && made === 1);
     left = 0; const no = await post(h, good()); ok("with the budget spent the call is refused (503) and nothing is sent", no.status === 503 && made === 1 && (await no.json()).error.type === "qa_budget");
   } else console.log("  (token file not given: route checks with the real token skipped)"); }
-if (failed) { console.error(`${failed} failed`); process.exit(1); } console.log("Benchmark pass-through self-check: all passed");
+if (failed) { console.error(`${failed} failed`); process.exit(1); } console.log("Pilot pass-through self-check: all passed");
