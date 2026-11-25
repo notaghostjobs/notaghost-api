@@ -82,6 +82,8 @@ if __name__ == "__main__":
     ids = json.load(open(os.path.join(A, a.emb, "ids.json"))); assert ids == [j["id"] for j in jobs], "embedding order differs from views"
     E = {f: np.load(os.path.join(A, a.emb, f"bge-small-{f}-256.npy")).astype(np.float32) for f in ["resp", "skills", "whole", "whole_raw"]}
     bm = BM25([toks(j["resp"] + " " + j["skills"]) for j in jobs])
+    bm_full = BM25([toks(j["whole_raw"]) for j in jobs])            # fallback channel: the posting's own full text, title included
+    bm_title = BM25([toks(j["title"]) for j in jobs])               # fallback channel: the original title
     load_s = time.time() - t0
     only = set(a.only.split(",")) if a.only else None
     enc = Encoder(a.models, "bge-small", 256)
@@ -106,6 +108,8 @@ if __name__ == "__main__":
             "dense_single": E["whole_raw"] @ q[0],
             "bm25": bm.score(toks(v["experience"] + " " + v["skills"] + " " + v["intent"])),
             "struct": sig[:, 1] * sig[:, 2] + 0.05 * sig[:, 4] + 0.3 * sig[:, 3],
+            "fallback_fulltext": bm_full.score(toks(v["experience"] + " " + v["skills"])),
+            "fallback_title": bm_title.score(toks(" ".join(x["title"] for x in C["cir"]["done"]["jobs"][:3]) + " " + v["intent"])),
         }
         rank_of = {k: [int(i) for i in cand_idx[np.argsort(-s[cand_idx])]] for k, s in ch.items()}
         t["channels_ms"] = round(1000 * (time.time() - t2))
@@ -119,7 +123,8 @@ if __name__ == "__main__":
         hyb, hs = rrf([rank_of["dense_exp_resp"], rank_of["dense_intent_resp"], rank_of["dense_skill_skills"], rank_of["bm25"], rank_of["struct"]])
         keep("B_hybrid", hyb)
         pool = hyb[: a.pool]
-        results_c = {"p": c, "pool": [jobs[i]["id"] for i in pool], "eligible": int(elig.sum()), "arms": arms, "ms": t}
+        results_c = {"p": c, "pool": [jobs[i]["id"] for i in pool], "eligible": int(elig.sum()), "arms": arms, "ms": t,
+                     "channels": {k: [jobs[i]["id"] for i in r[:200]] for k, r in rank_of.items()}, "fused_score": {jobs[i]["id"]: round(hs[i], 6) for i in pool}}
         if ce:
             t3 = time.time(); sl = pool[: a.shortlist]
             query = (v["intent"] + ". " + v["experience"])[:1500]
