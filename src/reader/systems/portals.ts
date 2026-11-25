@@ -1,6 +1,8 @@
 // Big employers whose own portals expose a JSON search. Each endpoint below was captured from the live page, 25 Oct 2026.
 import { getJson } from "../http.js";
 import { mode, progress, type FeedJob, type System } from "./types.js";
+import { htmlToText } from "../../engine/extract.js";
+import { ibmDescription } from "../shells.js";
 
 const ts = (v: unknown) => { const n = Number(v); return n > 1e9 ? new Date((n > 1e12 ? n : n * 1000)).toISOString() : null; };
 
@@ -22,7 +24,7 @@ export const ibm: System = {
         const s = h._source ?? {}; const id = String(s.url ?? "").match(/jobId=(\d+)/)?.[1] ?? String(h._id);
         if (seen.has(id)) continue; seen.add(id);
         const d = s.dcdate ? new Date(s.dcdate) : null;
-        jobs.push({ id, title: String(s.title ?? ""), location: String(s.field_keyword_19 ?? "Bangalore, IN"), url: String(s.url ?? `https://careers.ibm.com/careers/JobDetail?jobId=${id}`), posted_at: d && !isNaN(d.getTime()) ? d.toISOString() : null, updated_at: null, posted_text: s.dcdate ?? null });
+        jobs.push({ id, title: String(s.title ?? ""), location: String(s.field_keyword_19 ?? "Bangalore, IN"), url: String(s.url ?? `https://careers.ibm.com/careers/JobDetail?jobId=${id}`), posted_at: d && !isNaN(d.getTime()) ? d.toISOString() : null, updated_at: null, posted_text: s.dcdate ?? null, description: ibmDescription(s.description, htmlToText) });   // the job page is a script shell; the search carries the text (25 Nov)
       }
       if (from + size >= total) break;
     }

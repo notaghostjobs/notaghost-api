@@ -6,6 +6,7 @@ import { htmlToText } from "../engine/extract.js";
 import { fingerprint } from "../engine/ghost/canon.js";
 import { renderText } from "./systems/page.js";
 import { KNOWN } from "./data/known.js";
+import { shellKind, greenhouseJob, unescapeHtml } from "./shells.js";
 
 /** Hosts whose job pages only speak to a browser; a plain fetch is empty. Rendered one at a time, a few per batch. */
 const RENDER_HOSTS = /^(careers\.ibm\.com|apply\.deloitte\.com|usijobs\.deloitte\.com)$/i;
@@ -96,6 +97,16 @@ async function phenomDetail(url: string, firstHtml: string | null): Promise<{ te
   return null;
 }
 
+/** Greenhouse's public Job Board API for one job: its `content` is the posting, HTML-escaped. Used only when the hosted
+ *  page came back as the bare application form. Null when the URL is not a Greenhouse job or the API has no text. */
+async function greenhouseContent(url: string): Promise<string | null> {
+  const g = greenhouseJob(url); if (!g) return null;
+  const r = await getJson<any>(`https://boards-api.greenhouse.io/v1/boards/${g.board}/jobs/${g.id}`, { timeoutMs: 20000, gapMs: 800 });
+  if (!r.ok || typeof r.data?.content !== "string") return null;
+  const t = htmlToText(unescapeHtml(r.data.content)).trim();
+  return t.length >= 200 && !shellKind(t) ? t.slice(0, 20000) : null;
+}
+
 /** The page's own title: JSON-LD JobPosting first, else the first h1. */
 function pageTitle(html: string): string | null {
   for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
@@ -119,10 +130,12 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
     text = (ld?.description && ld.description.length > 300 ? ld.description : htmlToText(r.text)).slice(0, 20000);
     if (s.raw?.title_from === "slug") { const t = pageTitle(r.text); if (t) realTitle = t; }
     if (text.length < 200 || /phApp\.ddo/.test(r.text)) { const ph = await phenomDetail(s.url, r.text); if (ph) { text = ph.text.slice(0, 20000); if (ph.posted && !ld?.datePosted) ld = { ...(ld ?? {}), datePosted: ph.posted }; if (ph.url) betterUrl = ph.url; } }
-    if (text.length < 200 && RENDER_HOSTS.test(new URL(s.url).host)) {
+    // a page shell (IBM's metadata block, Greenhouse's bare application form) is not the posting: try the system's other door
+    if (shellKind(text) === "application form only") { const gh = await greenhouseContent(s.url); if (gh) text = gh; }
+    if ((text.length < 200 || shellKind(text)) && RENDER_HOSTS.test(new URL(s.url).host)) {
       if (rendersThisBatch >= RENDERS_PER_BATCH) { await db.from("sightings").update({ enrich_error: "render budget for this batch used; next batch" }).eq("id", s.id); return false; }   // enriched_at stays null: tried again next batch
       rendersThisBatch++;
-      try { const t = await renderText(s.url); if (t.length >= 200) text = t.slice(0, 20000); } catch (e) { await fail(`render: ${(e as Error).message.slice(0, 120)}`); return false; }
+      try { const t = await renderText(s.url); if (t.length >= 200 && !shellKind(t)) text = t.slice(0, 20000); } catch (e) { await fail(`render: ${(e as Error).message.slice(0, 120)}`); return false; }
     }
   }
   if (DEAD_PAGE.test(text.slice(0, 3000))) {
@@ -130,6 +143,7 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
     return false;
   }
   if (text.length < 200) { await fail("page has no readable text (likely rendered by script)"); return false; }
+  { const sh = shellKind(text); if (sh) { await fail(`page carries no job text (${sh})`); return false; } }   // never stored as a description
   const p = pick(text);
   const upd: Record<string, unknown> = { description: text, fingerprint: fingerprint(text), enriched_at: new Date().toISOString(), enrich_error: null };
   if (betterUrl) upd.url = betterUrl;   // the page that actually holds the job, so the card's link lands on it
