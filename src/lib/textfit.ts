@@ -18,6 +18,14 @@ const TEST_TEXT = /\bthis is a test (job|posting|requisition)\b|\btest job (crea
 const TEST_TITLE = /(^|[\s_])TEST([\s_]|$)[\s\S]*\b(JOB|E2E|LEVER|REQ)\b|\bbug bash\b|\bjobReq\s*\d/;   // "SJ TEST E2E Bug Bash Job"; never "Test Engineer"
 const LISTING = /\bSearch results\b|JavaScript is turned off in your web browser|^Careers Home \|/;
 
+const CODE_SHARE = 0.04;   // real postings, even with some leftover markup, stay well under this
+const codeShare = (t: string) => (t.match(/[{}()\[\];=<>"]/g) ?? []).length / Math.max(1, t.length);
+/** Does the text name the job: its title, or failing that most of the title's words? */
+const named = (title: string, text: string) => {
+  const t = text.toLowerCase(), want = title.toLowerCase().replace(/\s+/g, " ").trim();
+  if (want && t.includes(want.slice(0, 40))) return true;
+  const words = want.match(/[a-z]{4,}/g) ?? []; return words.length > 0 && words.filter((w) => t.includes(w)).length / words.length >= 0.75;
+};
 /** Why this is not a posting a person could act on, or null when it is one. `raw` is the stored description. */
 export function postingProblem(title: string, raw: string | null | undefined): { problem: string | null; text: string } {
   const b = postingBody(raw);
@@ -26,6 +34,9 @@ export function postingProblem(title: string, raw: string | null | undefined): {
   const text = b.text, flat = text.replace(/\s+/g, " ").trim();
   if (/^\{"(widget|uuid)"/.test(flat)) return { problem: "not the posting: a redirect or an empty record", text: "" };
   if (TEST_TEXT.test(flat.slice(0, 2000)) || TEST_TITLE.test(title)) return { problem: "a test job", text: "" };
+  // the careers site's own page code stored in place of the posting (270 Qualcomm pages on 24 Nov 2026: theme settings,
+  // never the job): mostly code symbols, and the job's title appears nowhere in it
+  if (/\{"themeOptions"/.test(flat.slice(0, 600)) || (codeShare(flat.slice(0, 3000)) > CODE_SHARE && !named(title, flat))) return { problem: "not the posting: the careers site's page code", text: "" };
   const words = flat.split(" ").length;
   // an employer's careers landing page stored in place of the posting: it opens as a search page and never names the job
   if (LISTING.test(flat.slice(0, 400)) && !flat.toLowerCase().includes(title.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 40))) return { problem: "a careers search page, not the posting", text: "" };
