@@ -88,9 +88,22 @@ payments.get("/offer", requireUser, async (c) => {
   return c.json({ first, first_paise: PRICES.first.paise, pack_paise: PRICES.sharpen.paise, pack_shots: PRICES.sharpen.shots });
 });
 
-/** Idempotent: marks the payment paid and creates the plan once. */
-async function settle(orderId: string, paymentId: string, signature: string | null, userId: string | null) {
-  const { data: pay } = await db.from("payments").select("*").eq("razorpay_order_id", orderId).maybeSingle();
+const REPAIR_WINDOW_MS = 72 * 3600e3, RECEIPT_GRACE_MS = 120e3;
+const paymentRow = async (id: string) => {
+  const { data, error } = await db.from("payments").select("*").eq("id", id).single();
+  if (error || !data) throw new Error(`payment ${id} not readable: ${error?.message ?? "missing"}`);
+  return data;
+};
+const planFor = async (paymentId: string) => {
+  const { data, error } = await db.from("plans").select("*").eq("payment_id", paymentId).order("created_at", { ascending: true }).limit(1);
+  if (error) throw new Error(`plan lookup failed: ${error.message}`);
+  return data?.[0] ?? null;
+};
+
+/** Idempotent and safe to retry: marks the payment paid, issues its receipt number and creates its plan, each once.
+ *  Any step that fails throws, so the webhook answers 500 and Razorpay retries; a retry finishes what is missing. */
+export async function settle(orderId: string, paymentId: string, signature: string | null, userId: string | null) {
+  let { data: pay } = await db.from("payments").select("*").eq("razorpay_order_id", orderId).maybeSingle();
   if (!pay) throw new Error("unknown order");
   if (userId && pay.user_id !== userId) throw new Error("order belongs to another user");
 
@@ -105,28 +118,79 @@ async function settle(orderId: string, paymentId: string, signature: string | nu
     await settleOpenIntro(orderId, paymentId);
     return null;
   }
-  if (pay.status === "paid") {
-    const { data } = await db.from("plans").select("*").eq("payment_id", pay.id).maybeSingle();
-    return data;
-  }
   const price = PRICES[pay.product as keyof typeof PRICES];
-  const { data: receipt } = await db.rpc("next_receipt_no");
-  await db.from("payments").update({
-    status: "paid", razorpay_payment_id: paymentId, razorpay_signature: signature,
-    receipt_no: receipt, paid_at: new Date().toISOString(),
-  }).eq("id", pay.id);
-  void logEvent("paid", { src: { first: pay.src_first ?? null, last: pay.src_last ?? null }, userId: pay.user_id, meta: { payment_id: pay.id, order_id: orderId, product: pay.product, amount_paise: pay.amount_paise } });
+  if (!price) throw new Error(`no price for product ${pay.product}`);
 
-  const cur = await currentResume<{ parsed: any }>(pay.user_id, "parsed");
-  const { data: plan } = await db.from("plans").insert({
-    user_id: pay.user_id, product: pay.product === "first" ? "sharpen" : pay.product, shots_total: price.shots,   // the first résumé is one Sharpen resume_name: (cur?.parsed as any)?.name ?? null,
-    expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id,
-  }).select("*").single();
-  if (receipt) void notifyReceipt(pay.user_id, { id: pay.id, receipt_no: String(receipt), amount_paise: pay.amount_paise, product: pay.product, shots: price.shots, days: price.days, list_paise: (price as any).list_paise });
+  // 1. Mark paid. The update only matches while the row is unpaid, so when the webhook and the checkout confirmation
+  //    arrive together exactly one of them wins; the other reads the row back. A failure here throws: the webhook
+  //    answers 500 and Razorpay sends it again.
+  const wasPaid = pay.status === "paid";
+  let claimed = false;
+  if (!wasPaid) {
+    const { data: won, error } = await db.from("payments").update({
+      status: "paid", razorpay_payment_id: paymentId, razorpay_signature: signature, paid_at: new Date().toISOString(),
+    }).eq("id", pay.id).neq("status", "paid").select("*");
+    if (error) throw new Error(`payment not marked paid: ${error.message}`);
+    if (won?.length) {
+      pay = won[0]; claimed = true;
+      void logEvent("paid", { src: { first: pay.src_first ?? null, last: pay.src_last ?? null }, userId: pay.user_id, meta: { payment_id: pay.id, order_id: orderId, product: pay.product, amount_paise: pay.amount_paise } });
+    } else pay = await paymentRow(pay.id);
+  }
+
+  // 2. A receipt number, once: drawn by the caller that marked the payment paid, or by a later retry if that caller
+  //    failed before saving one. The caller that lost the race draws none, so no number in the sequence is wasted.
+  //    "Later" means two minutes after it was marked paid: a call that arrives sooner is racing the first one.
+  let issued = false;
+  const stalled = wasPaid && !!pay.paid_at && Date.now() - Date.parse(pay.paid_at) > RECEIPT_GRACE_MS;
+  if (!pay.receipt_no && (claimed || stalled)) {
+    const { data: receipt, error } = await db.rpc("next_receipt_no");
+    if (error) throw new Error(`receipt number not issued: ${error.message}`);
+    if (receipt) {
+      const { data: set, error: e2 } = await db.from("payments").update({ receipt_no: receipt }).eq("id", pay.id).is("receipt_no", null).select("*");
+      if (e2) throw new Error(`receipt number not saved: ${e2.message}`);
+      if (set?.length) { pay = set[0]; issued = true; } else pay = await paymentRow(pay.id);
+    }
+  }
+
+  // 3. The entitlement, exactly once per payment. A payment marked paid whose plan is missing (an insert that failed,
+  //    or a restart mid-way) gets it on the next webhook or confirmation. Two at once: the unique index on
+  //    plans.payment_id (migration 0013) refuses the second insert, and that caller returns the first one's plan.
+  let plan = await planFor(pay.id), created = false;
+  if (!plan) {
+    // Repair is for a fulfilment cut short, which Razorpay's retries (up to 24 hours) bring back. An older paid payment
+    // with no plan is left alone: its plan may have been removed on purpose, and an old confirmation must not revive it.
+    if (pay.paid_at && Date.now() - Date.parse(pay.paid_at) > REPAIR_WINDOW_MS) {
+      console.error(`[payments] paid ${pay.id} has no plan and is past the repair window; not created`);
+      return null;
+    }
+    const cur = await currentResume<{ parsed: any }>(pay.user_id, "parsed");
+    const { data, error } = await db.from("plans").insert({
+      user_id: pay.user_id, product: pay.product === "first" ? "sharpen" : pay.product, shots_total: price.shots,   // the first résumé is one Sharpen
+      resume_name: (cur?.parsed as any)?.name ?? null,
+      expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id,
+    }).select("*").single();
+    if (data && !error) { plan = data; created = true; }
+    else if ((error as any)?.code === "23505") plan = await planFor(pay.id);   // the other caller made it
+    if (!plan) throw new Error(`plan not created for payment ${pay.id}: ${error?.message ?? "no row returned"}`);
+  }
+
+  // 4. The receipt message, once per payment: offered by the caller that made the plan or saved the number (whichever
+  //    finishes second has both), and sent only by the one that writes the marker first.
+  if (created || issued) await sendReceiptOnce(pay.id, price);
   // Radar is paid for: the full pass over their roles starts now, whether or not their page is still open (the free
   // check before payment made no paid judgement). Loaded here, not at the top, because radar.ts is a long way round.
-  if (pay.product === "radar") void import("./radar.js").then((m) => m.fullPassIfFree(pay.user_id)).catch((e) => console.error("[radar] full pass after payment", e?.message ?? e));
+  if (created && pay.product === "radar") void import("./radar.js").then((m) => m.fullPassIfFree(pay.user_id)).catch((e) => console.error("[radar] full pass after payment", e?.message ?? e));
   return plan;
+}
+
+/** The WhatsApp receipt for a paid payment with its number, at most once: a marker in reader_control (its key is the
+ *  primary key) is written first, and only the caller that wrote it sends. */
+async function sendReceiptOnce(paymentId: string, price: { shots: number; days: number }) {
+  const pay = await paymentRow(paymentId);
+  if (!pay.receipt_no) return;
+  const { error } = await db.from("reader_control").insert({ key: `receipt:sent:${pay.id}`, value: { at: new Date().toISOString(), receipt_no: pay.receipt_no } });
+  if (error) { if ((error as any).code !== "23505") console.error(`[payments] receipt marker for ${pay.id} not written; receipt not sent: ${error.message}`); return; }
+  void notifyReceipt(pay.user_id, { id: pay.id, receipt_no: String(pay.receipt_no), amount_paise: pay.amount_paise, product: pay.product, shots: price.shots, days: price.days, list_paise: (price as any).list_paise });
 }
 
 /** Test grant, founder's phone only: retires every plan the user holds and issues a fresh 10-shot Sharpen plan without
