@@ -16,9 +16,10 @@ let receiptSeq = 0, uniquePlanPayment = true, jitter = 0;
 const failNext: Record<string, number> = {};          // "plans:POST" → how many of the next such requests answer 500
 const seen: { table: string; method: string; url: string; body: any }[] = [];
 const sent: any[] = [];                                // requests to WhatsApp
+let waFail = false;                                    // WhatsApp refuses every message
 const reset = () => { for (const k of Object.keys(T)) delete T[k]; T.payments = []; T.plans = []; T.users = []; T.resumes = []; T.events = []; T.reader_control = [];
-  receiptSeq = 0; seen.length = 0; sent.length = 0; for (const k of Object.keys(failNext)) delete failNext[k]; };
-const val = (v: string): any => v === "null" ? null : v === "true" ? true : v === "false" ? false : decodeURIComponent(v);
+  receiptSeq = 0; seen.length = 0; sent.length = 0; waFail = false; for (const k of Object.keys(failNext)) delete failNext[k]; };
+const val = (v: string): any => v === "null" ? null : v === "true" ? true : v === "false" ? false : v;   // URLSearchParams has already decoded it
 function filters(u: URL) {
   const f: ((r: Row) => boolean)[] = []; let order: [string, boolean] | null = null, limit = Infinity;
   for (const [k, v] of u.searchParams) {
@@ -30,6 +31,10 @@ function filters(u: URL) {
     else if (op === "neq") f.push((r) => String(r[k]) !== String(x));
     else if (op === "is") f.push((r) => (r[k] ?? null) === x);
     else if (op === "gt") f.push((r) => r[k] > x);
+    else if (op === "gte") f.push((r) => r[k] != null && r[k] >= x);
+    else if (op === "lt") f.push((r) => r[k] != null && r[k] < x);
+    else if (op === "in") { const set = String(x).replace(/^\(|\)$/g, "").split(",").map((v) => v.replace(/^"|"$/g, "")); f.push((r) => set.includes(String(r[k]))); }
+    else if (op === "like") { const re = new RegExp("^" + String(x).split("%").map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$"); f.push((r) => re.test(String(r[k]))); }
     else throw new Error(`stand-in: filter ${k}=${v} not supported`);
   }
   return { pick: (rows: Row[]) => { let o = rows.filter((r) => f.every((g) => g(r))); if (order) { const [c, asc] = order; o = [...o].sort((a, b) => (a[c] < b[c] ? -1 : a[c] > b[c] ? 1 : 0) * (asc ? 1 : -1)); } return o.slice(0, limit); } };
@@ -68,15 +73,16 @@ globalThis.fetch = (async (input: any, init?: any) => {
   const headers = new Headers(init?.headers ?? (input as any)?.headers);
   const raw = init?.body ?? null; const body = typeof raw === "string" && raw ? JSON.parse(raw) : null;
   if (url.host === "db.test") return database(url, method, headers, body);
-  if (/graph\.facebook\.com$/.test(url.hostname)) { sent.push(body); return json({ messages: [{ id: "wamid.test" }] }); }
+  if (/graph\.facebook\.com$/.test(url.hostname)) { sent.push(body); return waFail ? json({ error: { message: "stand-in refusal" } }, 400) : json({ messages: [{ id: "wamid.test" }] }); }
   return new Response("offline", { status: 404 });
 }) as any;
 
 // ---- the code under test ----------------------------------------------------------------------------------------
 const { payments, settle } = await import("../routes/payments.js");
 const { PRICES } = await import("../lib/env.js");
+const { paymentHealth, PAY_CHECK_SINCE } = await import("../lib/payHealth.js");
 const USER = "user-1";
-const order = (product: string, extra: Row = {}) => { const o: Row = { id: `pay-${++idSeq}`, user_id: USER, product, amount_paise: (PRICES as any)[product].paise, status: "created", razorpay_order_id: `order_${idSeq}`, receipt_no: null, paid_at: null, razorpay_payment_id: null, razorpay_signature: null, ...extra }; T.payments.push(o); return o; };
+const order = (product: string, extra: Row = {}) => { const o: Row = { id: `pay-${++idSeq}`, user_id: USER, product, amount_paise: (PRICES as any)[product]?.paise ?? 49900, status: "created", razorpay_order_id: `order_${idSeq}`, receipt_no: null, paid_at: null, razorpay_payment_id: null, razorpay_signature: null, ...extra }; T.payments.push(o); return o; };
 const webhook = async (orderId: string, payId = `pay_rzp_${orderId}`) => {
   const raw = JSON.stringify({ event: "payment.captured", payload: { payment: { entity: { id: payId, order_id: orderId } } } });
   const sig = createHmac("sha256", "whsec_test").update(raw).digest("hex");
@@ -90,16 +96,17 @@ const plansOf = (p: Row) => T.plans.filter((x) => x.payment_id === p.id);
 const receipts = () => sent.filter((b) => b?.template?.name === "ghosted_receipt").length;
 const paidEvents = () => T.events.filter((e) => e.kind === "paid").length;
 const fullPassAsked = () => seen.filter((s) => s.table === "reader_control" && s.method === "GET" && s.url.includes(encodeURIComponent(`radar:run:${USER}`)) || s.url.includes(`radar:run:${USER}`)).length;
+const marker = (p: Row) => T.reader_control.find((r) => r.key === `receipt:sent:${p.id}`)?.value;
 const hasRadar = () => T.plans.some((p) => p.user_id === USER && p.product === "radar" && p.expires_at > new Date().toISOString());   // the query hasRadar() makes
 const fresh = () => { reset(); T.users.push({ id: USER, phone: "+910000000000" }); T.resumes.push({ id: "res-1", user_id: USER, is_current: true, created_at: now(), parsed: { name: "B-01" } }); };
 
 console.log("Success");
 fresh(); { const p = order("radar"); const s = await webhook(p.razorpay_order_id); await tick(); const pl = plansOf(p);
   ok("Radar via webhook: 200, paid, one receipt number", s === 200 && p.status === "paid" && /^NAG-TEST-/.test(p.receipt_no) && receiptSeq === 1, { s, p });
-  ok("Radar via webhook: exactly one Radar plan, 10 Sharpens, 30 days, résumé name kept", pl.length === 1 && pl[0].product === "radar" && pl[0].shots_total === 10 && Math.round((Date.parse(pl[0].expires_at) - Date.now()) / 86400e3) === 30 && pl[0].resume_name === "B-01", pl);
+  ok("Radar via webhook: exactly one Radar plan, 10 Sharpens, 30 days (no résumé name, as on main today)", pl.length === 1 && pl[0].product === "radar" && pl[0].shots_total === 10 && Math.round((Date.parse(pl[0].expires_at) - Date.now()) / 86400e3) === 30 && !("resume_name" in pl[0]), pl);
   ok("Radar via webhook: hasRadar() would now say yes", hasRadar());
   ok("Radar via webhook: Radar's full pass is asked to start, once", fullPassAsked() === 1, fullPassAsked());
-  ok("Radar via webhook: one receipt message, one paid event", receipts() === 1 && paidEvents() === 1, { r: receipts(), e: paidEvents() });
+  ok("Radar via webhook: one receipt message, one paid event, receipt recorded as sent", receipts() === 1 && paidEvents() === 1 && marker(p)?.state === "sent", { r: receipts(), e: paidEvents(), m: marker(p) });
   await webhook(p.razorpay_order_id); await confirm(p.razorpay_order_id); await tick();
   ok("Replayed webhook and a late confirmation change nothing", plansOf(p).length === 1 && receipts() === 1 && paidEvents() === 1 && receiptSeq === 1 && fullPassAsked() === 1 && p.razorpay_signature === null); }
 fresh(); { const p = order("sharpen"); const r = await confirm(p.razorpay_order_id); await tick(); const pl = plansOf(p);
@@ -135,6 +142,38 @@ fresh(); { const p = order("sharpen", { status: "paid", paid_at: new Date(Date.n
   T.plans.push({ id: "plan-old", payment_id: p.id, user_id: USER, product: "sharpen", shots_total: 10, shots_used: 2, expires_at: new Date(Date.now() + 9 * 86400e3).toISOString(), created_at: now() });
   const r = await settleQuiet(confirm(p.razorpay_order_id)); const s = await webhook(p.razorpay_order_id); await tick();
   ok("settled by the old code (plan and receipt already there): a replay returns that plan and sends no second receipt", r.ok && (r.v as any)?.id === "plan-old" && s === 200 && T.plans.length === 1 && receipts() === 0 && receiptSeq === 0, r); }
+
+console.log("Refunds");
+fresh(); { const p = order("radar"); await webhook(p.razorpay_order_id); await tick(); p.status = "refunded";   // as a refund would record it
+  const before = JSON.stringify({ plans: T.plans, p }); const s = await webhook(p.razorpay_order_id); const r = await settleQuiet(confirm(p.razorpay_order_id)); await tick();
+  ok("a refunded payment, captured webhook replayed: stays refunded, no second plan, no receipt, no event, no full pass", s === 200 && r.ok && p.status === "refunded" && JSON.stringify({ plans: T.plans, p }) === before && receipts() === 1 && paidEvents() === 1 && fullPassAsked() === 1, { s, r }); }
+fresh(); { const p = order("sharpen", { status: "refunded" }); const s = await webhook(p.razorpay_order_id); await tick();
+  ok("refunded before it was ever settled: nothing is created or sent", s === 200 && p.status === "refunded" && T.plans.length === 0 && receipts() === 0 && receiptSeq === 0); }
+fresh(); { const p = order("sharpen", { status: "failed" }); const s = await webhook(p.razorpay_order_id); await tick();
+  ok("an attempt marked failed, then captured: settled once, as a created order is", s === 200 && p.status === "paid" && plansOf(p).length === 1 && receipts() === 1); }
+
+console.log("Receipt delivery");
+fresh(); { const p = order("radar"); waFail = true; const s = await webhook(p.razorpay_order_id); await tick();
+  ok("WhatsApp refuses the receipt: the payment and plan stand (200), the receipt is recorded as failed", s === 200 && plansOf(p).length === 1 && receipts() === 1 && marker(p)?.state === "failed" && !!marker(p)?.reason, marker(p));
+  waFail = false; await webhook(p.razorpay_order_id); await confirm(p.razorpay_order_id); await tick();
+  ok("...and nothing resends it on its own (a person decides)", receipts() === 1 && marker(p)?.state === "failed"); }
+fresh(); { const p = order("sharpen"); failNext["reader_control:PATCH"] = 1; const s = await webhook(p.razorpay_order_id); await tick();
+  ok("the process stops between sending and recording: the receipt stays 'pending', an identifiable case", s === 200 && receipts() === 1 && marker(p)?.state === "pending", marker(p)); }
+fresh(); { const p = order("sharpen"); failNext["reader_control:POST"] = 1; const s = await webhook(p.razorpay_order_id); await tick();
+  ok("the marker cannot be written: no receipt is sent (never sent unrecorded); plan stands", s === 200 && receipts() === 0 && plansOf(p).length === 1 && !marker(p)); }
+
+console.log("Payment health (read-only)");
+{ fresh(); const t0 = Date.parse(PAY_CHECK_SINCE) + 86400e3; const iso = (ms: number) => new Date(ms).toISOString();
+  const a = order("sharpen", { status: "paid", paid_at: iso(t0 - 3600e3), receipt_no: "R1" });                  // paid, no plan, an hour ago
+  const b = order("radar", { status: "paid", paid_at: iso(t0 - 3600e3), receipt_no: "R2" }); T.plans.push({ id: "pl-b", payment_id: b.id, created_at: now() });
+  const c = order("sharpen", { status: "paid", paid_at: iso(t0 - 60e3), receipt_no: "R3" });                     // a minute ago: still settling
+  const d = order("radar", { status: "paid", paid_at: "2026-11-10T13:43:00.471Z", receipt_no: "R4" });            // before the check existed (removed by hand)
+  const e = order("open_intro", { status: "paid", paid_at: iso(t0 - 3600e3), receipt_no: "R5", amount_paise: 49900 });
+  T.reader_control.push({ key: `receipt:sent:${b.id}`, value: { state: "pending", at: iso(t0 - 3600e3) } }, { key: `receipt:sent:${a.id}`, value: { state: "failed", at: iso(t0 - 3600e3) } },
+    { key: `receipt:sent:${c.id}`, value: { state: "pending", at: iso(t0 - 60e3) } }, { key: "receipt:sent:old", value: { state: "sent", at: iso(t0 - 3600e3) } });
+  const h = await paymentHealth(t0); const k = h.problems.map((x) => `${x.kind}:${x.payment_id}`).sort();
+  ok("lists paid-without-plan, a receipt left pending, a failed receipt; ignores fresh, sent, Open and pre-check payments", JSON.stringify(k) === JSON.stringify([`paid_without_plan:${a.id}`, `receipt_failed:${a.id}`, `receipt_pending:${b.id}`].sort()), k);
+  ok("the health check only reads", seen.every((x) => x.method === "GET")); void d; void e; }
 
 console.log("Webhook and confirmation at the same moment (40 rounds, requests interleaved at random)");
 jitter = 8;

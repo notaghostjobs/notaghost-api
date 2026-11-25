@@ -534,17 +534,19 @@ export async function notifyOpen(userId: string, kind: OpenNote, d: { company?: 
   } catch (e: any) { console.error("[whatsapp] open", kind, e?.message ?? e); }
 }
 /** Receipt on WhatsApp right after payment (approved template ghosted_receipt). The list price is shown struck while the launch offer runs. */
-export async function notifyReceipt(userId: string, p: { id: string; receipt_no: string; amount_paise: number; product: string; shots: number; days: number; list_paise?: number }) {
+/** The WhatsApp receipt. Resolves true only when WhatsApp accepted the message; false when it refused, failed, or the
+ *  account has no phone (the caller records which). Never throws. */
+export async function notifyReceipt(userId: string, p: { id: string; receipt_no: string; amount_paise: number; product: string; shots: number; days: number; list_paise?: number }): Promise<boolean> {
   try {
     const { data: u } = await db.from("users").select("phone").eq("id", userId).maybeSingle();
-    const to = String(u?.phone ?? "").replace(/\D/g, ""); if (!to) return;
+    const to = String(u?.phone ?? "").replace(/\D/g, ""); if (!to) return false;
     const rupees = (n: number) => (n / 100).toLocaleString("en-IN");
     const item = receiptItem(p.product, p.shots, p.days) + (p.list_paise && p.list_paise > p.amount_paise ? ` (launch offer, ~₹${rupees(p.list_paise)}~)` : "");
     const date = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
-    await graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name: "ghosted_receipt", language: { code: "en" }, components: [
+    return await graph("messages", { messaging_product: "whatsapp", to, type: "template", template: { name: "ghosted_receipt", language: { code: "en" }, components: [
       { type: "body", parameters: [{ type: "text", text: p.receipt_no }, { type: "text", text: item }, { type: "text", text: rupees(p.amount_paise) }, { type: "text", text: date }] },
       { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: receiptToken(p.id) }] },
     ] } });
-  } catch (e: any) { console.error("[whatsapp] receipt", e?.message ?? e); }
+  } catch (e: any) { console.error("[whatsapp] receipt", e?.message ?? e); return false; }
 }
 const markRead = (id: string) => graph("messages", { messaging_product: "whatsapp", status: "read", message_id: id });

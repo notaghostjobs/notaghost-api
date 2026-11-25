@@ -6,6 +6,7 @@
 import { db } from "../lib/db.js";
 import { sendMail, mailReady } from "../lib/mail.js";
 import { familyReport } from "./http.js";
+import { paymentHealthCheck } from "../lib/payHealth.js";
 
 export interface SystemHealth { system: string; feeds: number; failing: number; open: number; confirmed_24h: number; example_error: string | null; problem: string | null }
 
@@ -39,6 +40,7 @@ export async function readerHealth(): Promise<{ at: string; systems: SystemHealt
 
 /** Works out the health, puts it on record, and emails the founder when something is wrong. Returns what it found. */
 export async function healthCheck(): Promise<{ problems: number; mailed: boolean }> {
+  await paymentHealthCheck();   // its own record and email (src/lib/payHealth.ts); never throws
   const h = await readerHealth();
   await db.from("reader_control").upsert({ key: "health:reader", value: { ...h, platforms: familyReport() }, updated_at: h.at }, { onConflict: "key" });
   if (!h.problems.length) return { problems: 0, mailed: false };

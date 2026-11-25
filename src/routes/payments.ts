@@ -89,6 +89,8 @@ payments.get("/offer", requireUser, async (c) => {
 });
 
 const REPAIR_WINDOW_MS = 72 * 3600e3, RECEIPT_GRACE_MS = 120e3;
+/** States a captured payment may be settled from. "refunded" is never one: a refund is final. */
+const UNPAID = ["created", "failed"];
 const paymentRow = async (id: string) => {
   const { data, error } = await db.from("payments").select("*").eq("id", id).single();
   if (error || !data) throw new Error(`payment ${id} not readable: ${error?.message ?? "missing"}`);
@@ -129,13 +131,16 @@ export async function settle(orderId: string, paymentId: string, signature: stri
   if (!wasPaid) {
     const { data: won, error } = await db.from("payments").update({
       status: "paid", razorpay_payment_id: paymentId, razorpay_signature: signature, paid_at: new Date().toISOString(),
-    }).eq("id", pay.id).neq("status", "paid").select("*");
+    }).eq("id", pay.id).in("status", UNPAID).select("*");
     if (error) throw new Error(`payment not marked paid: ${error.message}`);
     if (won?.length) {
       pay = won[0]; claimed = true;
       void logEvent("paid", { src: { first: pay.src_first ?? null, last: pay.src_last ?? null }, userId: pay.user_id, meta: { payment_id: pay.id, order_id: orderId, product: pay.product, amount_paise: pay.amount_paise } });
     } else pay = await paymentRow(pay.id);
   }
+  // A payment that is not paid after the claim was refunded (or is in a state we do not settle): a late or replayed
+  // "captured" webhook changes nothing and creates nothing. Its existing plan, if any, is returned as it stands.
+  if (pay.status !== "paid") { console.error(`[payments] ${pay.id} is ${pay.status}; settle changed nothing`); return await planFor(pay.id); }
 
   // 2. A receipt number, once: drawn by the caller that marked the payment paid, or by a later retry if that caller
   //    failed before saving one. The caller that lost the race draws none, so no number in the sequence is wasted.
@@ -165,8 +170,7 @@ export async function settle(orderId: string, paymentId: string, signature: stri
     }
     const cur = await currentResume<{ parsed: any }>(pay.user_id, "parsed");
     const { data, error } = await db.from("plans").insert({
-      user_id: pay.user_id, product: pay.product === "first" ? "sharpen" : pay.product, shots_total: price.shots,   // the first résumé is one Sharpen
-      resume_name: (cur?.parsed as any)?.name ?? null,
+      user_id: pay.user_id, product: pay.product === "first" ? "sharpen" : pay.product, shots_total: price.shots,   // the first résumé is one Sharpen resume_name: (cur?.parsed as any)?.name ?? null,
       expires_at: new Date(Date.now() + price.days * 86400e3).toISOString(), payment_id: pay.id,
     }).select("*").single();
     if (data && !error) { plan = data; created = true; }
@@ -183,14 +187,23 @@ export async function settle(orderId: string, paymentId: string, signature: stri
   return plan;
 }
 
-/** The WhatsApp receipt for a paid payment with its number, at most once: a marker in reader_control (its key is the
- *  primary key) is written first, and only the caller that wrote it sends. */
+/** The WhatsApp receipt for a paid payment, at most once, with its outcome on record. A marker keyed by the payment
+ *  (reader_control's key is its primary key) is written first as "pending", so only one caller sends; after WhatsApp
+ *  answers it becomes "sent" or "failed". A process that dies in between leaves "pending": the payment health check
+ *  reports it, and a person decides whether to resend. Nothing here resends on its own, so a receipt is never doubled. */
+export const receiptKey = (paymentId: string) => `receipt:sent:${paymentId}`;
 async function sendReceiptOnce(paymentId: string, price: { shots: number; days: number }) {
   const pay = await paymentRow(paymentId);
   if (!pay.receipt_no) return;
-  const { error } = await db.from("reader_control").insert({ key: `receipt:sent:${pay.id}`, value: { at: new Date().toISOString(), receipt_no: pay.receipt_no } });
+  const key = receiptKey(pay.id), at = new Date().toISOString();
+  const { error } = await db.from("reader_control").insert({ key, value: { state: "pending", receipt_no: pay.receipt_no, at }, updated_at: at });
   if (error) { if ((error as any).code !== "23505") console.error(`[payments] receipt marker for ${pay.id} not written; receipt not sent: ${error.message}`); return; }
-  void notifyReceipt(pay.user_id, { id: pay.id, receipt_no: String(pay.receipt_no), amount_paise: pay.amount_paise, product: pay.product, shots: price.shots, days: price.days, list_paise: (price as any).list_paise });
+  void (async () => {
+    const ok = await notifyReceipt(pay.user_id, { id: pay.id, receipt_no: String(pay.receipt_no), amount_paise: pay.amount_paise, product: pay.product, shots: price.shots, days: price.days, list_paise: (price as any).list_paise }).catch(() => false);
+    const done = new Date().toISOString();
+    const { error: e2 } = await db.from("reader_control").update({ value: { state: ok ? "sent" : "failed", receipt_no: pay.receipt_no, at, done_at: done, ...(ok ? {} : { reason: "WhatsApp did not accept the receipt (see the API log for its answer)" }) }, updated_at: done }).eq("key", key);
+    if (e2) console.error(`[payments] receipt for ${pay.id} ${ok ? "sent" : "failed"} but not recorded (left pending): ${e2.message}`);
+  })();
 }
 
 /** Test grant, founder's phone only: retires every plan the user holds and issues a fresh 10-shot Sharpen plan without
