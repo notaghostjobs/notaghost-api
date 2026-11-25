@@ -4,6 +4,7 @@ import { db } from "../lib/db.js";
 import { readingOrder, linkAnnotations, clean } from "./pdftext.js";
 export { readingOrder, linkAnnotations };
 import { jobKey, stripFurniture, CLEAN_SINCE, canonicalPostingUrl } from "./ghost/canon.js";
+import { workdayPaused, isWorkdayUrl } from "../lib/workdayPause.js";
 
 /** Plain text out of a PDF or DOCX résumé. No AI here. */
 export async function extractText(buf: Buffer, filename: string): Promise<{ text: string; pages: number; ours?: boolean; links?: string[] }> {
@@ -73,6 +74,7 @@ export async function fetchPosting(url0: string, opts: { bypassCache?: boolean }
     try { await db.from("reader_control").upsert({ key: `sharpen_fail:linkedin:${li[1]}`, value: { at: new Date().toISOString(), url, why }, updated_at: new Date().toISOString() }); } catch { /* fine */ }
     throw Object.assign(new Error("LinkedIn didn’t let us read that posting just now. Open the job in Chrome with the Ghosted extension, or paste the posting text."), { status: 400, why });
   }
+  if (workdayPaused() && isWorkdayUrl(url)) throw Object.assign(new Error("We can’t open Workday job pages right now. Paste the posting text instead."), { status: 400 });
   const r = await fetch(url, {
     headers: { "user-agent": "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello@notaghost.jobs)", "accept-language": "en-IN,en;q=0.9" },
     redirect: "follow",

@@ -2,6 +2,7 @@
 import { htmlToText } from "../extract.js";
 import { companyKey } from "./canon.js";
 import { research } from "./research.js";
+import { workdayPaused } from "../../lib/workdayPause.js";
 
 export interface AtsJob { id: string; title: string; location: string; created_at: string | null; updated_at: string | null; url: string }
 export interface AtsResult { system: string; slug: string | null; careers_url: string | null; jobs: AtsJob[] }
@@ -86,6 +87,7 @@ async function smartrecruiters(slug: string): Promise<AtsResult | null> {
   } catch { return null; }
 }
 async function workday(tenant: string, site: string): Promise<AtsResult | null> {
+  if (workdayPaused()) return null;   // paused: not probed
   // Workday exposes a JSON search endpoint used by its own UI
   for (const wd of ["wd1", "wd3", "wd5", "wd103"]) {
     try {

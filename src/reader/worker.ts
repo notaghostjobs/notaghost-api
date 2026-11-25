@@ -5,6 +5,7 @@ import { companyKey } from "../engine/ghost/canon.js";
 import { db } from "../lib/db.js";
 import { resolveBatch } from "./resolve.js";
 import { workdayDiscover } from "./systems/ats.js";
+import { installWorkdayPause, workdayPaused } from "../lib/workdayPause.js";
 import { readDue, recordFeed, employerName } from "./read.js";
 import { harvestNaukri } from "./harvest/naukri.js";
 import { harvestSectors } from "./harvest/sectors.js";
@@ -33,6 +34,7 @@ async function selfTest() {
     ["workday", "adobe/wd5/external_experienced"], ["workday", "nvidia/wd5/NVIDIAExternalCareerSite"], ["workday", "salesforce/wd12/External_Career_Site"], ["phenom", "careers.titan.in"], ["eightfold", "jobs.infineon.com|infineon.com"],
     ["capgemini", "capgemini"], ["ripplehire", "mphasis.ripplehire.com|ty4DfyWddnOrtpclQeia"], ["icims-attract", "careers.amd.com"], ["beesite", "api-deutschebank.beesite.de"], ["amazon", "amazon"]];
   // dropped 9 Nov: Google (careers results now disallowed by robots.txt), Goldman (list page disallowed), HCLTech (job pages render only through a disallowed endpoint), Walmart/Wipro/Infosys Workday tenants (gone)
+  if (workdayPaused()) for (let i = probes.length - 1; i >= 0; i--) if (probes[i][0] === "workday") probes.splice(i, 1);   // paused: no Workday probe
   const out: Record<string, unknown>[] = [];
   mode.quick = true; // a few pages per reader: enough to prove it reads, not the whole board
   try { for (const [sys, ref] of probes) {
@@ -370,6 +372,7 @@ async function setPriorities() {
  *  resolver re-reads it as a known ref. Progress in reader_control:wdscan; the once-key is set only when the pass ends. */
 async function runWorkdayScan() {
   const key = "wdscan-v1";
+  if (workdayPaused()) { log("wdscan", "Workday paused: skipped"); return; }
   if ((await getControl<{ at: string }>(`once:${key}`))?.at) return;
   // PostgREST hands out 1,000 rows at a time; page through all of them. The resolver queue walks the other way; they meet in the middle.
   const q: { key: string; name: string; priority: number }[] = [];
@@ -401,7 +404,8 @@ async function runWorkdayScan() {
 }
 
 async function main() {
-  log("worker up");
+  installWorkdayPause();
+  log("worker up", workdayPaused() ? "(Workday paused: no Workday requests)" : "");
   await setControl("heartbeat", { boot, at: new Date().toISOString(), build: (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || "local" });
   setInterval(() => void setControl("heartbeat", { boot, at: new Date().toISOString(), build: (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || "local", rss_mb: Math.round(process.memoryUsage().rss / 1048576) }), 60000);
   // these three already ran earlier tonight; mark them done so this boot does not repeat them

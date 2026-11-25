@@ -1,5 +1,6 @@
 // Read an employer's feed and record sightings. Idempotent: run it twice, nothing doubles.
 import { cooling, familyReport } from "./http.js";
+import { workdayPaused } from "../lib/workdayPause.js";
 import { db } from "../lib/db.js";
 import { byId, type Feed } from "./systems/index.js";
 import { isBlr } from "./blr.js";
@@ -71,7 +72,7 @@ export async function readDue(limit = 200, staleHours = 20, concurrency = 3) {
   const since = new Date(Date.now() - staleHours * 3600e3).toISOString();
   // Workday has asked us to wait: its employers are left out of this pass altogether (they would each fail at once and
   // crowd everyone else out of the pass); they keep their place at the front for when the wait is over
-  const wdWait = cooling("https://x.wd1.myworkdayjobs.com/");
+  const wdWait = workdayPaused() || cooling("https://x.wd1.myworkdayjobs.com/");   // paused: left out the same way
   const query = db.from("employers").select("key, name, ats, ats_ref").not("ats", "is", null).not("ats", "in", wdWait ? '("none","workday")' : '("none")');
   const { data } = await query.or(`read_at.is.null,read_at.lt.${since}`).order("read_at", { ascending: true, nullsFirst: true }).limit(limit);
   // one read per distinct feed: rows that share a system + ref are satisfied by the same read

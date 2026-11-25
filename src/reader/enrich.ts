@@ -6,6 +6,7 @@ import { htmlToText } from "../engine/extract.js";
 import { fingerprint } from "../engine/ghost/canon.js";
 import { renderText } from "./systems/page.js";
 import { KNOWN } from "./data/known.js";
+import { workdayPaused, isWorkdayUrl, WorkdayPaused } from "../lib/workdayPause.js";
 
 /** Hosts whose job pages only speak to a browser; a plain fetch is empty. Rendered one at a time, a few per batch. */
 const RENDER_HOSTS = /^(careers\.ibm\.com|apply\.deloitte\.com|usijobs\.deloitte\.com)$/i;
@@ -106,6 +107,7 @@ function pageTitle(html: string): string | null {
 }
 
 export async function enrichOne(s: { id: number; url: string; posted_at: string | null; salary_text: string | null; raw: any }) {
+  if (workdayPaused() && isWorkdayUrl(s.url)) return false;   // paused: no request, and the row is left exactly as it is
   const fail = (why: string) => db.from("sightings").update({ enriched_at: new Date().toISOString(), enrich_error: why }).eq("id", s.id);
   let ld: ReturnType<typeof jsonLd> = null, text = "", betterUrl: string | null = null, realTitle: string | null = null;
   const wd = (await workdayDetail(s.url.replace(/\/apply\/?$/, ""))) ?? (await oracleDetail(s.url));
@@ -145,7 +147,9 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
 /** Enrich a batch of live Bengaluru sightings that have not been opened yet. Gentle: 3 at a time, per-host spacing from http(). */
 export async function enrichDue(limit = 300, concurrency = 6) {
   resetRenderBudget();
-  const { data } = await db.from("sightings").select("id, url, posted_at, salary_text, raw, employer_key").eq("blr", true).is("gone_at", null).is("enriched_at", null).not("url", "is", null).order("first_seen", { ascending: false }).limit(limit);
+  let pick: any = db.from("sightings").select("id, url, posted_at, salary_text, raw, employer_key").eq("blr", true).is("gone_at", null).is("enriched_at", null).not("url", "is", null);
+  if (workdayPaused()) pick = pick.not("url", "ilike", "%myworkday%");   // paused: Workday rows are not picked, so none is marked tried
+  const { data } = (await pick.order("first_seen", { ascending: false }).limit(limit)) as { data: { id: number; url: string; posted_at: string | null; salary_text: string | null; raw: any; employer_key: string | null }[] | null };
   // spread the batch across employers: the per-host pacing in http() then runs in parallel instead of serialising one big employer
   type Row = NonNullable<typeof data>[number];
   const byHost = new Map<string, Row[]>(); for (const s of data ?? []) { const k = s.employer_key ?? "?"; if (!byHost.has(k)) byHost.set(k, []); byHost.get(k)!.push(s); }
@@ -166,6 +170,7 @@ export async function enrichDue(limit = 300, concurrency = 6) {
 /** The posting's text by whatever door the host offers — Workday/Oracle JSON, Phenom's inline object, JSON-LD, or the
  *  page itself — with no database and no browser. For checks and panels outside the worker. */
 export async function readPostingText(url: string): Promise<string> {
+  if (workdayPaused() && isWorkdayUrl(url)) return "";   // Radar shows the line as not confirmed today, as it does when a page cannot be opened
   const wd = (await workdayDetail(url.replace(/\/apply\/?$/, ""))) ?? (await oracleDetail(url)) ?? (await spire2growDetail(url));
   if (wd) return wd.ok ? wd.text.slice(0, 20000) : "";
   const r = await getText(url, { timeoutMs: 20000, gapMs: 600 });

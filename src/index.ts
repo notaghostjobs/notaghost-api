@@ -5,6 +5,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { serve } from "@hono/node-server";
 import { env } from "./lib/env.js";
+import { installWorkdayPause } from "./lib/workdayPause.js";
 import { db } from "./lib/db.js";
 import { auth } from "./routes/auth.js";
 import { resumes } from "./routes/resumes.js";
@@ -22,6 +23,7 @@ import { events } from "./routes/funnel.js";
 import { admin } from "./routes/admin.js";
 import { snapshotDue } from "./engine/ghost/index.js";
 
+installWorkdayPause();   // WORKDAY_PAUSED: while set, no request from this process reaches Workday (src/lib/workdayPause.ts)
 const app = new Hono();
 app.use("*", logger());
 const origins = [...env.appOrigin.split(",").map((o) => o.trim()).filter(Boolean), "https://notaghost.jobs", "https://www.notaghost.jobs", "https://notaghost-web.onrender.com", "http://localhost:5173"];

@@ -2,6 +2,7 @@ import { htmlToText } from "../extract.js";
 import { json, FAST } from "../claude.js";
 import { jobKey } from "./canon.js";
 import type { PostingFacts } from "./types.js";
+import { workdayPaused, isWorkdayUrl } from "../../lib/workdayPause.js";
 
 const UA = "GhostedReader/1.0 (+https://notaghost.jobs/reader/; hello@notaghost.jobs)";
 const H = { "user-agent": UA, "accept-language": "en-IN,en;q=0.9", accept: "text/html,application/json;q=0.9,*/*;q=0.8" };
@@ -24,6 +25,7 @@ export interface RawRead {
 
 /** Read a posting from wherever it lives. Returns text plus whatever structured fields the source exposes. */
 export async function readPosting(url: string): Promise<RawRead> {
+  if (workdayPaused() && isWorkdayUrl(url)) throw Object.assign(new Error("We can’t open Workday job pages right now. Paste the posting text instead."), { status: 422 });
   const { key, source } = jobKey(url);
 
   if (source === "linkedin") {
@@ -223,6 +225,7 @@ Keep strings short.`,
 // ---------- ATS job APIs ----------
 /** https://{tenant}.wd{n}.myworkdayjobs.com/[en-US/]{site}/job/{place}/{slug}_{id} (also /details/) */
 async function workdayJob(url: string): Promise<RawRead | null> {
+  if (workdayPaused()) return null;
   const m = url.match(/^https?:\/\/([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?([^/?#]+)\/((?:job|details)\/[^?#]+)/i);
   if (!m) return null;
   const [, tenant, wd, site, rest] = m;
