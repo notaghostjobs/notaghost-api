@@ -6,6 +6,7 @@ import { htmlToText } from "../engine/extract.js";
 import { fingerprint } from "../engine/ghost/canon.js";
 import { renderText } from "./systems/page.js";
 import { KNOWN } from "./data/known.js";
+import { srRecord } from "./srrecord.js";
 
 /** Hosts whose job pages only speak to a browser; a plain fetch is empty. Rendered one at a time, a few per batch. */
 const RENDER_HOSTS = /^(careers\.ibm\.com|apply\.deloitte\.com|usijobs\.deloitte\.com)$/i;
@@ -117,6 +118,9 @@ export async function enrichOne(s: { id: number; url: string; posted_at: string 
     if (!r.ok) { await fail(r.status === ROBOTS_STATUS ? "disallowed by robots.txt" : `HTTP ${r.status}`); return false; }
     ld = jsonLd(r.text);
     text = (ld?.description && ld.description.length > 300 ? ld.description : htmlToText(r.text)).slice(0, 20000);
+    // SmartRecruiters' job page answers with the posting's JSON record: read the record (clean sections, its own date)
+    const sr = /(^|\.)smartrecruiters\.com$/i.test(new URL(s.url).host) ? srRecord(r.text) : null;
+    if (sr) { text = sr.text; if (sr.postedAt) ld = { ...(ld ?? {}), datePosted: sr.postedAt }; }
     if (s.raw?.title_from === "slug") { const t = pageTitle(r.text); if (t) realTitle = t; }
     if (text.length < 200 || /phApp\.ddo/.test(r.text)) { const ph = await phenomDetail(s.url, r.text); if (ph) { text = ph.text.slice(0, 20000); if (ph.posted && !ld?.datePosted) ld = { ...(ld ?? {}), datePosted: ph.posted }; if (ph.url) betterUrl = ph.url; } }
     if (text.length < 200 && RENDER_HOSTS.test(new URL(s.url).host)) {
