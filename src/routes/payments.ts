@@ -55,8 +55,37 @@ payments.post("/confirm", requireUser, async (c) => {
       !timingSafeEqual(Buffer.from(expected), Buffer.from(razorpay_signature)))
     return c.json({ error: "Signature mismatch." }, 400);
 
-  const plan = await settle(razorpay_order_id, razorpay_payment_id, razorpay_signature, u.id);
-  return c.json({ ok: true, plan });
+  // The signature proves the browser's three fields came from Razorpay; whether we hold the payment as paid is read from
+  // our own payment record, never taken from the browser. When settling stops part-way (the plan is not made yet) but
+  // the record says paid, the answer is "paid, plan pending", not an error: the customer has paid and must not be told
+  // otherwise or pay again. A retry of this same call (it is idempotent) or Razorpay's webhook finishes the plan.
+  try {
+    const plan = await settle(razorpay_order_id, razorpay_payment_id, razorpay_signature, u.id);
+    return c.json({ ok: true, plan });
+  } catch (e) {
+    const st = await paymentState(razorpay_order_id, u.id);
+    if (!st?.paid) throw e;
+    console.error(`[payments] confirm: ${st.payment_id} is paid, plan pending: ${(e as Error).message}`);
+    return c.json({ ok: true, plan: null, pending: true, paid: true });
+  }
+});
+
+/** Where this person's order stands, from our payment record alone: paid or not, and whether its plan exists yet. Open
+ *  (one conversation) opens no plan, so it is ready once paid. Read-only. */
+async function paymentState(orderId: string, userId: string) {
+  const { data: pay, error } = await db.from("payments").select("id, user_id, product, status").eq("razorpay_order_id", orderId).maybeSingle();
+  if (error) throw new Error(`payment state not readable: ${error.message}`);
+  if (!pay || pay.user_id !== userId) return null;
+  const paid = pay.status === "paid";
+  const ready = paid && (pay.product === "open_intro" || !!(await planFor(pay.id)));
+  return { payment_id: pay.id as string, product: pay.product as string, paid, plan_ready: ready, status: pay.status as string };
+}
+
+// 2b. The payment page asks where a payment stands while a plan is pending (after checkout, never instead of it).
+payments.get("/status/:orderId", requireUser, async (c) => {
+  const st = await paymentState(c.req.param("orderId") ?? "", c.get("user").id);
+  if (!st) return c.json({ error: "No such order on this account." }, 404);
+  return c.json({ paid: st.paid, plan_ready: st.plan_ready, product: st.product, refunded: st.status === "refunded" });
 });
 
 // 3. Webhook (belt and braces: catches payments where the browser closed early).

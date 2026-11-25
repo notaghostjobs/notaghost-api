@@ -17,7 +17,7 @@ const failNext: Record<string, number> = {};          // "plans:POST" → how ma
 const seen: { table: string; method: string; url: string; body: any }[] = [];
 const sent: any[] = [];                                // requests to WhatsApp
 let waFail = false;                                    // WhatsApp refuses every message
-const reset = () => { for (const k of Object.keys(T)) delete T[k]; T.payments = []; T.plans = []; T.users = []; T.resumes = []; T.events = []; T.reader_control = [];
+const reset = () => { for (const k of Object.keys(T)) delete T[k]; T.payments = []; T.plans = []; T.users = []; T.sessions = []; T.resumes = []; T.events = []; T.reader_control = [];
   receiptSeq = 0; seen.length = 0; sent.length = 0; waFail = false; for (const k of Object.keys(failNext)) delete failNext[k]; };
 const val = (v: string): any => v === "null" ? null : v === "true" ? true : v === "false" ? false : v;   // URLSearchParams has already decoded it
 function filters(u: URL) {
@@ -188,6 +188,34 @@ for (const product of ["radar", "sharpen"]) {
 uniquePlanPayment = false; { let dup = 0; for (let i = 0; i < 20; i++) { fresh(); const p = order("sharpen"); await Promise.all([webhook(p.razorpay_order_id), settleQuiet(confirm(p.razorpay_order_id))]); if (plansOf(p).length > 1) dup++; }
   console.log(`  – without the unique index (before migration 0013): ${dup} of 20 rounds made two plans`); }
 uniquePlanPayment = true; jitter = 0;
+
+console.log("Checkout confirmation while the plan is pending (what the payment page is told)");
+const { createSession } = await import("../lib/auth.js");
+const signIn = async () => { const tok = await createSession(USER); for (const r of T.sessions ?? []) r.users = T.users[0]; return tok; };
+const confirmRoute = async (tok: string, orderId: string, payId = `pay_rzp_${orderId}`, sig?: string) => {
+  const s = sig ?? createHmac("sha256", "rzp_secret_test").update(`${orderId}|${payId}`).digest("hex");
+  const r = await payments.request("/confirm", { method: "POST", body: JSON.stringify({ razorpay_order_id: orderId, razorpay_payment_id: payId, razorpay_signature: s }), headers: { authorization: `Bearer ${tok}`, "content-type": "application/json" } });
+  return { status: r.status, body: await r.json().catch(() => null) as any };
+};
+const statusRoute = async (tok: string, orderId: string) => { const r = await payments.request(`/status/${orderId}`, { headers: { authorization: `Bearer ${tok}` } }); return { status: r.status, body: await r.json().catch(() => null) as any }; };
+fresh(); { const tok = await signIn(); const p = order("sharpen"); const r = await confirmRoute(tok, p.razorpay_order_id); await tick();
+  ok("normal: 200 with the plan, nothing pending", r.status === 200 && r.body?.ok && r.body?.plan?.payment_id === p.id && !r.body?.pending, r); }
+fresh(); { const tok = await signIn(); const p = order("radar"); failNext["plans:POST"] = 1; const r = await confirmRoute(tok, p.razorpay_order_id); await tick();
+  ok("plan insert fails after the payment is recorded paid: 200 'paid, plan pending' (never an error)", r.status === 200 && r.body?.ok && r.body?.paid === true && r.body?.pending === true && r.body?.plan === null && p.status === "paid", r);
+  const s1 = await statusRoute(tok, p.razorpay_order_id);
+  ok("status, from our record: paid, plan not ready", s1.status === 200 && s1.body?.paid === true && s1.body?.plan_ready === false, s1);
+  const r2 = await confirmRoute(tok, p.razorpay_order_id); await tick(); const s2 = await statusRoute(tok, p.razorpay_order_id);
+  ok("the page's retry of the same confirmation finishes it: one plan, status ready, one receipt", r2.status === 200 && r2.body?.plan?.payment_id === p.id && s2.body?.plan_ready === true && plansOf(p).length === 1 && receipts() === 1, { r2, s2 }); }
+fresh(); { const tok = await signIn(); const p = order("sharpen"); failNext["payments:PATCH"] = 1; const r = await confirmRoute(tok, p.razorpay_order_id); const s = await statusRoute(tok, p.razorpay_order_id);
+  ok("not recorded as paid (marking failed): an error, never 'paid'; status says not paid", r.status === 500 && !r.body?.paid && s.body?.paid === false, { r, s }); }
+fresh(); { const tok = await signIn(); const p = order("sharpen"); const r = await confirmRoute(tok, p.razorpay_order_id, undefined, "0".repeat(64));
+  ok("a bad checkout signature is still refused (400) and nothing is read as paid", r.status === 400 && p.status === "created", r); }
+fresh(); { const tok = await signIn(); const p = order("sharpen", { user_id: "someone-else" }); const s = await statusRoute(tok, p.razorpay_order_id);
+  ok("status of another account's order: not found", s.status === 404, s); }
+fresh(); { const tok = await signIn(); const p = order("open_intro", { status: "paid", paid_at: now(), receipt_no: "R" }); const s = await statusRoute(tok, p.razorpay_order_id);
+  ok("Open, paid: ready (it opens no plan)", s.body?.paid === true && s.body?.plan_ready === true, s); }
+fresh(); { const tok = await signIn(); const p = order("radar", { status: "refunded", paid_at: now() }); const s = await statusRoute(tok, p.razorpay_order_id);
+  ok("refunded: not paid, marked refunded", s.body?.paid === false && s.body?.refunded === true, s); }
 
 console.log("Unchanged");
 fresh(); { const p = order("radar"); const r = await payments.request("/webhook", { method: "POST", body: "{}", headers: { "x-razorpay-signature": "0".repeat(64) } });
