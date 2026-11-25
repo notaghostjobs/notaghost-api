@@ -1,14 +1,17 @@
 // A temporary pass-through for one approved pilot (25 Nov 2026: AI job reading, Haiku 5.5 vs Sonnet 5.5, ₹350 hard cap).
 // Model requests made in the founder's workspace are forwarded to the model with QA's own key, so no key leaves this
 // service. QA only. It keeps nothing: not the request, not the reply. It records what every QA model call records
-// (model, tokens, cost), is bound by the QA budget AND by its own cumulative pilot cap, and closes by itself at CLOSES.
+// (model, tokens, cost) in the QA log, and is bound by its own cumulative pilot cap (₹350 at current list prices, kept
+// across restarts, worst case set aside before each call, three calls at a time) instead of the QA testers' budget,
+// whose ₹1,000 ceiling is a fixed safety rule and whose meter prices Haiku at ten times its list price. It closes by
+// itself at CLOSES.
 // It is to be deleted when the pilot is done.
 import { Hono } from "hono";
 import Anthropic from "@anthropic-ai/sdk";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { env } from "../lib/env.js";
 import { QA } from "./guard.js";
-import { qaBefore, qaAfter, qaSpend } from "./budget.js";
+import { promptVersion } from "./budget.js";
 import { store } from "./state.js";
 
 const TOKEN_SHA256 = "ce211548b4faca7f8f08eab08967f00bdb512ab98c960166f0734952361f5ecd";                       // the token itself exists only in the workspace that runs the benchmark
@@ -70,7 +73,7 @@ export async function pilotAdd(model: string, usage: any): Promise<void> { await
 type Deps = { create: (b: any) => Promise<any>; left: () => Promise<number>; before: () => Promise<void>; after: (model: string, system: string, usage: any | null, ms: number) => Promise<void> };
 export function benchRoutes(d?: Partial<Deps>) {
   const r = new Hono(); let client: Anthropic | null = null;
-  const deps: Deps = { create: (b) => (client ??= new Anthropic({ apiKey: env.anthropicKey })).messages.create(b), left: async () => Math.min((await qaSpend()).left_paise, await pilotLeft()), before: qaBefore, after: async (m, sys, u, ms) => { await qaAfter(m, sys, u, ms); await pilotAdd(m, u); }, ...d };
+  const deps: Deps = { create: (b) => (client ??= new Anthropic({ apiKey: env.anthropicKey })).messages.create(b), left: pilotLeft, before: async () => {}, after: async (m, sys, u, ms) => { await store.log("ai", { real: true, model: m, prompt: promptVersion(sys), tag: "pilot:jobread", ok: !!u, ms, in: u?.input_tokens ?? 0, out: u?.output_tokens ?? 0, cache_read: u?.cache_read_input_tokens ?? 0, cache_write: u?.cache_creation_input_tokens ?? 0, paise: u ? pilotPaise(m, u) : 0 }); await pilotAdd(m, u); }, ...d };
   const g = gate(deps.left);
   r.post("/messages", async (c) => {
     if (!allowed(c.req.header("x-bench-token"))) return c.json({ error: "not available" }, 404);
@@ -78,7 +81,7 @@ export function benchRoutes(d?: Partial<Deps>) {
     let b: any; try { b = JSON.parse(raw); } catch { return c.json({ error: "not JSON" }, 400); }
     const why = refuse(b); if (why) return c.json({ error: "request not allowed: " + why }, 400);
     const system = b.system.map((s: any) => s.text).join("\n"), cost = worstCase(b), t0 = Date.now();
-    if (!(await g.enter(cost))) return c.json({ type: "error", error: { type: "qa_budget", message: "The pilot cap (or the QA budget) could not cover this call. Nothing was sent." } }, 503);
+    if (!(await g.enter(cost))) return c.json({ type: "error", error: { type: "qa_budget", message: "The pilot cap could not cover this call. Nothing was sent." } }, 503);
     let counted = false;
     try {
       await deps.before();
