@@ -1,0 +1,10 @@
+import { readFileSync, writeFileSync, copyFileSync } from "node:fs";
+const S = "/tmp/claude-0/-home-claude/e75d385d-3415-5d05-84bc-8c909535d0ed/scratchpad";
+const { postingProblem } = await import("/home/claude/wt-api/src/lib/textfit.ts"); const { SPEC } = await import("/home/claude/wt-api/src/lib/ontology.ts");
+const rows = JSON.parse(readFileSync(`${S}/req/failures-B.json`, "utf8")); const ans = JSON.parse(readFileSync(`${S}/sim2/answers.json`, "utf8"));
+const inv = new Map(readFileSync(`${S}/bench/prod/inventory.jsonl`, "utf8").split("\n").filter(Boolean).map((l) => { const r = JSON.parse(l); return [String(r.id), r]; }));
+const out = rows.map((r: any, i: number) => { const p: any = inv.get(String(r.id)); const a = ans[r.profile];
+  return { case: i + 1, candidate: r.profile, stated_direction: `${SPEC.get(a.direction_primary)?.label}${a.direction_secondary !== "none" ? `; also ${SPEC.get(a.direction_secondary)?.label}` : ""}; level ${a.level}; years ${a.years}; open to related work ${a.open_to_adjacent}`, job_id: r.id, rank: r.rank, final_grade: r.grade, job_title: p.title, employer: p.company_name, posting_text: postingProblem(p.title, p.description).text.replace(/\s+/g, " ").slice(0, 3000), grader_a: r.grader_a, grader_b: r.grader_b, suitable_roles_ranked_lower_in_pool: r.suitable_elsewhere_in_pool }; });
+writeFileSync(`${S}/req/fail-pack/cases.json`, JSON.stringify(out, null, 1));
+for (const p of new Set(rows.map((r: any) => r.profile))) copyFileSync(`${S}/labels/resumes/${p}.txt`, `${S}/req/fail-pack/resumes/${p}.txt`);
+console.log(out.length);
