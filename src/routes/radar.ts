@@ -21,6 +21,7 @@ import { screenGate, resumeBlob, yearsFromRoles, levelFromRoles, settleLevel } f
 import { cleanTitle } from "../radar/v2.js";
 import { functionCheck, worldExclusion, nearMiss, labelOf, verify, BAND_TEXT, type Label, type Verdict, cleanSame, sharesFunction } from "../radar/v2.js";
 import { readPostingText, DEAD_PAGE } from "../reader/enrich.js";
+import { freshOnly, freshHours, standings } from "../lib/fresh.js";
 import { gapsOf, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, sameRequirement, nameSubject, type Facts, type Gap } from "../engine/told.js";
 
 export const radar = new Hono<{ Variables: { user: User } }>();
@@ -32,7 +33,9 @@ type Targets = { titles: string[]; level: "ic" | "lead" | "manager" | "head"; fu
 type Answers = { titles: string[]; level: Targets["level"]; stretch: boolean; avoid: string[]; notes?: string };
 /** `live`: what the employer's own page said the last time we opened it — "confirmed" (it opened and the role is on it) or
  *  "not_confirmed" (the page could not be opened; the role is still on the employer's feed, but we did not see it today). */
-type Item = { live?: "confirmed" | "not_confirmed"; live_at?: string; sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string; new_at?: string;
+type Item = { live?: "confirmed" | "not_confirmed"; live_at?: string;
+  held?: true;                  // open on the employer's feed but not confirmed for 72 h (lib/fresh.ts): hidden, kept, comes back on reconfirmation
+  sighting_id: number; title: string; company: string; location: string; url: string; posted_at: string | null; first_seen: string; why: string; new_at?: string;
   label?: Label;                // for_you · adjacent · stretch — built from facts (v2)
   band_text?: string | null;    // the posting's own years line, e.g. "3–5 years"
   near?: string | null;         // the one near-miss that made it adjacent/stretch, in words
@@ -121,27 +124,31 @@ async function deriveTargetsModel(p: ResumeProfile): Promise<Targets> {
 }
 
 export type Sighting = { id: number; title: string; company_name: string | null; location: string | null; url: string; posted_at: string | null; first_seen: string; employer_key: string | null; last_seen?: string; readable?: boolean };
-let poolCache: { at: number; rows: Sighting[] } | null = null;
+let poolCache: { at: number; hours: number; rows: Sighting[] } | null = null;
 /** Every live Bengaluru sighting (title, employer, location, url), marked readable when its description is on file.
- *  The pulse counts all of them; scoring uses the readable ones. Cached in memory for 30 minutes. */
+ *  The pulse counts all of them; scoring uses the readable ones. Cached in memory for 30 minutes. Only jobs confirmed
+ *  within the freshness window (lib/fresh.ts, 72 h) are live here: an open job its feed has not listed lately is held
+ *  back, not closed, and returns when a read lists it again. */
 export async function livePool(): Promise<Sighting[]> {
-  if (poolCache && Date.now() - poolCache.at < 30 * 60e3) return poolCache.rows;
+  const hours = freshHours();
+  if (poolCache && poolCache.hours === hours && Date.now() - poolCache.at < 30 * 60e3) return poolCache.rows;
+  const now = Date.now();
   const rows: Sighting[] = [];
   for (let from = 0; from < 80000; from += 1000) {
-    const { data, error } = await db.from("sightings").select("id, title, company_name, location, url, posted_at, first_seen, employer_key, last_seen").eq("blr", true).is("gone_at", null).order("id", { ascending: true }).range(from, from + 999);
+    const { data, error } = await freshOnly(db.from("sightings").select("id, title, company_name, location, url, posted_at, first_seen, employer_key, last_seen").eq("blr", true).is("gone_at", null) as any, now).order("id", { ascending: true }).range(from, from + 999);
     if (error) throw new Error(error.message);
     rows.push(...((data ?? []) as Sighting[]).map((r) => ({ ...r, title: cleanTitle(r.title) })));
     if (!data || data.length < 1000) break;
   }
   const readable = new Set<number>();
   for (let from = 0; from < 80000; from += 1000) {
-    const { data, error } = await db.from("sightings").select("id").eq("blr", true).is("gone_at", null).not("description", "is", null).order("id", { ascending: true }).range(from, from + 999);
+    const { data, error } = await freshOnly(db.from("sightings").select("id").eq("blr", true).is("gone_at", null).not("description", "is", null) as any, now).order("id", { ascending: true }).range(from, from + 999);
     if (error) throw new Error(error.message);
     for (const r of data ?? []) readable.add((r as any).id);
     if (!data || data.length < 1000) break;
   }
   for (const r of rows) r.readable = readable.has(r.id);
-  poolCache = { at: Date.now(), rows };
+  poolCache = { at: Date.now(), hours, rows };
   return rows;
 }
 /** The reader's first days (25–27 Oct) were seeding: thousands "came in" because we started reading, not because they opened.
@@ -353,10 +360,20 @@ async function spent30(userId: string): Promise<number> {
   return p;
 }
 
+/** Marks each role on a list held or not, from the database now (lib/fresh.ts), and retallies. Changes only this copy of
+ *  the list, never the sightings; closed roles are left to the morning refresh, as before. */
+async function markHeld(run: Run) {
+  if (!run.items?.length) return;
+  const st = await standings(run.items.map((i) => i.sighting_id)).catch(() => null);
+  if (!st) return;   // the database could not be read: show the list as it was saved rather than fail the page
+  for (const i of run.items) { if (st.get(i.sighting_id) === "held") i.held = true; else delete i.held; }
+  tally(run);
+}
 function tally(run: Run) {
-  run.for_you = run.items.filter((i) => i.label === "for_you").length;
-  run.adjacent = run.items.filter((i) => i.label === "adjacent").length;
-  run.stretch = run.items.filter((i) => i.label === "stretch").length;
+  const shown = run.items.filter((i) => !i.held);   // a held role (not confirmed lately) is not counted until it is confirmed again
+  run.for_you = shown.filter((i) => i.label === "for_you").length;
+  run.adjacent = shown.filter((i) => i.label === "adjacent").length;
+  run.stretch = shown.filter((i) => i.label === "stretch").length;
   // legacy mirrors, so older screens and reports keep a number to show
   run.shots = run.for_you; run.almost = run.adjacent; run.gap = run.stretch; run.within_reach = run.adjacent + run.stretch;
 }
@@ -505,10 +522,15 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
     const now = new Date().toISOString();
     const pool = await livePool(); titleIdf(pool);
     const liveIds = new Set(pool.map((s) => s.id));
-    // 1. roles that went quiet leave the list
-    const gone: Item[] = run.items.filter((i) => !liveIds.has(i.sighting_id));
+    // 1. roles that went quiet leave the list. A role missing from the pool is either closed (gone) or open but not
+    // confirmed lately (held): a held role stays on the list, hidden and uncounted, and shows again once its feed lists it.
+    const missing = run.items.filter((i) => !liveIds.has(i.sighting_id));
+    const stand = missing.length ? await standings(missing.map((i) => i.sighting_id)) : new Map();
+    const gone: Item[] = missing.filter((i) => stand.get(i.sighting_id) !== "held");
     run.gone = [...gone.map((i) => ({ sighting_id: i.sighting_id, title: i.title, company: i.company, gone_at: now })), ...(run.gone ?? [])].slice(0, 60);
-    run.items = run.items.filter((i) => liveIds.has(i.sighting_id));
+    const goneIds = new Set(gone.map((i) => i.sighting_id));
+    run.items = run.items.filter((i) => !goneIds.has(i.sighting_id));
+    for (const i of run.items) { if (liveIds.has(i.sighting_id)) delete i.held; else i.held = true; }
     // 2. what came in since the last run (two hours of slack for the reader's own timing), never seen by the picker before
     const since = Date.parse(run.refreshed ?? run.finished ?? run.started) - 2 * 3600e3;
     const seen = new Set([...(run.seen ?? []), ...run.items.map((i) => i.sighting_id)]);
@@ -540,6 +562,7 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
       const dead: Item[] = [];
       let n = 0;
       for (const it of run.items) {
+        if (it.held) continue;   // not confirmed lately: not shown, so not opened today
         if (n++ >= 40) break;
         let txt = ""; try { txt = await readPostingText(it.url); } catch { /* unreachable today: keep it, the feed decides — and the line says it was not seen today */ }
         it.live = txt && txt.length >= 200 ? "confirmed" : "not_confirmed"; it.live_at = now;
@@ -569,7 +592,7 @@ export async function refreshRadar(userId: string): Promise<{ new_shots: number;
     const new_shots = added.length;
     run.refreshed = now; run.today = { new: new_shots, gone: gone.length, at: now };
     await kv.set(key, run);
-    return { new_shots, new_scored: added.length, gone: gone.length, shots: run.items.filter((i) => i.label).length };   // "N new for you, M on your list"
+    return { new_shots, new_scored: added.length, gone: gone.length, shots: run.items.filter((i) => i.label && !i.held).length };   // "N new for you, M on your list"
   } finally { running.delete(userId); }
 }
 
@@ -974,7 +997,8 @@ radar.get("/test/result", async (c) => {
   if (unlocked && run.free && (run.status === "done" || run.status === "error")) {
     if (running.has(u.id) || await fullPassIfFree(u.id, u)) return c.json({ status: "shortlist", started: new Date().toISOString(), items: [], unlocked: true, by_title: run.by_title, tester: isTester(u), full_pass: true });
   }
-  const labelled = run.items.filter((i) => i.label);
+  await markHeld(run);
+  const labelled = run.items.filter((i) => i.label && !i.held);
   const shots = labelled.filter((i) => i.label === "for_you");
   const almost = labelled.filter((i) => i.label === "adjacent");
   const gap = labelled.filter((i) => i.label === "stretch");
@@ -1006,10 +1030,10 @@ radar.get("/test/result", async (c) => {
       else { since = seen.since ?? null; await kv.set(seenKey, { at: nowIso, since }); }
     }
     const listed = run.finished ?? run.started;
-    return c.json({ ...run, items: run.items.map((i) => ({ ...i, added_at: i.new_at ?? listed })), unlocked: true, reveal, pulse: mine, tester, since });
+    return c.json({ ...run, items: run.items.filter((i) => !i.held).map((i) => ({ ...i, added_at: i.new_at ?? listed })), unlocked: true, reveal, pulse: mine, tester, since });
   }
   // locked: counts and the taste, no titles, no links, no facts
-  return c.json({ ...run, unlocked: false, reveal, pulse: mine, tester, items: run.items.map((i) => ({ sighting_id: i.sighting_id, company: i.company, label: i.label, first_seen: i.first_seen })), questions: [] });
+  return c.json({ ...run, unlocked: false, reveal, pulse: mine, tester, items: run.items.filter((i) => !i.held).map((i) => ({ sighting_id: i.sighting_id, company: i.company, label: i.label, first_seen: i.first_seen })), questions: [] });
 });
 
 /** One answer, applied to every role on the list that asked for it; remembered on the account like any questionnaire answer. */
@@ -1040,5 +1064,6 @@ radar.post("/test/answer", async (c) => {
     await rememberAnswer(u.id, { requirement: q.requirement, fact: facts, line: L }).catch(() => {});
   }
   await kv.set(runKey(u.id), run);
-  return c.json({ ok: true, line, shots: run.shots, within_reach: run.within_reach, items: run.items, questions: run.questions });
+  await markHeld(run);
+  return c.json({ ok: true, line, shots: run.shots, within_reach: run.within_reach, items: run.items.filter((i) => !i.held), questions: run.questions });
 });

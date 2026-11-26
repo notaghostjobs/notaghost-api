@@ -19,6 +19,7 @@ import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { db } from "../lib/db.js";
 import { livePool, titleIdf, titleScore, words, fwords, TITLE_IN, type Sighting } from "./radar.js";
+import { isFresh } from "../lib/fresh.js";
 import { statedBand } from "../reader/experience.js";
 import { realBand, bandFits, cityGate } from "../radar/gates.js";
 import { logEvent } from "../lib/src.js";
@@ -58,7 +59,7 @@ const TOOLS = [
   { name: "get_job", title: "Get one job’s details",
     description: "Returns one posting found with search_jobs: title, employer, location, the employer's own posting link, when Ghosted first saw it and last confirmed it, the experience it asks for, and which hiring system it is on. The posting's own text is not reproduced: the link goes to it. If the employer has taken the posting down, it says so and gives the date.",
     inputSchema: { type: "object", additionalProperties: false, required: ["job_id"], properties: { job_id: { type: "integer", minimum: 1, description: "The job_id from a search_jobs result." } } },
-    outputSchema: { type: "object", required: ["status"], properties: { status: { type: "string", enum: ["live", "closed", "not_found"] }, job: { ...JOB, properties: { ...JOB.properties, hiring_system: { type: "string" } } }, closed_on: { type: ["string", "null"] } } },
+    outputSchema: { type: "object", required: ["status"], properties: { status: { type: "string", enum: ["live", "not_confirmed", "closed", "not_found"] }, job: { ...JOB, properties: { ...JOB.properties, hiring_system: { type: "string" } } }, closed_on: { type: ["string", "null"] } } },
     annotations: { title: "Get one job’s details", ...RO } },
   { name: "about_radar", title: "About Ghosted Radar",
     description: "Explains Ghosted Radar, Ghosted's own service that reads a person's résumé and keeps a daily list of live Bengaluru roles matched to it, and returns the notaghost.jobs page that describes it. Use only when the person asks about matching jobs to their résumé, daily job updates, or what else Ghosted offers.",
@@ -113,7 +114,7 @@ const SHOWN_AS: Record<string, string> = { "accenture song": "Accenture", "adity
 /** a place as a person would read it; a careers page sometimes hands us the next card's text where the city should be */
 const tidyPlace = (l: string | null) => { const x = String(l ?? "").replace(/\s+/g, " ").trim().replace(/^(?!\d+ Locations?)(.*?)\s*\((?:Bengaluru facet|incl\. Bengaluru)\)$/i, "$1"); return !x || x.length > 70 || /[•]|apply now|manager|engineer/i.test(x) ? "Bengaluru" : x; };
 const shown = (rows: Sighting[]): Sighting[] => { const out: Sighting[] = []; const now = Date.now(); const seen = new Set<string>();
-  for (const r of rows) { if (!r.title || !/^https:\/\/[^\s]+$/i.test(r.url ?? "")) continue; if (cityGate(r.title)) continue; if (r.last_seen && now - Date.parse(r.last_seen) > 7 * 86400e3) continue; const title = tidyTitle(r.title); if (title.length < 3) continue;
+  for (const r of rows) { if (!r.title || !/^https:\/\/[^\s]+$/i.test(r.url ?? "")) continue; if (cityGate(r.title)) continue; if (!isFresh(r.last_seen, now)) continue; const title = tidyTitle(r.title); if (title.length < 3) continue;
     if (seen.has(r.url)) continue; seen.add(r.url);
     const as = SHOWN_AS[(r.employer_key ?? "").toLowerCase()] ?? SHOWN_AS[(r.company_name ?? "").toLowerCase().trim()];
     // one hiring site on file under two names lists each role twice, with different links: the same title in the same place is one role
@@ -131,7 +132,7 @@ const st = (w: string) => w.replace(/ies$/, "y").replace(/(ing|ers?|s)$/, "");
 /** "2 Locations (Bengaluru facet)" is the hiring system's own shorthand; a person reads it as one of several places */
 const place = (loc: string | null | undefined) => { const l = String(loc ?? "").trim(); const m = /^(\d+) Locations? \(Bengaluru facet\)$/i.exec(l); return m ? `Bengaluru (one of ${m[1]} locations)` : l || "Bengaluru"; };
 const PER_PAGE = 8;
-const STALE_MS = 7 * 86400e3;   // a posting we have not been able to confirm for a week is not offered as live
+// a posting not confirmed within the freshness window (lib/fresh.ts, 72 h) is not offered as live
 const MAX_PAGES = 5;
 const searchCache = new Map<string, { at: number; ids: number[]; total: number }>();
 const normCo = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -179,7 +180,7 @@ async function searchJobs(a: { role: string; years_experience?: number; company?
   }
   const byId = new Map(pool.map((s) => [s.id, s]));
   const slice = hit.ids.slice((page - 1) * PER_PAGE, page * PER_PAGE); const rows = await rowsFor(slice);
-  const jobs = slice.flatMap((id) => { const s = byId.get(id), r = rows.get(id); if (!s || !r || r.gone_at || Date.now() - Date.parse(r.last_seen) > STALE_MS) return [];   // not confirmed lately: not shown as open
+  const jobs = slice.flatMap((id) => { const s = byId.get(id), r = rows.get(id); if (!s || !r || r.gone_at || !isFresh(r.last_seen)) return [];   // not confirmed lately: not shown as open
     return [{ job_id: s.id, title: s.title, company: s.company_name ?? "", location: place(s.location), apply_url: s.url, on_employer_site_since: day(s.posted_at ?? s.first_seen), last_confirmed: day(r.last_seen), experience_asked: bandWords(r.description) }]; });
   return { jobs, total_matching: hit.total, page, has_more: page < MAX_PAGES && hit.ids.length > page * PER_PAGE, coverage: "Bengaluru, India. Roles on employers' own hiring systems that Ghosted checks; not every employer is covered.", checked_at: new Date().toISOString() };
 }
@@ -189,7 +190,9 @@ async function getJob(id: number) {
   const r = data as any;
   if (!r || !r.blr || !httpsOnly(r.url)) return { status: "not_found" as const };
   const job = { job_id: r.id, title: tidyTitle(String(r.title ?? "")), company: r.company_name ?? "", location: place(r.location), apply_url: r.url, on_employer_site_since: day(r.posted_at ?? r.first_seen), last_confirmed: day(r.last_seen), experience_asked: bandWords(r.description), hiring_system: SYSTEMS[r.source] ?? "the employer's own hiring system" };
-  return r.gone_at ? { status: "closed" as const, closed_on: day(r.gone_at), job } : { status: "live" as const, closed_on: null, job };
+  if (r.gone_at) return { status: "closed" as const, closed_on: day(r.gone_at), job };
+  // still on the employer's feed when last read, but not confirmed within the freshness window (lib/fresh.ts): not called live, not called closed
+  return isFresh(r.last_seen) ? { status: "live" as const, closed_on: null, job } : { status: "not_confirmed" as const, closed_on: null, job };
 }
 function aboutRadar(client: Client) {
   return { name: "Ghosted Radar", what_it_does: "Radar reads your résumé once and keeps a list of live Bengaluru roles that fit it, taken from employers' own hiring systems. Each morning it adds what opened and removes what closed, and tells you on WhatsApp. It is a paid service on notaghost.jobs; the jobs search here is free and does not need it.",
@@ -229,7 +232,7 @@ function say(tool: string, out: any): string {
   if (tool === "search_jobs") return !out.jobs.length ? `No live Bengaluru role matched that on the employers Ghosted checks. Try the title an employer would use, or a broader one. (${out.coverage})`
     : `${out.total_matching} live Bengaluru ${out.total_matching === 1 ? "role has" : "roles have"} a matching title. Page ${out.page}:\n\n${out.jobs.map((j: any, k: number) => line(j, (out.page - 1) * PER_PAGE + k + 1)).join("\n\n")}\n\n${out.has_more ? "More are available on the next page. " : ""}${out.coverage}`;
   if (tool === "get_job") return out.status === "not_found" ? "No Bengaluru posting has that job_id. Use a job_id from search_jobs."
-    : `${out.job.title} · ${out.job.company}\n${out.job.location}${out.job.experience_asked ? ` · asks ${out.job.experience_asked}` : ""}\n${out.status === "closed" ? `The employer took this posting down around ${out.closed_on}. It is no longer open.` : `On the employer's site since ${out.job.on_employer_site_since}; last confirmed live ${out.job.last_confirmed}.`}\n${out.status === "closed" ? "Posting (now closed)" : "Apply on the employer's site"}: ${out.job.apply_url}\nSource: ${out.job.hiring_system}`;
+    : `${out.job.title} · ${out.job.company}\n${out.job.location}${out.job.experience_asked ? ` · asks ${out.job.experience_asked}` : ""}\n${out.status === "closed" ? `The employer took this posting down around ${out.closed_on}. It is no longer open.` : out.status === "not_confirmed" ? `On the employer's site since ${out.job.on_employer_site_since}, but not confirmed since ${out.job.last_confirmed}: it may have closed. Check the employer's page before applying.` : `On the employer's site since ${out.job.on_employer_site_since}; last confirmed live ${out.job.last_confirmed}.`}\n${out.status === "closed" ? "Posting (now closed)" : "Apply on the employer's site"}: ${out.job.apply_url}\nSource: ${out.job.hiring_system}`;
   if (tool === "list_open_questions") return !out.questions.length ? (out.total_open ? `None of the ${out.total_open} questions open on Open by notaghost.jobs matches that. Leave the role out to see them all.` : "No employer has a question open on Open by notaghost.jobs right now.")
     : `${out.questions.length} open on Open by notaghost.jobs:\n\n${out.questions.map((q: any, k: number) => `${k + 1}. ${q.role} · ${q.company}\n   ${q.pay_band} · ${q.experience_asked} · ${q.location} · ${q.answers_so_far} ${q.answers_so_far === 1 ? "answer" : "answers"} so far · open until ${q.open_until}\n   “${q.question}”\n   Answer it, without your name: ${q.answer_url}\n   question_id ${q.question_id}`).join("\n\n")}`;
   if (tool === "get_open_question") return out.status === "not_found" ? "No Open by notaghost.jobs question has that question_id. Use one from list_open_questions."

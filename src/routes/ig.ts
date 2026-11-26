@@ -5,6 +5,7 @@ import { bandOf } from "../lib/igband.js";
 /** The roles from our Instagram reels, for the page behind the link in the bio. The list is one row in reader_control
  *  (ig:roles → { roles: [{ slug, id, company, role, at }] }), newest first, so a reel adds a role without a deploy.
  *  A role the employer has closed drops off by itself: only sightings still open are returned. */
+import { isFresh } from "../lib/fresh.js";
 export const ig = new Hono();
 type Entry = { slug: string; id: number; company?: string; role?: string; who?: string; at?: string; band?: string };
 ig.get("/roles", async (c) => {
@@ -16,7 +17,7 @@ ig.get("/roles", async (c) => {
   const by = new Map((rows ?? []).map((r: any) => [Number(r.id), r]));
   const roles = list.flatMap((e) => {
     const s: any = by.get(Number(e.id));
-    if (!s || s.gone_at || !s.url) return [];
+    if (!s || s.gone_at || !s.url || !isFresh(s.last_seen)) return [];   // closed, or not confirmed lately (lib/fresh.ts): not offered
     return [{ slug: String(e.slug), company: e.company || s.company_name, role: e.role || s.title, who: e.who ?? null, band: bandOf(e, s.title ?? ""), url: s.url as string, checked_at: s.last_seen as string, added_at: e.at ?? null }];
   });
   c.header("cache-control", "public, max-age=120");

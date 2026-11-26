@@ -15,6 +15,7 @@ import { withMeter } from "../engine/meter.js";
 import { ownDocumentFor } from "../engine/own.js";
 import { cleanTitle } from "../radar/v2.js";
 import { gapsOf, flagOwnership, fillOptions, assembleLine, shapeFree, acceptInto, withdrawFrom, recallAnswers, rememberAnswer, forgetAnswer, applyRemembered, type Facts } from "../engine/told.js";
+import { freshOnly } from "../lib/fresh.js";
 
 const hashUrl = (u: string) => createHash("sha256").update(canonicalPostingUrl(u).trim().toLowerCase()).digest("hex");
 /** The description on file for a role Radar follows, by its link: the employer's own words, as the reader took them. */
@@ -225,7 +226,7 @@ async function similarOpen(title: string): Promise<number> {
   const stop = new Set(["senior","sr","junior","jr","lead","principal","staff","associate","assistant","head","director","manager","the","and","for","of","ii","iii","iv","i","india","bengaluru","bangalore"]);
   const words = (title || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !stop.has(w)).sort((a, b) => b.length - a.length).slice(0, 2);
   if (!words.length) return 0;
-  let q = db.from("sightings").select("*", { count: "exact", head: true }).eq("blr", true).is("gone_at", null);
+  let q: any = freshOnly(db.from("sightings").select("*", { count: "exact", head: true }).eq("blr", true).is("gone_at", null) as any);   // live = confirmed lately (lib/fresh.ts)
   for (const w of words) q = q.ilike("title", `%${w}%`);
   const { count } = await q;
   return count ?? 0;
