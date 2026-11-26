@@ -88,4 +88,8 @@ await t("budget: a substituted model is refused; usage is recorded from the prov
   const r = await callSonnet({ ledger: led, ceiling: 300, purpose: "t", system: "s", user: "u", maxTokens: 100, fetchImpl: ok as any }); assert.ok(Math.abs(r.inr - (1000 * 2 + 100 * 10) / 1e6 * 84) < 1e-9);
   const sub = async () => new Response(JSON.stringify({ model: "claude-haiku-5-5", usage: { input_tokens: 1, output_tokens: 1 }, content: [] }), { status: 200 });
   await assert.rejects(callSonnet({ ledger: led, ceiling: 300, purpose: "t", system: "s", user: "u", maxTokens: 10, fetchImpl: sub as any }), BudgetError); });
+await t("budget: the request body carries only fields the model accepts (no temperature)", async () => { let body: any = null;
+  const cap = async (_u: any, init: any) => { body = JSON.parse(init.body); return new Response(JSON.stringify({ model: "claude-sonnet-5-5", usage: { input_tokens: 1, output_tokens: 1 }, content: [] }), { status: 200 }); };
+  await callSonnet({ ledger: led, ceiling: 300, purpose: "t", system: "s", user: "u", maxTokens: 10, fetchImpl: cap as any });
+  assert.deepEqual(Object.keys(body).sort(), ["max_tokens", "messages", "model", "system"]); });
 console.log(`${n} tests passed`);

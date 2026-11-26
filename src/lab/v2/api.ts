@@ -34,7 +34,7 @@ export async function callSonnet(o: { ledger: Ledger; ceiling: number; purpose: 
   const t0 = Date.now();
   const res = await (o.fetchImpl ?? fetch)("https://api.anthropic.com/v1/messages", {
     method: "POST", headers: { "content-type": "application/json", "x-api-key": apiKey(), "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: MODEL, max_tokens: o.maxTokens, temperature: 0, system: [{ type: "text", text: o.system, ...(o.cacheSystem ? { cache_control: { type: "ephemeral" } } : {}) }], messages: [{ role: "user", content: o.user }] }),
+    body: JSON.stringify({ model: MODEL, max_tokens: o.maxTokens, system: [{ type: "text", text: o.system, ...(o.cacheSystem ? { cache_control: { type: "ephemeral" } } : {}) }], messages: [{ role: "user", content: o.user }] }),
   });
   const ms = Date.now() - t0; const body: any = await res.json().catch(() => ({}));
   if (!res.ok) { o.ledger.add({ at: new Date().toISOString(), purpose: o.purpose, ok: false, status: res.status, error: String(body?.error?.message ?? "").slice(0, 200), inr: 0, ms }); throw new Error(`API ${res.status}: ${body?.error?.type ?? "error"}`); }
