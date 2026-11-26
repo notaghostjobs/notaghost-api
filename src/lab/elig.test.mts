@@ -1,7 +1,7 @@
 // Offline tests for the eligibility gate. No network, no model.
 //   SUPABASE_URL=https://offline.invalid SUPABASE_SERVICE_ROLE_KEY=offline npx tsx src/lab/elig.test.mts
 import assert from "node:assert/strict";
-const { gate, rankScore } = await import("./elig.ts");
+const { gate, rankScore } = await import("./elig.js");
 const job = (o: any = {}) => ({ id: "1", title: "Senior Analyst, FP&A", specs: ["fin.fpa"], yearsMin: 4, yearsMax: null, level: "mid", mustLines: [], allReq: "", ...o });
 const person = (o: any = {}) => ({ want: [["fin.fpa", 1]] as [string, number][], level: "mid", years: 5, stretch: false, resume: "EDUCATION\nB.Com\nEXPERIENCE\nFP&A analyst, budgeting, forecasting in Excel", experience: "FP&A analyst, budgeting, forecasting in Excel", ...o });
 let n = 0; const t = (name: string, f: () => void) => { f(); n++; console.log("ok", name); };
