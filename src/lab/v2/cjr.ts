@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
-export const CJR_SCHEMA = "cjr/1", EXTRACTOR_VERSION = "x2";   // x2: thinking between_tools, effort low, 4,000 output tokens
+export const CJR_SCHEMA = "cjr/1", EXTRACTOR_VERSION = "x3";   // x2: thinking between_tools, effort low; x3: malformed items dropped (not the record), verbatim string credentials kept, unknown seniority words → "unknown"
 export type Req = { text: string; quote: string; kind: "tool" | "credential" | "domain" | "responsibility" | "experience" | "other"; alternatives?: string[] };
 export type CJR = {
   schema: typeof CJR_SCHEMA; extractor: string; job_id: string; desc_sha256: string; model: string;
@@ -15,6 +15,7 @@ export type CJR = {
   location: { city: string | null; work_mode: "onsite" | "hybrid" | "remote" | "unknown"; quote: string | null };
   credentials: Req[]; usable: boolean; usable_reason: string | null;
 };
+const COMPATIBLE = ["x2"];
 export const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 export const norm = (s: string) => s.normalize("NFKC").replace(/[•●▪◦‣∙·]/g, " ").toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
 /** A quote is verified when, normalised, it is a substring of the source (at least 8 characters). */
@@ -41,13 +42,14 @@ export function validateCJR(raw: unknown, job: { id: string; text: string; title
   const src = `${job.title}\n${job.text}`;
   for (const k of ["function", "specialisation"]) if (typeof o[k] !== "string") e.push(`${k} missing`);
   if (typeof o.usable !== "boolean") e.push("usable missing");
-  if (!SEN.has(o.seniority)) e.push("seniority invalid");
+  if (!SEN.has(o.seniority)) o.seniority = "unknown";   // an unexpected word is not a fact we can use
   let dropped = 0;
   const reqs = (name: string): Req[] => {
     if (!Array.isArray(o[name])) { e.push(`${name} not a list`); return []; }
     const out: Req[] = [];
     for (const r of o[name]) {
-      if (!r || typeof r.text !== "string" || !KIND.has(r.kind)) { e.push(`${name}: malformed item`); continue; }
+      if (typeof r === "string") { if (quoted(r, src)) out.push({ text: r.slice(0, 200), quote: r, kind: name === "credentials" ? "credential" : "other", alternatives: [] }); else dropped++; continue; }   // a bare string counts only if it is the posting's own words
+      if (!r || typeof r.text !== "string" || !KIND.has(r.kind)) { dropped++; continue; }   // a malformed item is dropped, never repaired into a requirement
       if (!quoted(r.quote, src)) { dropped++; continue; }   // an unquoted requirement is not kept
       out.push({ text: r.text.slice(0, 200), quote: r.quote, kind: r.kind, alternatives: Array.isArray(r.alternatives) ? r.alternatives.map(String).slice(0, 6) : [] });
     }
@@ -72,6 +74,7 @@ export function validateCJR(raw: unknown, job: { id: string; text: string; title
 export class CJRCache {
   constructor(private dir: string) { mkdirSync(dir, { recursive: true }); }
   key(id: string, text: string) { return `${id}.${sha(text).slice(0, 16)}.${CJR_SCHEMA.replace("/", "")}.${EXTRACTOR_VERSION}.json`; }
-  get(id: string, text: string): CJR | null { const f = `${this.dir}/${this.key(id, text)}`; return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : null; }
+  /** x2 records passed a stricter validator than x3 and came from the same prompt and model, so they are reused, not re-paid. */
+  get(id: string, text: string): CJR | null { for (const v of [EXTRACTOR_VERSION, ...COMPATIBLE]) { const f = `${this.dir}/${id}.${sha(text).slice(0, 16)}.${CJR_SCHEMA.replace("/", "")}.${v}.json`; if (existsSync(f)) return JSON.parse(readFileSync(f, "utf8")); } return null; }
   put(c: CJR, text: string) { writeFileSync(`${this.dir}/${this.key(c.job_id, text)}`, JSON.stringify(c)); }
 }

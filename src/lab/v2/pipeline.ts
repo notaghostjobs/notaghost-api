@@ -72,7 +72,8 @@ export function shortlist(cands: Cand[], c: CER, max = 30, perEmployer = 5, keep
 }
 
 // ── F. the judge's contract ─────────────────────────────────────────────────────────────────────────────────────
-export const JUDGE_VERSION = "j2";   // j2: medium effort; "demonstrated" must share a content word with its requirement
+export const JUDGE_VERSION = "j2v2";   // validator v2: names inside names count (sql/mysql, git/gitlab)
+export const JUDGE_PROMPT = "j2";   // j2: medium effort; "demonstrated" must share a content word with its requirement
 export type Fit = "direct" | "adjacent" | "stretch" | "unsuitable" | "cannot_judge";
 export type ReqCheck = { requirement: string; job_quote: string; status: "demonstrated" | "transferable" | "unverified" | "confirmed_gap"; resume_quote: string | null };
 export type Verdict = { job_id: string; fit: Fit; function: "same" | "neighbour" | "different"; specialisation: "same" | "neighbour" | "different"; seniority: "right" | "one_up" | "below" | "too_far"; core: ReqCheck[]; gaps: string[]; unverified: string[]; why: string; confidence: "high" | "medium" | "low"; failed?: string };
@@ -105,7 +106,7 @@ const content = (t: string) => new Set(norm(t).replace(/[^a-z0-9+#./ ]/g, " ").s
 /** The résumé quote shares at least one content word with the requirement or its job quote (stems of 5+ letters count). */
 export function speaksTo(k: { requirement: string; job_quote: string; resume_quote: string | null }): boolean {
   if (!k.resume_quote) return false; const need = new Set([...content(k.requirement), ...content(k.job_quote)]); const have = content(k.resume_quote);
-  for (const w of have) { if (need.has(w)) return true; if (w.length >= 5) for (const n of need) if (n.length >= 5 && (n.startsWith(w.slice(0, 5)) || w.startsWith(n.slice(0, 5)))) return true; }
+  for (const w of have) { if (need.has(w)) return true; for (const n of need) if (Math.min(n.length, w.length) >= 3 && (w.includes(n) || n.includes(w))) return true; if (w.length >= 5) for (const n of need) if (n.length >= 5 && (n.startsWith(w.slice(0, 5)) || w.startsWith(n.slice(0, 5)))) return true; }
   return false;
 }
 const closed = (job_id: string, failed: string): Verdict => ({ job_id, fit: "cannot_judge", function: "different", specialisation: "different", seniority: "too_far", core: [], gaps: [], unverified: [], why: "", confidence: "low", failed });
