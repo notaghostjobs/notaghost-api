@@ -19,7 +19,7 @@ import { livePool, refreshRadar, radar } from "../routes/radar.js";
 import { mcp } from "../routes/mcp.js";
 import { qaPoolMode, isFixtureUrl } from "./pool.js";
 
-export const FRESH_KEY = "qa:probe:fresh-gate";
+export const FRESH_KEY = "qa:probe:fresh-gate-2";   // run 1 (qa:probe:fresh-gate) stopped at the test account: resumes.storage_path is required
 const TEST_PHONE = "+910000000072";   // QA-only test account, removed at the end
 type Snap = Map<number, string>;
 
@@ -79,14 +79,14 @@ export function freshCheckRoutes() {
         const held = off0.find((s) => !reIds.includes(s.id) && !on1Ids.includes(s.id));
         const { data: goneRow } = await db.from("sightings").select("id, title, company_name, location, url, first_seen").eq("blr", true).not("gone_at", "is", null).limit(50);
         const closed = ((goneRow ?? []) as any[]).find((g) => !mode || isFixtureUrl(g.url) === (mode === "fixtures")) ?? null;
-        const fresh = on1.find((s) => reIds.includes(s.id))!;
+        const fresh = on1.find((s) => reIds.includes(s.id))!; if (!held || !fresh) throw new Error("no held or no fresh row to put on the test list");
         const it = (s: any) => ({ sighting_id: s.id, title: s.title, company: s.company_name ?? "", location: s.location ?? "", url: s.url, posted_at: s.posted_at ?? null, first_seen: s.first_seen, why: "QA freshness check" });
-        const { data: u } = await db.from("users").upsert({ phone: TEST_PHONE, last_seen_at: new Date().toISOString() }, { onConflict: "phone" }).select("id").single(); uid = (u as any).id;
-        const { data: res } = await db.from("resumes").insert({ user_id: uid, is_current: true, parsed: { name: "QA-FRESH", years_total: 3, roles: [{ title: "Analyst" }] } }).select("id").single();
+        const { data: u, error: ue } = await db.from("users").upsert({ phone: TEST_PHONE, last_seen_at: new Date().toISOString() }, { onConflict: "phone" }).select("id").single(); if (ue || !u) throw new Error(`test account: ${ue?.message ?? "no row"}`); uid = (u as any).id;
+        const { data: res, error: re } = await db.from("resumes").insert({ user_id: uid, storage_path: "qa/fresh-check/none", filename: "qa-fresh.txt", is_current: true, parsed: { name: "QA-FRESH", years_total: 3, roles: [{ title: "Analyst" }] } }).select("id").single(); if (re || !res) throw new Error(`test resume: ${re?.message ?? "no row"}`);
         const nowIso = new Date().toISOString();
         const run = { status: "done", resume_id: (res as any).id, started: nowIso, finished: nowIso, refreshed: nowIso, answers: { titles: ["Analyst"], level: "mid", avoid: [], stretch: false },
           items: [it(fresh), it(held), ...(closed ? [it(closed)] : [])], seen: [fresh.id, held!.id, ...(closed ? [closed.id] : [])] };
-        await db.from("reader_control").upsert([{ key: `radar:run:${uid}`, value: run, updated_at: nowIso }, { key: `radar:unlock:${uid}`, value: { by: "qa fresh-check" }, updated_at: nowIso }], { onConflict: "key" });
+        const { error: we } = await db.from("reader_control").upsert([{ key: `radar:run:${uid}`, value: run, updated_at: nowIso }, { key: `radar:unlock:${uid}`, value: { by: "qa fresh-check" }, updated_at: nowIso }], { onConflict: "key" }); if (we) throw new Error(`test list: ${we.message}`);
         const tok = await createSession(uid!);
         const view = async () => { const r = await radar.request("/test/result", { headers: { authorization: `Bearer ${tok}` } }); const j: any = await r.json(); return (j.items ?? []).map((i: any) => i.sighting_id).sort((a: number, b: number) => a - b); };
         const v1 = await view();
