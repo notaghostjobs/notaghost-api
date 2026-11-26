@@ -1,0 +1,25 @@
+{
+ "frozen_at": "2026-11-26T13:26:20+0000",
+ "commit": "c1885fb",
+ "config_sha": "3e5cf4b70bacdf6d",
+ "files": "src/lab/v2/*.ts, src/lab/v2/run-*.mts, src/lab/provenance.ts, src/lab/validity.ts, lab/py/retrieve.py",
+ "versions": {
+  "cer": "cer/1",
+  "extractor": "x3 (x2 reused)",
+  "judge": "j3",
+  "gate": "g3",
+  "shortlist": "s1"
+ },
+ "model": "claude-sonnet-5-5",
+ "thinking": "between_tools",
+ "effort": {
+  "extract": "low",
+  "judge": "medium"
+ },
+ "dev_iterations": 3,
+ "dev_result_ai_provisional": {
+  "precision": "14/19",
+  "coverage": "10/10",
+  "shown": 27
+ }
+}
