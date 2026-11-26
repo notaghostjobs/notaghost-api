@@ -72,8 +72,8 @@ export function shortlist(cands: Cand[], c: CER, max = 30, perEmployer = 5, keep
 }
 
 // ── F. the judge's contract ─────────────────────────────────────────────────────────────────────────────────────
-export const JUDGE_VERSION = "j2v2";   // validator v2: names inside names count (sql/mysql, git/gitlab)
-export const JUDGE_PROMPT = "j2";   // j2: medium effort; "demonstrated" must share a content word with its requirement
+export const JUDGE_VERSION = "j3";   // iteration 2 (dev): wrapped lines join for quote checks, years checked from the computed total, dates as years, direct shown at high or medium confidence   // validator v2: names inside names count (sql/mysql, git/gitlab)
+export const JUDGE_PROMPT = "j3";   // j2: medium effort; "demonstrated" must share a content word with its requirement
 export type Fit = "direct" | "adjacent" | "stretch" | "unsuitable" | "cannot_judge";
 export type ReqCheck = { requirement: string; job_quote: string; status: "demonstrated" | "transferable" | "unverified" | "confirmed_gap"; resume_quote: string | null };
 export type Verdict = { job_id: string; fit: Fit; function: "same" | "neighbour" | "different"; specialisation: "same" | "neighbour" | "different"; seniority: "right" | "one_up" | "below" | "too_far"; core: ReqCheck[]; gaps: string[]; unverified: string[]; why: string; confidence: "high" | "medium" | "low"; failed?: string };
@@ -93,8 +93,9 @@ CANDIDATE EVIDENCE (names and contacts removed; target direction is a simulated 
 ${candidateBlock}`;
 export function candidateBlock(c: CER): string {
   const sec = (h: string, xs: string[], n = 60) => xs.length ? `${h}:\n${xs.slice(0, n).map((x) => `- ${x}`).join("\n")}` : `${h}: (none found)`;
-  return [`Years (${c.years_total.basis}): ${c.years_total.value ?? "unknown"}. Level read: ${c.level_read ?? "unknown"}.`,
-    `Roles: ${c.roles.map((r) => `${r.title || "(untitled)"} ${r.from ?? "?"}–${r.to ?? "?"}`).join("; ") || "unknown"}`,
+  const yr = (x: any) => (x === null || x === undefined ? "?" : /^\d{4}(\.\d+)?$/.test(String(x)) ? String(Math.floor(Number(x))) : String(x));
+  return [`Years (computed from ${c.years_total.basis === "dated_roles" ? "dated roles" : c.years_total.basis}): ${c.years_total.value ?? "unknown"}`, `Level read: ${c.level_read ?? "unknown"}`,
+    `Roles: ${c.roles.map((r) => `${r.title || "(untitled)"} (${yr(r.from)}–${yr(r.to)})`).join("; ") || "unknown"}`,
     sec("WORK", c.work_lines), sec("ACHIEVEMENT", c.achievement_lines, 20), sec("PROJECT", c.project_lines, 20), sec("SUMMARY (claims)", c.summary_lines, 12), sec("LISTED (no work evidence)", c.listed_lines, 30), sec("EDUCATION", c.education_lines, 10),
     `Target (simulated): ${c.target.functions.map(([f, w]) => `${f} ${w}`).join(", ")}; level ${c.target.level}; open to related work: ${c.target.open_to_adjacent}; exclusions: ${c.target.exclusions.join(", ") || "none"}`].join("\n\n");
 }
@@ -111,7 +112,11 @@ export function speaksTo(k: { requirement: string; job_quote: string; resume_quo
 }
 const closed = (job_id: string, failed: string): Verdict => ({ job_id, fit: "cannot_judge", function: "different", specialisation: "different", seniority: "too_far", core: [], gaps: [], unverified: [], why: "", confidence: "low", failed });
 /** Validate one verdict against its sources. Any invented quote, schema breach or contradiction fails closed. */
-export function validateVerdict(raw: any, job: { id: string; text: string; title: string }, evidenceText: string): Verdict {
+/** The evidence as one running text: a sentence the layout wrapped across lines ("Implemented Data" / "- Models, …") is still verbatim. */
+export const joinWrapped = (t: string) => t.replace(/\n-\s+/g, " ").replace(/\n+/g, " ");
+const YEARS_REQ = /(\d{1,2})\s*\+?\s*(?:-|to|–)?\s*(\d{1,2})?\s*\+?\s*(years|yrs)/i;
+export function validateVerdict(raw: any, job: { id: string; text: string; title: string }, evidenceText: string, _block?: string): Verdict {
+  evidenceText = joinWrapped(evidenceText); const yearsTotal = Number((/^Years \(computed[^)]*\): ([\d.]+)/m.exec(arguments[3] ?? "") ?? [])[1]);
   if (!raw || typeof raw !== "object") return closed(job.id, "missing verdict");
   if (String(raw.job_id) !== job.id) return closed(job.id, "job id mismatch");
   if (!FITS.has(raw.fit) || !FN.has(raw.function) || !FN.has(raw.specialisation) || !SEN.has(raw.seniority) || !CONF.has(raw.confidence) || !Array.isArray(raw.core) || typeof raw.why !== "string") return closed(job.id, "schema");
@@ -123,7 +128,10 @@ export function validateVerdict(raw: any, job: { id: string; text: string; title
     if ((k.status === "demonstrated" || k.status === "transferable") && !k.resume_quote) return closed(job.id, "demonstrated without a résumé quote");
   }
   // a real quote that does not speak to the requirement is not evidence: "demonstrated"/"transferable" need a shared content word
-  const core: ReqCheck[] = raw.core.map((k: any) => ((k.status === "demonstrated" || k.status === "transferable") && !speaksTo(k) ? { ...k, status: "unverified", downgraded: true } : k));
+  const core: ReqCheck[] = raw.core.map((k: any) => {
+    const y = YEARS_REQ.exec(`${k.requirement} ${k.job_quote}`);
+    if (y && Number.isFinite(yearsTotal)) { const min = Number(y[1]); return { ...k, status: yearsTotal >= min - 1 ? "demonstrated" : yearsTotal >= min - 2 ? "transferable" : "confirmed_gap", years_check: `${yearsTotal} vs ${min}+` }; }
+    return (k.status === "demonstrated" || k.status === "transferable") && !speaksTo(k) ? { ...k, status: "unverified", downgraded: true } : k; });
   raw = { ...raw, core };
   const v: Verdict = { job_id: job.id, fit: raw.fit, function: raw.function, specialisation: raw.specialisation, seniority: raw.seniority, core: raw.core, gaps: (raw.gaps ?? []).map(String), unverified: (raw.unverified ?? []).map(String), why: raw.why.slice(0, 400), confidence: raw.confidence };
   // contradictions: a strong fit cannot carry a confirmed gap, a different function, or a too-far level
@@ -134,16 +142,16 @@ export function validateVerdict(raw: any, job: { id: string; text: string; title
 
 // ── G. the display gate: 0–5 strong fits; stretch separate; never padded ───────────────────────────────────────────
 export type Shown = { strong: { job_id: string; fit: Fit; why: string; evidence: { job: string; resume: string }[] }[]; stretch: string[]; none_reason: string | null };
-export function display(verdicts: Verdict[], c: CER, jobs: Map<string, { title: string; employer: string; eligible: boolean }>, max = 5): Shown {
+export function display(verdicts: Verdict[], c: CER, jobs: Map<string, { title: string; employer: string; eligible: boolean }>, max = 5, maxUnverified = 0.4): Shown {
   const openAdj = !/^(no|false)/i.test(c.target.open_to_adjacent);
   const ok = (v: Verdict) => {
     const j = jobs.get(v.job_id); if (!j || !j.eligible || v.failed) return false;
-    if (v.fit === "direct") return v.function === "same" && v.specialisation !== "different" && (v.seniority === "right" || v.seniority === "one_up") && v.confidence === "high";
+    if (v.fit === "direct") return v.function === "same" && v.specialisation !== "different" && (v.seniority === "right" || v.seniority === "one_up") && v.confidence !== "low";   // iteration 2: direct at high or medium
     if (v.fit === "adjacent") return openAdj && v.function !== "different" && v.seniority !== "too_far" && v.confidence === "high";
     return false;
   };
   const strongEnough = (v: Verdict) => { const core = v.core; if (!core.length) return false; const dem = core.filter((k) => k.status === "demonstrated").length, tr = core.filter((k) => k.status === "transferable").length, un = core.filter((k) => k.status === "unverified").length;
-    return !core.some((k) => k.status === "confirmed_gap") && dem >= 1 && (dem + tr) / core.length >= (v.fit === "direct" ? 0.6 : 0.5) && un / core.length <= 0.4; };
+    return !core.some((k) => k.status === "confirmed_gap") && dem >= 1 && (dem + tr) / core.length >= (v.fit === "direct" ? 0.6 : 0.5) && un / core.length <= maxUnverified; };
   const seen = new Set<string>(); const order = (v: Verdict) => (v.fit === "direct" ? 0 : 1);
   const strong = verdicts.filter((v) => ok(v) && strongEnough(v)).sort((a, b) => order(a) - order(b)).filter((v) => { const j = jobs.get(v.job_id)!; const k = `${j.employer.toLowerCase()}|${norm(j.title)}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, max)
     .map((v) => ({ job_id: v.job_id, fit: v.fit, why: v.why, evidence: v.core.filter((k) => k.resume_quote).slice(0, 2).map((k) => ({ job: k.job_quote, resume: k.resume_quote! })) }));

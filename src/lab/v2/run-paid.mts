@@ -46,7 +46,8 @@ if (step === "judge") {
       try { r = await callSonnet({ ledger, ceiling, purpose: `judge ${JUDGE_VERSION} ${p}`, system: JUDGE_SYSTEM(block), user: judgeUser(batch), maxTokens: 10000, cacheSystem: true, thinking: "between_tools", effort: "medium" }); }
       catch (err) { if (!(err instanceof TruncatedError)) throw err; }   // truncated: every job in the batch fails closed below
       const parsed: any = firstJson(r.text); const list: any[] = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
-      for (const b of batch) verdicts.push(validateVerdict(list.find((v) => String(v?.job_id) === b.id), b, evidenceText));
+      writeFileSync(`${OUT}/verdicts/raw-${set}-${p}-${i}.json`, JSON.stringify({ judge: JUDGE_VERSION, reply: r.text }));
+      for (const b of batch) verdicts.push(validateVerdict(list.find((v) => String(v?.job_id) === b.id), b, evidenceText, block));
     }
     const jobs = new Map(items.map((x: any) => [x.id, { title: x.title, employer: x.company, eligible: true }]));
     const shown = display(verdicts.filter((v) => v.core), c, jobs as any);

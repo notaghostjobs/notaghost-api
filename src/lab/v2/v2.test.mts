@@ -101,4 +101,11 @@ await t("evidence: a real résumé quote that does not speak to the requirement 
   assert.equal(off.core[0].status, "unverified");
   const on = validateVerdict({ job_id: "1", fit: "stretch", function: "same", specialisation: "same", seniority: "right", confidence: "high", why: "x", core: [{ requirement: "Go or Java", job_quote: "Strong coding skills in Go, Java", status: "demonstrated", resume_quote: "Built Java Spring Boot services" }] }, j, ev);
   assert.equal(on.core[0].status, "demonstrated"); });
+await t("evidence: a genuine sentence across a wrapped line verifies; years are checked against the computed total", () => {
+  const j = { id: "1", title: "Backend", text: "3+ years of backend experience. Build REST APIs and data models." };
+  const block = "Years (computed from dated roles): 6.1\nWORK:\n- Implemented Data\n- Models, multiple Rest API functions";
+  const v = validateVerdict({ job_id: "1", fit: "direct", function: "same", specialisation: "same", seniority: "right", confidence: "medium", why: "x", core: [
+    { requirement: "REST APIs and data models", job_quote: "Build REST APIs and data models", status: "demonstrated", resume_quote: "Implemented Data Models, multiple Rest API functions" },
+    { requirement: "3+ years backend", job_quote: "3+ years of backend experience", status: "unverified", resume_quote: null }] }, j, block, block);
+  assert.equal(v.fit, "direct"); assert.equal(v.core[0].status, "demonstrated"); assert.equal(v.core[1].status, "demonstrated"); });
 console.log(`${n} tests passed`);
