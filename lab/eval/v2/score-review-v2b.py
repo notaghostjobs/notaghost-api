@@ -21,7 +21,7 @@ Stages, in order; each refuses to run out of order:
           with Wilson 95% intervals and candidate-clustered bootstrap 95% intervals (candidates resampled).
           The 12 cases proposed by both systems count once in each arm, and are also reported separately.
 """
-import json, sys, hashlib, math, random, collections
+import json, sys, hashlib, math, random, collections, re
 
 SUITABLE = {"direct", "adjacent"}
 NEED_REASON = {"stretch", "unsuitable", "cannot"}
@@ -195,20 +195,39 @@ def paired(rows, ps, boot, rng, arm="v2"):
             f"{arm}_better": sum(x > 0 for x in d), "control_better": sum(x < 0 for x in d), "tied": sum(x == 0 for x in d)}
 
 
+def cmd_single(mp, exp, out):
+    """Single-reviewer package (false-negative audit only): validated like any export, never used for primary precision."""
+    m = json.load(open(mp)); x, miss = load_export(exp, m)
+    if miss:
+        sys.exit(f"cannot record: {len(miss)} cases unanswered")
+    json.dump({"package": m["version"], "reviewer": x["reviewer"], "export_sha256": sha(exp), "labels": {c: {"suitability": a["suitability"], "apply": a["apply"], "reasons": a.get("reasons", {})} for c, a in x["answers"].items()}}, open(out, "w"), indent=1)
+    print(f"recorded {len(x['answers'])} single-review labels -> {out}")
+
+
 def opt(a, name, default=None):
     return a[a.index(name) + 1] if name in a else default
 
 
-def cmd_unblind(lockp, keyp, boot, splits=None, groups=None, selfrep=None):
+def cmd_unblind(lockp, keyp, boot, splits=None, groups=None, selfrep=None, explain=None, fresh=None, audit_single=None):
     """splits: {name: [profile ids]} (default: the V2 development / held-out split); groups: {profile: profession};
     selfrep: {case code: yes|maybe|no|cannot} from the candidates themselves (kept apart from reviewer would-apply)."""
     L = json.load(open(lockp))
     for p, h in {**L["exports"], **L["adjudication"]}.items():
         if sha(p) != h:
             sys.exit(f"{p} changed after locking; refusing to unblind")
-    key = {x["code"]: x for x in json.load(open(keyp))}
-    if set(key) != set(L["final"]):
+    keyall = {x["code"]: x for x in json.load(open(keyp))}
+    missing = set(L["final"]) - set(keyall)
+    if missing:
+        sys.exit(f"locked labels for cases not in the key ({sorted(missing)[:5]}); refusing")
+    pkg = L["package"].rsplit("-", 1)[-1] if any("package" in x for x in keyall.values()) else None
+    if pkg is None and set(keyall) != set(L["final"]):
         sys.exit("key and locked labels cover different cases; refusing")
+    if pkg is not None and {c for c, x in keyall.items() if x.get("package") == pkg} != set(L["final"]):
+        sys.exit(f"package {pkg}: key cases and locked labels differ; refusing")
+    key = {c: keyall[c] for c in L["final"]}
+    profs = {x["profile"] for x in key.values()}; dev = {p for p in profs if re.fullmatch(r"B\d\d", p)}
+    if dev and dev != profs:
+        sys.exit("development profiles (Bnn) and fresh profiles in one key: populations are never combined; refusing")
     rng = random.Random(20261126)
     rows = [{**{k: v for k, v in L["final"][c].items() if k != "original"}, "code": c, "cand": key[c]["profile"], "arms": key[c]["arms"]} for c in sorted(L["final"])]
     SP = {k: set(v) for k, v in json.load(open(splits)).items()} if splits else {"development": DEV, "held_out": HELD}
@@ -232,13 +251,35 @@ def cmd_unblind(lockp, keyp, boot, splits=None, groups=None, selfrep=None):
             ps = {p for p, x in G.items() if x == g}
             out["by_group"][g] = {arm: metrics([r for r in rows if arm in r["arms"] and r["cand"] in ps], boot, rng, sorted(ps)) for arm in arms}
     if selfrep:  # the candidates' own would-apply answers, for the cases they were shown
-        Sr = json.load(open(selfrep)); out["candidate_reported_would_apply"] = {}
+        Sr = json.load(open(selfrep)); Sr = {c: (v["apply"] if isinstance(v, dict) else v) for c, v in (Sr.get("answers", Sr) if isinstance(Sr, dict) else {}).items()}; out["candidate_reported_would_apply"] = {}
         for arm in arms:
             got = [Sr[r["code"]] for r in rows if arm in r["arms"] and r["code"] in Sr]
             n = len([r for r in rows if arm in r["arms"]])
             out["candidate_reported_would_apply"][arm] = {"answered": len(got), "of": n, "yes": got.count("yes"), "maybe": got.count("maybe"), "no": got.count("no"), "cannot": got.count("cannot"),
                                                           "yes_rate_of_answered": round(got.count("yes") / len(got), 3) if got else None, "wilson95": wilson(got.count("yes"), len(got))}
     out["disagreements_by_candidate"] = dict(collections.Counter(r["cand"] for r in rows if r["source"] == "adjudicated"))
+    for arm in arms:   # failure rates among displayed cases, from the reasons either reviewer cited
+        d = [r for r in rows if arm in r["arms"]]; n = len(d)
+        rate = lambda keys: {"k": sum(1 for r in d if set(r.get("reasons_cited", [])) & keys), "n": n, "rate": round(sum(1 for r in d if set(r.get("reasons_cited", [])) & keys) / n, 3) if n else None}
+        out["arms"][arm]["failure_rates"] = {"specialisation_mismatch": rate({"subspec"}), "seniority_mismatch": rate({"seniority", "ic_mgmt"}), "missing_mandatory_capability": rate({"technical", "credential"}), "function_mismatch": rate({"function"})}
+    if explain:   # explanation accuracy (V3 displays only; audited after the lock by one reviewer)
+        E = json.load(open(explain)); got = [E[r["code"]] for r in rows if "v3" in r["arms"] and r["code"] in E]
+        out["explanation_accuracy"] = {"audited": len(got), "of": sum(1 for r in rows if "v3" in r["arms"]), "supported": sum(1 for g in got if g.get("supported")), "wilson95": wilson(sum(1 for g in got if g.get("supported")), len(got))}
+    if fresh:     # open status of every displayed job on review day
+        Fr = json.load(open(fresh)); out["freshness"] = {}
+        for arm in arms:
+            d = [r for r in rows if arm in r["arms"]]; chk = [Fr[r["code"]] for r in d if r["code"] in Fr]
+            out["freshness"][arm] = {"displayed": len(d), "checked": len(chk), "closed_or_invalid": sum(1 for x in chk if not x.get("open")), "unchecked": len(d) - len(chk)}
+    aud = [r for r in rows if not r["arms"]]; single = json.load(open(audit_single))["labels"] if audit_single else {}
+    allaud = [{"code": r["code"], "strata": keyall[r["code"]].get("strata", []), "suitability": r["suitability"], "review": "double"} for r in aud] + [{"code": c, "strata": keyall[c].get("strata", []), "suitability": v["suitability"], "review": "single"} for c, v in single.items() if c in keyall]
+    if allaud:
+        out["false_negative_audit"] = {}
+        for st in sorted({s for a in allaud for s in a["strata"]}):
+            xs = [a for a in allaud if st in a["strata"]]; k = sum(1 for a in xs if a["suitability"] in SUITABLE)
+            out["false_negative_audit"][st] = {"sampled": len(xs), "suitable_missed": k, "rate": round(k / len(xs), 3), "wilson95": wilson(k, len(xs)), "double_reviewed": sum(1 for a in xs if a["review"] == "double")}
+    audit_codes = [c for c, x in keyall.items() if not x.get("arms")]
+    out["denominator_audit"] = {arm: {"displayed_in_key": sum(1 for x in keyall.values() if arm in x.get("arms", [])), "labelled": sum(1 for r in rows if arm in r["arms"])} for arm in arms}
+    out["denominator_audit"]["audit_cases"] = {"in_key": len(audit_codes), "labelled_double": len(aud), "labelled_single": len([c for c in single if c in keyall]), "unlabelled": len([c for c in audit_codes if c not in L["final"] and c not in single])}
     print(json.dumps(out, indent=1))
 
 
@@ -253,6 +294,8 @@ if __name__ == "__main__":
         rest = a[1:i]
         cmd_lock(rest[0], rest[1], rest[2], rest[3] if len(rest) > 3 else None, a[i + 1])
     elif a[0] == "unblind" and len(a) >= 3:
-        cmd_unblind(a[1], a[2], int(opt(a, "--boot", 10000)), opt(a, "--splits"), opt(a, "--groups"), opt(a, "--self"))
+        cmd_unblind(a[1], a[2], int(opt(a, "--boot", 10000)), opt(a, "--splits"), opt(a, "--groups"), opt(a, "--self"), opt(a, "--explain"), opt(a, "--fresh"), opt(a, "--audit-single"))
+    elif a[0] == "single" and "--out" in a:
+        cmd_single(a[1], a[2], opt(a, "--out"))
     else:
         sys.exit(__doc__)

@@ -1,9 +1,9 @@
 // The posting text V3 reads: the employer's full description, HTML to text, nothing cut. V2's retrieval views stop at
 // 3,000 characters, and 95% of postings in the frozen snapshot are longer (median 4,917), so V2's extractor and judge
-// often never saw the requirements section. Extraction keeps a hard ceiling only to bound cost (16,000 characters,
-// the V2 extractor's own limit); anything longer is recorded as truncated, never silently cut.
+// often never saw the requirements section. Extraction keeps a hard ceiling only to bound cost (60,000 characters;
+// anything longer is recorded as oversized and not judged, never silently cut).
 import { createHash } from "node:crypto";
-export const EXTRACT_CHAR_LIMIT = 16000, JUDGE_CHAR_LIMIT = 6000;   // the judge also receives the extracted requirements; 6,000 is the frozen j3 judgeUser limit
+export const EXTRACT_CHAR_LIMIT = 60000, JUDGE_CHAR_LIMIT = 6000;   // 60,000 chars ≈ 20k tokens, far inside the model context; longer postings are flagged "oversized", never cut. The judge gets the complete extracted requirements plus the first 6,000 chars (the frozen j3 judgeUser format).
 export function htmlToText(h: string): string {
   return (h || "").replace(/<(br|\/p|\/li|\/h\d|\/div|\/tr)[^>]*>/gi, "\n").replace(/<li[^>]*>/gi, "\n• ").replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"')

@@ -6,17 +6,20 @@ import { readFileSync, writeFileSync } from "node:fs";
 const { evidence, reqsFromDet } = await import("./req.js"); const { evaluate2 } = await import("./req2.js");
 const { provenance } = await import("./provenance.js"); const { validity2 } = await import("./validity.js");
 const S = "/tmp/claude-0/-home-claude/e75d385d-3415-5d05-84bc-8c909535d0ed/scratchpad";
-const [retF, candDir, out] = process.argv.slice(2); const ret = JSON.parse(readFileSync(retF, "utf8"));
-const det = new Map(readFileSync(`${S}/arch/jir-det.jsonl`, "utf8").split("\n").filter(Boolean).map((l) => { const j = JSON.parse(l); return [j.posting.id, j]; }));
-const views = new Map(readFileSync(`${S}/arch/views-det.jsonl`, "utf8").split("\n").filter(Boolean).map((l) => { const v = JSON.parse(l); return [v.id, v]; }));
-const profiles = new Map(JSON.parse(readFileSync(`${S}/bench/profiles-19-local.json`, "utf8")).map((p: any) => [p.id, p]));
+const [retF, candDir, out] = process.argv.slice(2);
+// Paths default to the development workspace (unchanged behaviour). An evaluation root passes all four explicitly;
+// when REQ2_EVAL=1 a missing one is an error, never a fall back to the development data.
+const P = (k: string, dev: string) => { const v = process.env[k]; if (process.env.REQ2_EVAL === "1" && !v) throw new Error(`${k} must be set for an evaluation root`); return v ?? dev; }; const ret = JSON.parse(readFileSync(retF, "utf8"));
+const det = new Map(readFileSync(P("REQ2_JIR", `${S}/arch/jir-det.jsonl`), "utf8").split("\n").filter(Boolean).map((l) => { const j = JSON.parse(l); return [j.posting.id, j]; }));
+const views = new Map(readFileSync(P("REQ2_VIEWS", `${S}/arch/views-det.jsonl`), "utf8").split("\n").filter(Boolean).map((l) => { const v = JSON.parse(l); return [v.id, v]; }));
+const profiles = new Map(JSON.parse(readFileSync(P("REQ2_PROFILES", `${S}/bench/profiles-19-local.json`), "utf8")).map((p: any) => [p.id, p]));
 const ARMS: Record<string, { provenance: boolean; core: boolean }> = { "R2:A_control": { provenance: false, core: false }, "R2:B_provenance": { provenance: true, core: false }, "R2:C_core": { provenance: false, core: true }, "R2:D_both": { provenance: true, core: true } };
 const arms: any = {}, notes: any = {}, invalidDropped: any = {}; const times: number[] = [];
 for (const r of ret.runs) {
   const t0 = performance.now();
   const c = JSON.parse(readFileSync(`${candDir}/${r.p}.json`, "utf8")); const resume = readFileSync((profiles.get(r.p) as any).resume, "utf8");
   const ev: any = evidence(c.cir.views.experience, c.cir.views.skills, resume); if (/\bph\.?\s?d\b/i.test(resume)) ev.quals.add("phd");
-  const pv = provenance(JSON.parse(readFileSync(`${S}/req2/layout/${r.p}.json`, "utf8")));
+  const pv = provenance(JSON.parse(readFileSync(`${P("REQ2_LAYOUT", `${S}/req2/layout`)}/${r.p}.json`, "utf8")));
   const ev2 = { ...ev, strength: pv.strength };
   const intent = { want: c.belief.want, level: c.belief.level, years: c.belief.years, domain: c.belief.field, stretch: c.belief.stretch };
   const pool: string[] = [...r.pool]; for (const ch of ["fallback_fulltext", "fallback_title"]) for (const id of (r.channels[ch] ?? []).slice(0, 50)) if (!pool.includes(id)) pool.push(id);
@@ -35,5 +38,5 @@ for (const r of ret.runs) {
   times.push(performance.now() - t0);
 }
 const sorted = [...times].sort((a, b) => a - b);
-writeFileSync(out, JSON.stringify({ arms, notes, invalidDropped, ms: { median: Math.round(sorted[9]), p95: Math.round(sorted[Math.floor(0.95 * sorted.length)]), max: Math.round(sorted.at(-1)!) } }));
-console.log("arms", Object.keys(arms).join(", "), "| per-candidate ms (4 arms, incl. evidence):", { median: Math.round(sorted[9]), p95: Math.round(sorted[Math.floor(0.95 * sorted.length)]) }, "| invalid dropped per candidate:", JSON.stringify(invalidDropped));
+writeFileSync(out, JSON.stringify({ arms, notes, invalidDropped, ms: { median: Math.round(sorted[Math.floor(sorted.length / 2)]), p95: Math.round(sorted[Math.floor(0.95 * sorted.length)]), max: Math.round(sorted.at(-1)!) } }));
+console.log("arms", Object.keys(arms).join(", "), "| per-candidate ms (4 arms, incl. evidence):", { median: Math.round(sorted[Math.floor(sorted.length / 2)]), p95: Math.round(sorted[Math.floor(0.95 * sorted.length)]) }, "| invalid dropped per candidate:", JSON.stringify(invalidDropped));

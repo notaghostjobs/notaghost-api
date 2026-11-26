@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your job list</title>
+<style>
+:root{--ink:#16111a;--body:#2c2630;--muted:#6f6875;--rule:#e2dee5;--card:#f6f4f7}
+*{box-sizing:border-box}body{margin:0;font:16px/1.55 -apple-system,"Segoe UI",Inter,Arial,sans-serif;color:var(--body);background:#fff}
+main{max-width:760px;margin:0 auto;padding:16px}h1{font-size:22px;color:var(--ink);margin:8px 0}h2{font-size:17px;color:var(--ink);margin:0}
+section{border:1px solid var(--rule);border-radius:10px;padding:14px;margin:12px 0}.note{color:var(--muted);font-size:14px}
+.opts{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.opts label{border:1px solid var(--rule);border-radius:8px;padding:8px 12px;min-height:42px;display:flex;align-items:center;gap:6px;cursor:pointer}
+.opts label:has(input:checked){background:var(--card);border-color:var(--ink)}textarea{width:100%;font:inherit;border:1px solid var(--rule);border-radius:8px;padding:8px;min-height:48px}
+details pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.5 inherit;background:var(--card);padding:10px;border-radius:8px;max-height:50vh;overflow:auto}
+button{font:inherit;border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:8px;padding:10px 14px;min-height:44px}:focus-visible{outline:2px solid #6b4bd6;outline-offset:2px}
+</style></head><body><main>
+<h1>Would you apply to these jobs?</h1>
+<p class="note">These are jobs we found for you during our matching test. For each one, tell us honestly whether you would apply. There are no right answers. Your answers save in this browser; press "Download my answers" when you finish and send us the file.</p>
+<div id="list"></div><p class="note" id="count"></p><button id="dl">Download my answers</button>
+<script>
+const D=__DATA__;const PKG={name:"ghosted-candidate-feedback",version:"__VERSION__",data_sha:"__SHA__"};const KEY="ghosted-feedback:"+PKG.data_sha;
+let A={};try{A=JSON.parse(localStorage.getItem(KEY)||"{}")||{}}catch(e){}
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const OPTS=[["yes","Yes, I would apply"],["maybe","Maybe"],["no","No"]];
+function render(){document.getElementById("list").innerHTML=D.jobs.map(j=>{const a=A[j.code]||{};return '<section><h2>'+esc(j.title)+'</h2><div class="note">'+esc(j.employer)+(j.location?" · "+esc(j.location):"")+'</div><details><summary>Read the full job description</summary><pre>'+esc(j.text)+'</pre></details><div class="opts">'+OPTS.map(([v,l])=>'<label><input type="radio" name="'+j.code+'" value="'+v+'"'+(a.apply===v?" checked":"")+'>'+l+'</label>').join("")+'</div><textarea data-code="'+j.code+'" placeholder="Why? (optional)">'+esc(a.reason||"")+'</textarea></section>'}).join("");
+ document.getElementById("count").textContent=D.jobs.filter(j=>A[j.code]&&A[j.code].apply).length+" of "+D.jobs.length+" answered"}
+document.addEventListener("change",e=>{if(e.target.type==="radio"){A[e.target.name]={...(A[e.target.name]||{}),apply:e.target.value,at:new Date().toISOString()};save()}});
+document.addEventListener("input",e=>{const c=e.target.dataset&&e.target.dataset.code;if(c){A[c]={...(A[c]||{}),reason:e.target.value.slice(0,1000)};save()}});
+function save(){try{localStorage.setItem(KEY,JSON.stringify(A))}catch(e){}document.getElementById("count").textContent=D.jobs.filter(j=>A[j.code]&&A[j.code].apply).length+" of "+D.jobs.length+" answered"}
+document.getElementById("dl").onclick=()=>{const codes=D.jobs.map(j=>j.code);const x={package:PKG,candidate:D.candidate,exported_at:new Date().toISOString(),answers:Object.fromEntries(codes.filter(c=>A[c]&&A[c].apply).map(c=>[c,{apply:A[c].apply,reason:A[c].reason||""}])),missing:codes.filter(c=>!(A[c]&&A[c].apply))};
+ const b=new Blob([JSON.stringify(x,null,1)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="my-answers-"+D.candidate+".json";document.body.appendChild(a);a.click();a.remove()};
+render();
+</script></main></body></html>
