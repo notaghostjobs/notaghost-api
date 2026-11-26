@@ -13,13 +13,14 @@ import { Hono } from "hono";
 import { allowed } from "./bench.js";
 import { store } from "./state.js";
 import { db } from "../lib/db.js";
+import { freshHours } from "../lib/fresh.js";
 import { createSession } from "../lib/auth.js";
 import { recordFeed } from "../reader/read.js";
 import { livePool, refreshRadar, radar } from "../routes/radar.js";
 import { mcp } from "../routes/mcp.js";
 import { qaPoolMode, isFixtureUrl } from "./pool.js";
 
-export const FRESH_KEY = "qa:probe:fresh-gate-2";   // run 1 (qa:probe:fresh-gate) stopped at the test account: resumes.storage_path is required
+export const FRESH_KEY = "qa:probe:fresh-gate-3";   // run 1 (qa:probe:fresh-gate) stopped at the test account: resumes.storage_path is required
 const TEST_PHONE = "+910000000072";   // QA-only test account, removed at the end
 type Snap = Map<number, string>;
 
@@ -89,8 +90,9 @@ export function freshCheckRoutes() {
         const { error: we } = await db.from("reader_control").upsert([{ key: `radar:run:${uid}`, value: run, updated_at: nowIso }, { key: `radar:unlock:${uid}`, value: { by: "qa fresh-check" }, updated_at: nowIso }], { onConflict: "key" }); if (we) throw new Error(`test list: ${we.message}`);
         const tok = await createSession(uid!);
         const view = async () => { const r = await radar.request("/test/result", { headers: { authorization: `Bearer ${tok}` } }); const j: any = await r.json(); return (j.items ?? []).map((i: any) => i.sighting_id).sort((a: number, b: number) => a - b); };
-        const v1 = await view();
-        check("stored list, served before any refresh: the held role is hidden at once; the fresh role shows (a closed role is left to the morning, as before)", v1.includes(fresh.id) && !v1.includes(held!.id), { shown: v1, fresh: fresh.id, held: held!.id, closed: closed?.id ?? null });
+        process.env.FRESH_HOURS = "72";   // run 2 opened this view with the gate still off from step 4
+        const gateAtView = freshHours(); const v1 = await view();
+        check("stored list, served before any refresh, gate on: the held role is hidden at once; the fresh role shows (a closed role is left to the morning, as before)", gateAtView === 72 && v1.includes(fresh.id) && !v1.includes(held!.id), { gate_hours_at_view: gateAtView, refreshed_before_view: false, shown: v1, fresh: fresh.id, held: held!.id, closed: closed?.id ?? null });
         process.env.FRESH_HOURS = "72";
         const m = await refreshRadar(uid!);
         const { data: after } = await db.from("reader_control").select("value").eq("key", `radar:run:${uid}`).maybeSingle();
