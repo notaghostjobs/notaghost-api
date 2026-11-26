@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 const { callSonnet, Ledger, firstJson, CHECKPOINTS, MODEL } = await import("./api.js");
 const { CJRCache, validateCJR, EXTRACT_SYSTEM, extractUser, EXTRACTOR_VERSION } = await import("./cjr.js");
 const { JUDGE_SYSTEM, JUDGE_VERSION, candidateBlock, judgeUser, validateVerdict, display, SHORTLIST_VERSION } = await import("./pipeline.js");
-const S = "/tmp/claude-0/-home-claude/e75d385d-3415-5d05-84bc-8c909535d0ed/scratchpad", OUT = `${S}/v2`;
+const S = process.env.V2_DATA ?? "/tmp/claude-0/-home-claude/e75d385d-3415-5d05-84bc-8c909535d0ed/scratchpad", OUT = `${S}/v2`;
 const [step, set, cp, limitArg] = process.argv.slice(2); const ceiling = (CHECKPOINTS as any)[cp]; if (!ceiling) throw new Error("checkpoint must be 1, 2 or 3");
 if (set === "heldout") { const f = JSON.parse(readFileSync(`${OUT}/frozen.json`, "utf8")); if (!f.config_sha) throw new Error("held-out is locked until the configuration is frozen"); }
 const ledger = new Ledger(`${OUT}/ledger.jsonl`); const cache = new CJRCache(`${OUT}/cjr`);
