@@ -4,7 +4,7 @@
 import type { Compat } from "./scope.js";
 import type { AnchorCheck } from "./anchors.js";
 
-export const GATE3_VERSION = "g3v3.1";
+export const GATE3_VERSION = "g3v3.2";   // v3.2: an anchor the vocabulary cannot see ("none"/"unrecognised") no longer blocks an adjacent fit; the judge's evidence thresholds still apply
 export type V = { job_id: string; fit: string; function: string; specialisation: string; seniority: string; confidence: string; core: { status: string; resume_quote: string | null; job_quote: string; requirement: string }[]; why: string; failed?: string };
 export type Ctx = { compat: Compat; anchors: AnchorCheck; eligible: boolean; employer: string; title: string };
 export type Decision = { tier: "strong" | "stretch" | "rejected"; reasons: string[] };
@@ -21,7 +21,9 @@ export function decide(v: V, x: Ctx, o: GateOpts = DEFAULT_OPTS): Decision {
   // hard mismatches: deterministic evidence overrides the judge
   if (x.compat.verdict === "too_far_up") return { tier: v.fit === "stretch" || v.fit === "adjacent" ? "stretch" : "stretch", reasons: ["scope: too far a step up", ...x.compat.reasons] };
   if (x.compat.verdict === "below") return { tier: "rejected", reasons: ["scope: below the person's demonstrated level", ...x.compat.reasons] };
-  if (x.anchors.status === "missing") return { tier: "stretch", reasons: ["defining requirement not shown: " + x.anchors.detail.filter((d) => d.status === "missing").map((d) => d.label).join(", ")] };
+  // a defining requirement the vocabulary cannot find in the person's lines: strong only when the judge, quoting the
+  // résumé, found the same specialisation directly at high confidence (v3.2); otherwise stretch
+  if (x.anchors.status === "missing" && !(v.fit === "direct" && v.specialisation === "same" && v.confidence === "high")) return { tier: "stretch", reasons: ["defining requirement not shown: " + x.anchors.detail.filter((d) => d.status === "missing").map((d) => d.label).join(", ")] };
   if (x.anchors.status === "sibling_only") return { tier: "stretch", reasons: ["different specialisation in the same field: " + x.anchors.detail.filter((d) => d.status === "sibling_only").map((d) => d.label).join(", ")] };
   if (v.fit === "stretch") return { tier: "stretch", reasons: ["judged stretch"] };
   const k = coreCounts(v);
@@ -40,7 +42,9 @@ export function decide(v: V, x: Ctx, o: GateOpts = DEFAULT_OPTS): Decision {
   if (v.function === "different" || v.seniority === "too_far") return { tier: "stretch", reasons: ["adjacent, but too far"] };
   if (v.confidence === "low") return { tier: "stretch", reasons: ["low confidence"] };
   if (v.confidence === "medium" && !o.admitAdjacentMedium) return { tier: "stretch", reasons: ["adjacent at medium confidence"] };
-  if (o.requireAnchorForAdjacent && x.anchors.status !== "met") return { tier: "stretch", reasons: ["adjacent without a demonstrated defining requirement"] };
+  // neither anchors nor scope could be checked independently: only the judge's own "direct" can carry it
+  if (["none", "unrecognised"].includes(x.anchors.status) && x.compat.verdict === "unknown") return { tier: "stretch", reasons: ["adjacent, and nothing could be checked independently of the judge"] };
+  if (o.requireAnchorForAdjacent && !["met", "none", "unrecognised"].includes(x.anchors.status)) return { tier: "stretch", reasons: ["adjacent without a demonstrated defining requirement"] };
   if (x.compat.verdict !== "fit" && x.compat.verdict !== "below_mild") return { tier: "stretch", reasons: ["adjacent and a step up"] };
   if (k.dem / k.all < 0.5 || k.un / k.all > 0.25) return { tier: "stretch", reasons: ["adjacent with too little demonstrated"] };
   r.push(`adjacent fit (${v.confidence} confidence, anchors met, scope ${x.compat.verdict})`); return { tier: "strong", reasons: r };

@@ -9,15 +9,29 @@
 import type { Compat } from "./scope.js";
 import type { AnchorCheck } from "./anchors.js";
 
-export const SHORTLIST3_VERSION = "s3.2";   // s3.2: per-channel quota 0, 8 clusters per employer (sweep on the 19 seen profiles)
+export const SHORTLIST3_VERSION = "s3.3";   // s3.3: clusters split on requirement signature (27 Nov, synthetic fixtures); s3.2: per-channel quota 0, 8 clusters per employer (sweep on the 19 seen profiles)
 export const DEFAULT_SHORT = { perChannel: 0, perEmployerClusters: 8 };
-export type SCand = { id: string; title: string; employer: string; channels: Record<string, number | null>; agree: number | null; compat: Compat; anchors: AnchorCheck; cover: number };
+/** What must match for two same-title postings to be treated as one: a posting that differs in any of these is
+ *  judged on its own. tools: the role-defining tools the posting asks for (generic terms excluded). */
+export type Signature = { yearsBand: string; city: string; employment: string; manages: boolean; anchors: string; unit: string; tools: string[] };
+export type SCand = { id: string; title: string; employer: string; channels: Record<string, number | null>; agree: number | null; compat: Compat; anchors: AnchorCheck; cover: number; sig?: Signature; reqHash?: string };
+export const yearsBand = (y: number | null) => (y === null ? "unstated" : y <= 2 ? "0-2" : y <= 5 ? "3-5" : y <= 9 ? "6-9" : "10+");
+export const EMPLOYMENT = (t: string) => (/\b(intern(ship)?|trainee|apprentice)\b/i.test(t) ? "internship" : /\b(contract(ual)?|fixed[- ]term|temporary|consultant on contract|freelance)\b/i.test(t) ? "contract" : /\bpart[- ]time\b/i.test(t) ? "part-time" : "full-time");
+const jacc = (a: string[], b: string[]) => { if (!a.length && !b.length) return 1; const A = new Set(a), B = new Set(b); let i = 0; for (const x of A) if (B.has(x)) i++; return i / (A.size + B.size - i); };
+/** Same cluster only if every signature field matches and the tool sets overlap by at least 60%. */
+export function sameRequirements(a?: Signature, b?: Signature): boolean {
+  if (!a || !b) return false;   // without a signature, never merge
+  return a.yearsBand === b.yearsBand && a.city === b.city && a.employment === b.employment && a.manages === b.manages && a.anchors === b.anchors && a.unit === b.unit && jacc(a.tools, b.tools) >= 0.6;
+}
 export type ShortOpts = { size: number; perChannel: number; perEmployerClusters: number };
 /** Near-duplicate key: the title's distinct words, order-free, without locations, codes and requisition numbers. */
 export const normTitle = (t: string) => [...new Set(t.toLowerCase().replace(/\(.*?\)|\[.*?\]|r-?\d{4,}|\b\d{3,}\b/g, " ").replace(/[^a-z0-9+#&]+/g, " ").replace(/\b(bengaluru|bangalore|india|blr|karnataka|remote|hybrid|dm|in|the|and|of|for)\b/g, " ").split(/\s+/).filter(Boolean))].sort().join(" ");
-const ANCHOR_W: Record<string, number> = { met: 1, partial: 0.7, claimed_only: 0.55, none: 0.5, sibling_only: 0.15, missing: 0.05 };
+const ANCHOR_W: Record<string, number> = { met: 1, partial: 0.7, claimed_only: 0.55, unrecognised: 0.5, none: 0.5, sibling_only: 0.15, missing: 0.3 };
 const SCOPE_W: Record<string, number> = { fit: 1, below_mild: 0.8, step_up: 0.7, unknown: 0.6, too_far_up: 0.15, below: 0.1 };
-export const hardMismatch = (x: SCand) => x.compat.verdict === "below" || x.compat.verdict === "too_far_up" || x.anchors.status === "missing" || x.anchors.status === "sibling_only";
+/** Kept out of judging: scope clearly below or far above, or the person's recognised craft is a different sibling in
+ *  the job's own family. A "missing" anchor only lowers the score (s3.3): the vocabulary may not know the person's
+ *  words for it, so the judge reads the evidence. */
+export const hardMismatch = (x: SCand) => x.compat.verdict === "below" || x.compat.verdict === "too_far_up" || x.anchors.status === "sibling_only";
 /** Reciprocal-rank fusion over every channel the job appeared in (k = 60, the usual constant). */
 export const rrf = (ch: Record<string, number | null>) => Object.values(ch).reduce<number>((a, r) => a + (r ? 1 / (60 + r) : 0), 0);
 export function score3(x: SCand): number {
@@ -28,8 +42,16 @@ export function score3(x: SCand): number {
 export type Cluster = { key: string; rep: SCand; members: string[]; score: number };
 export function shortlist3(cands: SCand[], o: ShortOpts) {
   // 1. clusters of near-duplicates
+  //    same employer + same title words is only a candidate group; inside it, postings merge only when their
+  //    requirement signatures match (experience band, city, employment type, people management, defining anchors,
+  //    business unit, tool set). Members are never displayed on the representative's verdict (see gate.present).
   const byKey = new Map<string, SCand[]>(); for (const x of cands) { const k = `${x.employer.toLowerCase().trim()}|${normTitle(x.title)}`; if (!byKey.has(k)) byKey.set(k, []); byKey.get(k)!.push(x); }
-  const clusters: Cluster[] = [...byKey].map(([key, xs]) => { const s = xs.map((x) => ({ x, s: score3(x) })).sort((a, b) => b.s - a.s); return { key, rep: s[0].x, members: xs.map((x) => x.id), score: s[0].s }; });
+  const clusters: Cluster[] = [];
+  for (const [key, xs] of byKey) {
+    const groups: SCand[][] = [];
+    for (const x of xs.map((x) => ({ x, s: score3(x) })).sort((a, b) => b.s - a.s).map((z) => z.x)) { const g = groups.find((g) => sameRequirements(g[0].sig, x.sig)); if (g) g.push(x); else groups.push([x]); }
+    groups.forEach((g, i) => clusters.push({ key: `${key}#${i}`, rep: g[0], members: g.map((x) => x.id), score: score3(g[0]) }));
+  }
   const ok = clusters.filter((c) => !hardMismatch(c.rep)).sort((a, b) => b.score - a.score);
   const chosen: Cluster[] = []; const perEmp = new Map<string, number>(); const emp = (c: Cluster) => c.rep.employer.toLowerCase().trim();
   const take = (c: Cluster) => { if (chosen.includes(c) || chosen.length >= o.size || (perEmp.get(emp(c)) ?? 0) >= o.perEmployerClusters) return; chosen.push(c); perEmp.set(emp(c), (perEmp.get(emp(c)) ?? 0) + 1); };

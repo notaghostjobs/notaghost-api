@@ -34,7 +34,10 @@ t("3 individual contributor and manager are not converted automatically", () => 
 });
 t("4 specialist anchors are not inferred from generic skills", () => {
   const sqlExcel = AN.candidateAnchors(person({ work: ["Wrote SQL queries and Excel reports for operations"], listed: ["SQL, Excel, Tableau"] }));
-  assert.equal(AN.checkAnchors(AN.jobAnchors(job("FP&A Analyst")), sqlExcel).status, "missing");
+  assert.ok(!["met", "partial"].includes(AN.checkAnchors(AN.jobAnchors(job("FP&A Analyst")), sqlExcel).status), "generic SQL/Excel never meets FP&A");
+  const dash = AN.candidateAnchors(person({ work: ["Built dashboards and analytics for the sales team in SQL and Excel"] }));
+  assert.equal(AN.checkAnchors(AN.jobAnchors(job("FP&A Analyst")), dash).status, "missing");
+  assert.equal(G.decide(V({ confidence: "medium" }), ctx({ anchors: AN.checkAnchors(AN.jobAnchors(job("FP&A Analyst")), dash) })).tier, "stretch");
   const abap = AN.candidateAnchors(person({ work: ["Developed ABAP reports, BAPIs and BADIs for SD"] }));
   assert.equal(AN.checkAnchors(AN.jobAnchors(job("SAP Fiori Developer")), abap).status, "sibling_only");
   assert.notEqual(G.decide(V({}), ctx({ anchors: AN.checkAnchors(AN.jobAnchors(job("SAP Fiori Developer")), abap) })).tier, "strong");
@@ -49,7 +52,8 @@ t("5 similar titles with different functions are told apart", () => {
   assert.equal(AN.checkAnchors(AN.jobAnchors(job("Head of Modern Trade")), mt).status, "sibling_only");
 });
 t("6 relevant jobs are not discarded by near-duplicates or one large employer", () => {
-  const mk = (id: string, title: string, employer: string, rank: number) => ({ id, title, employer, channels: { dense: rank }, agree: 0.8, compat: { verdict: "fit" as const, reasons: [] }, anchors: { status: "met" as const, detail: [] }, cover: 0.8 });
+  const SIG = { yearsBand: "3-5", city: "bengaluru", employment: "full-time", manages: false, anchors: "eng.backend", unit: "swe", tools: ["java", "spring"] };
+  const mk = (id: string, title: string, employer: string, rank: number, sig: any = SIG) => ({ id, title, employer, channels: { dense: rank }, agree: 0.8, compat: { verdict: "fit" as const, reasons: [] }, anchors: { status: "met" as const, detail: [] }, cover: 0.8, sig });
   const dup = Array.from({ length: 12 }, (_, i) => mk(`D${i}`, "Custom Software Engineer - Bengaluru", "BigCo", i + 1));
   const others = Array.from({ length: 6 }, (_, i) => mk(`O${i}`, `Backend Engineer ${["Payments", "Search", "Risk", "Ledger", "Billing", "Infra"][i]}`, `Co${i}`, 20 + i));
   const r = SL.shortlist3([...dup, ...others], { size: 5, ...SL.DEFAULT_SHORT });
@@ -60,7 +64,10 @@ t("6 relevant jobs are not discarded by near-duplicates or one large employer", 
 });
 t("7 missing mandatory qualifications block the strong list", () => {
   assert.equal(G.decide(V({ core: [{ requirement: "CA", job_quote: "q", status: "confirmed_gap", resume_quote: null }, { requirement: "r", job_quote: "q", status: "demonstrated", resume_quote: "x" }] }), ctx()).tier, "rejected");
-  assert.equal(G.decide(V({}), ctx({ anchors: { status: "missing", detail: [{ id: "fin.fpa", label: "FP&A", status: "missing", quote: null }] } })).tier, "stretch");
+  const miss = { status: "missing" as const, detail: [{ id: "fin.fpa", label: "FP&A", status: "missing", quote: null }] };
+  assert.equal(G.decide(V({ confidence: "medium" }), ctx({ anchors: miss })).tier, "stretch");
+  assert.equal(G.decide(V({ fit: "adjacent", confidence: "high" }), ctx({ anchors: miss })).tier, "stretch");
+  assert.equal(G.decide(V({ confidence: "high" }), ctx({ anchors: miss })).tier, "strong", "only a direct, same-specialisation, high-confidence quoted verdict outranks a vocabulary miss");
 });
 t("8 contradictory résumé evidence: a senior title without the years or scope is not senior", () => {
   const p = SC.candidateScope(person({ years: 3, title: "Head of Growth", work: ["Ran weekly campaign reports"] }), null);
@@ -68,7 +75,8 @@ t("8 contradictory résumé evidence: a senior title without the years or scope 
 });
 t("9 ambiguous job requirements are not treated as a match", () => {
   const js = SC.jobScope(job("Associate - Special Projects")); const an = AN.jobAnchors(job("Associate - Special Projects"));
-  assert.equal(an.defining.length, 0); const d = G.decide(V({ fit: "adjacent", confidence: "medium" }), ctx({ anchors: AN.checkAnchors(an, AN.candidateAnchors(person({}))) }));
+  assert.equal(an.defining.length, 0); const cs = SC.compat(SC.candidateScope({ ...person({}), years_total: { value: null }, roles: [] }, null), js);
+  assert.equal(cs.verdict, "unknown"); const d = G.decide(V({ fit: "adjacent", confidence: "medium" }), ctx({ compat: cs, anchors: AN.checkAnchors(an, AN.candidateAnchors(person({}))) }));
   assert.notEqual(d.tier, "strong"); assert.equal(js.yearsMin, null);
 });
 t("10 experience is read as stated: floors, ranges and ceilings", () => {
@@ -96,5 +104,40 @@ t("14 a confident verdict does not override deterministic evidence", () => {
   assert.notEqual(G.decide(V({ fit: "adjacent", confidence: "high" }), ctx({ compat: { verdict: "step_up", reasons: [] } })).tier, "strong");   // adjacent AND a step up is two stretches
   assert.notEqual(G.decide(V({ confidence: "medium" }), ctx({ compat: { verdict: "step_up", reasons: [] } }), { ...G.DEFAULT_OPTS, directStepUpMedium: false }).tier, "strong");
   assert.equal(G.decide(V({ function: "different", fit: "direct" }), ctx()).tier, "rejected");
+});
+t("15 same title, different requirements: never one judgement", () => {
+  const base = { yearsBand: "3-5", city: "bengaluru", employment: "full-time", manages: false, anchors: "eng.backend", unit: "swe", tools: ["java", "spring", "kafka"] };
+  const variants: [string, any][] = [["experience", { yearsBand: "10+" }], ["tech stack", { tools: ["golang", "kubernetes"] }], ["specialist requirement", { anchors: "eng.backend,eng.ml" }], ["location", { city: "pune" }],
+    ["employment arrangement", { employment: "contract" }], ["management", { manages: true }], ["business unit", { unit: "payments" }]];
+  for (const [what, d] of variants) assert.equal(SL.sameRequirements(base, { ...base, ...d }), false, what);
+  assert.equal(SL.sameRequirements(base, { ...base, tools: ["java", "spring", "kafka", "redis"] }), true, "a minor tool difference still matches");
+  assert.equal(SL.sameRequirements(base, undefined), false, "no signature, no merge");
+  const mk = (id: string, sig: any) => ({ id, title: "Software Engineer", employer: "BigCo", channels: { dense: 1 }, agree: 0.8, compat: { verdict: "fit" as const, reasons: [] }, anchors: { status: "met" as const, detail: [] }, cover: 0.8, sig });
+  const r = SL.shortlist3([mk("A", base), mk("B", { ...base, yearsBand: "10+" }), mk("C", base)], { size: 10, ...SL.DEFAULT_SHORT });
+  assert.equal(r.chosen.length, 2); assert.deepEqual(r.chosen.find((c) => c.rep.id === "A" || c.rep.id === "C")!.members.sort(), ["A", "C"]);
+  assert.equal(SL.EMPLOYMENT("Data Analyst (6-month contract)"), "contract"); assert.equal(SL.EMPLOYMENT("Summer Internship - Finance"), "internship");
+});
+t("16 a cluster member is never displayed on its representative's verdict", () => {
+  // only verdicts reach present(); a member without its own verdict cannot appear, whatever its cluster
+  const out = G.present([V({ job_id: "REP" })], (id) => ctx({ title: "Software Engineer", employer: "BigCo" }));
+  assert.deepEqual(out.strong.map((s) => s.job_id), ["REP"]);
+});
+t("17 a vocabulary gap is not a capability gap", () => {
+  const nurse = AN.candidateAnchors(person({ work: ["Managed ward rounds and medication schedules for 30 beds"] }));
+  const ja = AN.jobAnchors(job("Clinical Research Associate")); assert.ok(ja.defining.length > 0);
+  const st = AN.checkAnchors(ja, nurse).status; assert.ok(["unrecognised", "missing"].includes(st));
+  const hr = AN.candidateAnchors(person({ work: ["Ran end-to-end hiring for 40 engineering roles"] })); assert.equal(AN.checkAnchors(AN.jobAnchors(job("Talent Acquisition Partner")), hr).status, "met");
+  assert.equal(AN.checkAnchors(AN.jobAnchors(job("HR Business Partner")), hr).status, "sibling_only");
+  const blind = AN.candidateAnchors(person({ work: ["Coordinated weekly vendor visits"] })); assert.equal(AN.checkAnchors(AN.jobAnchors(job("Procurement Manager")), blind).status, "unrecognised");
+  assert.equal(G.decide(V({ fit: "adjacent", confidence: "high" }), ctx({ anchors: { status: "unrecognised", detail: [] } })).tier, "strong", "the judge's evidence decides");
+});
+t("18 every planned test profession has defining anchors that a plain job title and a plain work line both reach", () => {
+  const cases: [string, string, string][] = [["software", "Backend Engineer (Java)", "Built Spring Boot microservices for payments"], ["data", "Data Analyst", "Built dashboards and analytics for the ops team"], ["finance", "FP&A Manager", "Owned annual operating plan and monthly forecasting"],
+    ["lending", "Credit Underwriter - SME", "Underwrote SME loans and wrote credit appraisal memos"], ["sales", "Key Account Manager", "Managed key accounts worth 12 Cr and drove upsell"], ["marketing", "Performance Marketing Manager", "Ran paid search and paid social for user acquisition"],
+    ["hr", "Talent Acquisition Lead", "Ran end-to-end hiring for 60 roles a quarter"], ["scm", "Procurement Specialist", "Ran strategic sourcing and supplier negotiation for packaging"], ["support", "Application Support Engineer (L2)", "Handled L2 support and incident management on ServiceNow"],
+    ["product", "Product Manager - Payments", "Wrote PRDs and owned the product roadmap for UPI"], ["design", "Product Designer (UX)", "Ran user research and designed flows in Figma"], ["legal", "Legal Counsel", "Handled contract drafting and negotiation for vendor agreements"],
+    ["compliance", "AML Compliance Analyst", "Performed KYC reviews and AML transaction monitoring"], ["health", "Clinical Research Coordinator", "Coordinated clinical trials across 3 sites"], ["cx", "Customer Success Manager", "Owned renewals and churn reduction for 40 SaaS clients"],
+    ["admin", "Executive Assistant to CEO", "Calendar management and office administration for the CEO"], ["education", "Mathematics Teacher", "Prepared lesson plans and curriculum for grades 8-10"], ["devops", "DevOps Engineer", "Managed Kubernetes clusters with Terraform and CI/CD"]];
+  for (const [area, title, line] of cases) { const ja = AN.jobAnchors(job(title)); assert.ok(ja.defining.length, `${area}: job title not covered`); assert.equal(AN.checkAnchors(ja, AN.candidateAnchors(person({ work: [line] }))).status, "met", `${area}: plain work line not recognised`); }
 });
 console.log(`${n} tests passed`);

@@ -169,6 +169,8 @@ def metrics(rows, boot, rng, universe):
             "candidate_coverage": f"{len(by)}/{len(universe)}", "per_candidate_mean": round(sum(per) / len(per), 2) if per else None,
             "per_candidate_median": sorted(per)[len(per) // 2] if per else None,
             "candidate_weighted_precision": round(sum(cw) / len(cw), 3) if cw else None,
+            "candidates_zero": sum(1 for x in per if x == 0), "candidates_two_or_more": sum(1 for x in per if x >= 2),
+            "precision_among_candidates_with_recommendations": round(k / n, 3) if n else None,
             "would_apply_breakdown": dict(collections.Counter(r["apply"] for r in rows)),
             "not_high_confidence_share": round(sum(any(c != "high" for c in r.get("confidence", [])) for r in rows) / n, 3) if n else None,
             "failure_reasons_cited_by_either_reviewer": {k: reasons.get(k, 0) for k in ["function", "subspec", "seniority", "ic_mgmt", "technical", "credential", "domain", "location", "preference", "resume_incomplete", "jd_incomplete", "jd_unclear", "other"]},
@@ -178,11 +180,11 @@ def metrics(rows, boot, rng, universe):
             "labels": dict(collections.Counter(r["suitability"] for r in rows))}
 
 
-def paired(rows, ps, boot, rng):
-    """Candidate-level paired comparison: per candidate with both arms shown, v2 precision minus control precision."""
+def paired(rows, ps, boot, rng, arm="v2"):
+    """Candidate-level paired comparison: per candidate with both arms shown, the arm's precision minus control precision."""
     d = []
     for c in sorted(ps):
-        v = [r for r in rows if r["cand"] == c and "v2" in r["arms"]]
+        v = [r for r in rows if r["cand"] == c and arm in r["arms"]]
         k = [r for r in rows if r["cand"] == c and "control" in r["arms"]]
         if v and k:
             d.append(sum(r["suitability"] in SUITABLE for r in v) / len(v) - sum(r["suitability"] in SUITABLE for r in k) / len(k))
@@ -190,10 +192,16 @@ def paired(rows, ps, boot, rng):
         return None
     bs = sorted(sum(rng.choice(d) for _ in d) / len(d) for _ in range(boot or 1))
     return {"candidates": len(d), "mean_difference": round(sum(d) / len(d), 3), "bootstrap95": (round(bs[int(.025 * len(bs))], 3), round(bs[int(.975 * len(bs)) - 1], 3)),
-            "v2_better": sum(x > 0 for x in d), "control_better": sum(x < 0 for x in d), "tied": sum(x == 0 for x in d)}
+            f"{arm}_better": sum(x > 0 for x in d), "control_better": sum(x < 0 for x in d), "tied": sum(x == 0 for x in d)}
 
 
-def cmd_unblind(lockp, keyp, boot):
+def opt(a, name, default=None):
+    return a[a.index(name) + 1] if name in a else default
+
+
+def cmd_unblind(lockp, keyp, boot, splits=None, groups=None, selfrep=None):
+    """splits: {name: [profile ids]} (default: the V2 development / held-out split); groups: {profile: profession};
+    selfrep: {case code: yes|maybe|no|cannot} from the candidates themselves (kept apart from reviewer would-apply)."""
     L = json.load(open(lockp))
     for p, h in {**L["exports"], **L["adjudication"]}.items():
         if sha(p) != h:
@@ -203,16 +211,33 @@ def cmd_unblind(lockp, keyp, boot):
         sys.exit("key and locked labels cover different cases; refusing")
     rng = random.Random(20261126)
     rows = [{**{k: v for k, v in L["final"][c].items() if k != "original"}, "code": c, "cand": key[c]["profile"], "arms": key[c]["arms"]} for c in sorted(L["final"])]
+    SP = {k: set(v) for k, v in json.load(open(splits)).items()} if splits else {"development": DEV, "held_out": HELD}
+    SP["all"] = set().union(*SP.values())
+    arms = sorted({a for r in rows for a in r["arms"]}); primary = [a for a in arms if a != "control"]
     out = {"package": L["package"], "lock_sha": sha(lockp)[:16], "agreement": L["agreement"], "arms": {}}
-    for arm in sorted({a for r in rows for a in r["arms"]}):
+    for arm in arms:
         out["arms"][arm] = {}
-        for split, ps in [("development", DEV), ("held_out", HELD), ("all", DEV | HELD)]:
+        for split, ps in SP.items():
             out["arms"][arm][split] = metrics([r for r in rows if arm in r["arms"] and r["cand"] in ps], boot, rng, sorted(ps))
-    out["proposed_by_both"] = metrics([r for r in rows if len(r["arms"]) > 1], boot, rng, sorted(DEV | HELD))
-    for split, ps in [("development", DEV), ("held_out", HELD), ("all", DEV | HELD)]:
-        a, b = out["arms"]["v2"][split]["primary_precision"]["rate"], out["arms"]["control"][split]["primary_precision"]["rate"]
-        out.setdefault("v2_minus_control", {})[split] = {"absolute": None if a is None or b is None else round(a - b, 3), "relative": None if not a or not b else round(a / b - 1, 3),
-            "candidate_paired": paired(rows, ps, boot, rng)}
+    out["proposed_by_both"] = metrics([r for r in rows if len(r["arms"]) > 1], boot, rng, sorted(SP["all"]))
+    if "control" in arms:
+        for arm in primary:
+            for split, ps in SP.items():
+                a, b = out["arms"][arm][split]["primary_precision"]["rate"], out["arms"]["control"][split]["primary_precision"]["rate"]
+                out.setdefault(f"{arm}_minus_control", {})[split] = {"absolute": None if a is None or b is None else round(a - b, 3), "relative": None if not a or not b else round(a / b - 1, 3),
+                    "candidate_paired": paired(rows, ps, boot, rng, arm)}
+    if groups:   # per profession: never hidden inside the aggregate
+        G = json.load(open(groups)); out["by_group"] = {}
+        for g in sorted(set(G.values())):
+            ps = {p for p, x in G.items() if x == g}
+            out["by_group"][g] = {arm: metrics([r for r in rows if arm in r["arms"] and r["cand"] in ps], boot, rng, sorted(ps)) for arm in arms}
+    if selfrep:  # the candidates' own would-apply answers, for the cases they were shown
+        Sr = json.load(open(selfrep)); out["candidate_reported_would_apply"] = {}
+        for arm in arms:
+            got = [Sr[r["code"]] for r in rows if arm in r["arms"] and r["code"] in Sr]
+            n = len([r for r in rows if arm in r["arms"]])
+            out["candidate_reported_would_apply"][arm] = {"answered": len(got), "of": n, "yes": got.count("yes"), "maybe": got.count("maybe"), "no": got.count("no"), "cannot": got.count("cannot"),
+                                                          "yes_rate_of_answered": round(got.count("yes") / len(got), 3) if got else None, "wilson95": wilson(got.count("yes"), len(got))}
     out["disagreements_by_candidate"] = dict(collections.Counter(r["cand"] for r in rows if r["source"] == "adjudicated"))
     print(json.dumps(out, indent=1))
 
@@ -228,6 +253,6 @@ if __name__ == "__main__":
         rest = a[1:i]
         cmd_lock(rest[0], rest[1], rest[2], rest[3] if len(rest) > 3 else None, a[i + 1])
     elif a[0] == "unblind" and len(a) >= 3:
-        cmd_unblind(a[1], a[2], int(a[a.index("--boot") + 1]) if "--boot" in a else 10000)
+        cmd_unblind(a[1], a[2], int(opt(a, "--boot", 10000)), opt(a, "--splits"), opt(a, "--groups"), opt(a, "--self"))
     else:
         sys.exit(__doc__)

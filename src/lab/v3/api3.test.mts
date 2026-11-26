@@ -1,0 +1,19 @@
+// Budget-guard tests for the V3 paid-call wrapper. A mock fetch only: no network, no key, no spend.
+//   SUPABASE_URL=https://offline.invalid SUPABASE_SERVICE_ROLE_KEY=offline npx tsx src/lab/v3/api3.test.mts
+import assert from "node:assert/strict"; import { mkdtempSync } from "node:fs"; import { tmpdir } from "node:os"; import { join } from "node:path";
+const A = await import("./api3.js");
+let n = 0; const t = async (name: string, f: () => Promise<void> | void) => { await f(); n++; console.log("ok", n, name); };
+const dir = mkdtempSync(join(tmpdir(), "g3-")); const L = (s: string) => new A.Ledger3(join(dir, `${s}.jsonl`), s);
+const reply = (o: any = {}) => (async () => new Response(JSON.stringify({ model: "claude-sonnet-5-5-20261101", stop_reason: "end_turn", usage: { input_tokens: 9000, output_tokens: 3500, cache_read_input_tokens: 2600 }, content: [{ type: "text", text: '{"ok":1}' }], ...o }), { status: o.status ?? 200 })) as any;
+const req = { purpose: "judge test", system: "s".repeat(10000), user: "u".repeat(40000), maxTokens: 10000, key: "test-key" };
+await t("the reservation is at least the largest real V2 judge call", () => { const w = A.worstCase3(10000, 40000, 10000); assert.ok(w > 6.14 * 1.5, `worst ₹${w.toFixed(2)} vs V2's max ₹6.14`); assert.ok(A.CHARS_PER_TOKEN_RESERVE < 2.86, "reserve at fewer characters per token than V2 measured"); });
+await t("a request that could pass the ceiling is refused before sending", async () => { const g = new A.Guard(L("a"), 10); let sent = 0; await assert.rejects(A.call3(g, { ...req, fetchImpl: (async () => { sent++; return reply()(); }) as any }), A.BudgetError); assert.equal(sent, 0); });
+await t("parallel requests reserve together and cannot jointly pass the ceiling", async () => { const g = new A.Guard(L("b"), 40); let sent = 0; const slow = (async () => { sent++; await new Promise((r) => setTimeout(r, 30)); return reply()(); }) as any;
+  const rs = await Promise.allSettled(Array.from({ length: 6 }, () => A.call3(g, { ...req, fetchImpl: slow }))); const worst = A.worstCase3(10000, 40000, 10000);
+  assert.equal(sent, Math.floor(40 / worst)); assert.ok(rs.filter((r) => r.status === "rejected").length >= 1); assert.ok(g.ledger.spent() <= 40); assert.ok(Math.abs(g.reserved) < 1e-9); });
+await t("spend is recorded from provider usage, and the ledger never passes the ceiling over many calls", async () => { const g = new A.Guard(L("c"), 100); for (let i = 0; i < 40; i++) { try { await A.call3(g, { ...req, fetchImpl: reply() }); } catch (e) { assert.ok(e instanceof A.BudgetError); break; } } assert.ok(g.ledger.spent() <= 100); assert.ok(g.ledger.entries().every((e) => e.inr > 0)); });
+await t("a truncated reply fails closed and is still paid for in the ledger", async () => { const g = new A.Guard(L("d"), 100); const r = await A.call3(g, { ...req, fetchImpl: reply({ stop_reason: "max_tokens" }) }); assert.equal(r.ok, false); assert.equal((r as any).reason, "truncated"); assert.ok(g.ledger.spent() > 0); });
+await t("an API error is recorded at ₹0 and not retried", async () => { const g = new A.Guard(L("e"), 100); let sent = 0; const r = await A.call3(g, { ...req, fetchImpl: (async () => { sent++; return new Response("{}", { status: 529 }); }) as any }); assert.equal(r.ok, false); assert.equal(sent, 1); assert.equal(g.ledger.entries()[0].inr, 0); });
+await t("a different served model stops the run", async () => { const g = new A.Guard(L("f"), 100); await assert.rejects(A.call3(g, { ...req, fetchImpl: reply({ model: "claude-opus-5-5" }) }), /provider served/); assert.ok(g.ledger.spent() > 0, "the call is still recorded"); });
+await t("no key or no ceiling: nothing can be sent", async () => { assert.throws(() => new A.Guard(L("g"), 0), A.BudgetError); await assert.rejects(A.call3(new A.Guard(L("h"), 100), { ...req, key: "" }), /no API key/); });
+console.log(`${n} tests passed`);

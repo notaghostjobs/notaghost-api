@@ -3,7 +3,7 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 const { eligibility } = await import("../v2/pipeline.js");
 const { validity2 } = await import("../validity.js"); const { transfer } = await import("../../lib/ontology.js");
-export const S = "/tmp/claude-0/-home-claude/e75d385d-3415-5d05-84bc-8c909535d0ed/scratchpad";
+export const S = process.env.V3_DATA ?? "/tmp/claude-0/-home-claude/e75d385d-3415-5d05-84bc-8c909535d0ed/scratchpad";   // a fresh evaluation runs the same layout under its own root
 const jl = (f: string, keep: (id: string) => boolean, id: (o: any) => string) => { const m = new Map<string, any>(); for (const l of readFileSync(f, "utf8").split("\n")) { if (!l) continue; const o = JSON.parse(l); if (keep(id(o))) m.set(id(o), o); } return m; };
 export const split: { development: string[]; heldout: string[] } = JSON.parse(readFileSync(`${S}/diag/split.json`, "utf8"));
 export const setOf = (p: string) => (split.development.includes(p) ? "dev" : "heldout");
@@ -25,6 +25,9 @@ for (const d of ["cp1", "cp1b", "cp2", "ho"].map((x) => `${S}/${x}/v2/cjr`)) if 
 const ids = new Set<string>(); for (const r of pools.values()) { r.pool.forEach((x: string) => ids.add(x)); for (const ch of Object.values<any>(r.channels)) ch.slice(0, 200).forEach((x: string) => ids.add(x)); }
 export const det = jl(`${S}/arch/jir-det.jsonl`, (i) => ids.has(i), (o) => o.posting.id);
 export const views = jl(`${S}/arch/views-det.jsonl`, (i) => ids.has(i), (o) => o.id);
+/** Full posting text from the frozen inventory (not the 3,000-character retrieval view). */
+const { htmlToText } = await import("./jobtext.js");
+export const fullText = new Map<string, string>(); for (const l of readFileSync(`${S}/bench/prod/inventory.jsonl`, "utf8").split("\n")) { if (!l) continue; const o = JSON.parse(l); if (ids.has(String(o.id))) fullText.set(String(o.id), htmlToText(o.description ?? "")); }
 const answers = JSON.parse(readFileSync(`${S}/sim2/answers.json`, "utf8"));
 export const intent = (p: string) => answers[p];
 

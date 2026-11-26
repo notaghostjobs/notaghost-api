@@ -51,6 +51,29 @@ export const ANCHORS: Anchor[] = [
   // data and research
   { family: "data", id: "data.analyst", label: "data / business analysis", re: /\b(data analyst|business analyst|analytics|dashboards?|sql reporting)\b/i },
   { family: "data", id: "data.science", label: "data science", re: /\b(data scientist|applied scientist|machine learning|predictive model(l)?ing|statistical model(l)?ing)\b/i },
+  // v3.1 coverage additions (27 Nov 2026, before any fresh-profile run): written from general job-family definitions
+  // (standard HR, product, supply-chain, legal, healthcare, IT-infrastructure, customer-success, content, admin and
+  // teaching role descriptions) and checked only against synthetic fixtures — not against any candidate outcome.
+  { family: "software", id: "eng.devops", label: "DevOps / SRE / cloud infrastructure", re: /\b(devops|site reliability|\bsre\b|kubernetes|terraform|ci\/cd|infrastructure as code)\b/i },
+  { family: "software", id: "eng.qa", label: "QA / test engineering", re: /\b(quality assurance engineer|qa engineer|test automation|automation testing|selenium|manual testing|sdet)\b/i },
+  { family: "software", id: "eng.security", label: "information security", re: /\b(cyber ?security|information security|\bsoc\b analyst|vapt|penetration test\w*|security operations|\biam\b)\b/i },
+  { family: "hr", id: "hr.talent_acquisition", label: "recruitment / talent acquisition", re: /\b(talent acquisition|recruit(er|ment|ing)|sourcing candidates|end[- ]to[- ]end hiring|campus hiring)\b/i },
+  { family: "hr", id: "hr.hrbp", label: "HR business partnering / employee relations", re: /\b(hr ?business partner|hrbp|employee relations|people partner|performance management cycle)\b/i },
+  { family: "hr", id: "hr.comp_payroll", label: "payroll / compensation and benefits", re: /\b(payroll|compensation (and|&) benefits|c&b|total rewards)\b/i },
+  { family: "hr", id: "hr.learning", label: "learning and development", re: /\b(learning (and|&) development|\bl&d\b|training programmes?|training programs?|instructional design)\b/i },
+  { family: "product", id: "product.management", label: "product management", re: /\b(product manager|product management|product roadmap|\bprds?\b|product discovery|product owner)\b/i },
+  { family: "product", id: "product.design", label: "product / UX design", re: /\b(ux|ui\/ux|user experience|interaction design|user research|figma|product designer)\b/i },
+  { family: "product", id: "product.program", label: "programme / delivery management", re: /\b(program(me)? manager|technical program|\btpm\b|delivery manager|scrum master)\b/i },
+  { family: "scm", id: "scm.procurement", label: "procurement / sourcing", re: /\b(procurement|strategic sourcing|purchase orders?|supplier (management|onboarding|negotiation))\b/i },
+  { family: "scm", id: "scm.planning", label: "demand / supply planning", re: /\b(demand planning|supply planning|s&op|inventory planning|replenishment planning)\b/i },
+  { family: "legal", id: "legal.counsel", label: "legal counsel / contracts", re: /\b(legal counsel|contract (drafting|negotiation|review)|litigation|corporate law|\bllb\b|advocate)\b/i },
+  { family: "legal", id: "legal.compliance", label: "regulatory compliance", re: /\b(regulatory compliance|compliance officer|compliance (monitoring|testing|reviews?)|kyc|aml|anti[- ]money laundering|sanctions screening)\b/i },
+  { family: "health", id: "health.clinical", label: "clinical practice", re: /\b(clinical practice|patient care|nursing|physician|\bmbbs\b|staff nurse|clinic(al)? operations)\b/i },
+  { family: "health", id: "health.research_reg", label: "clinical research / regulatory affairs", re: /\b(clinical research|clinical trials?|regulatory affairs|pharmacovigilance|medical coding|medical writing)\b/i },
+  { family: "cx", id: "cx.customer_success", label: "customer success", re: /\b(customer success|client onboarding|renewals|churn reduction|net revenue retention|\bnrr\b)\b/i },
+  { family: "content", id: "content.writing", label: "content / copywriting", re: /\b(content writ\w+|copywrit\w+|content strategy|editorial|technical writ\w+)\b/i },
+  { family: "admin", id: "admin.office", label: "executive assistance / office administration", re: /\b(executive assistant|office administration|front office|calendar management|personal assistant)\b/i },
+  { family: "education", id: "edu.teaching", label: "teaching / training delivery", re: /\b(teacher|teaching|faculty|lecturer|curriculum|lesson plans?)\b/i },
 ];
 const NOT_ML_MODELLING = /\bfinancial model(l)?ing\b/gi;   // "financial modelling" is FP&A, not data science
 const byId = new Map(ANCHORS.map((a) => [a.id, a]));
@@ -78,11 +101,14 @@ export function jobAnchors(job: { title: string; cjr?: any; det?: any }): JobAnc
   return { defining: out };
 }
 
-export type AnchorCheck = { status: "met" | "partial" | "claimed_only" | "sibling_only" | "missing" | "none"; detail: { id: string; label: string; status: string; quote: string | null }[] };
+export type AnchorCheck = { status: "met" | "partial" | "claimed_only" | "sibling_only" | "missing" | "unrecognised" | "none"; detail: { id: string; label: string; status: string; quote: string | null }[] };
 /** Every defining anchor is checked on its own. "sibling_only": the person works in the same family but a different
  *  craft (ABAP for a Fiori job). Generic overlap never changes these statuses. */
 export function checkAnchors(ja: JobAnchors, ca: CandidateAnchors): AnchorCheck {
   if (!ja.defining.length) return { status: "none", detail: [] };
+  // a vocabulary gap is not a capability gap: when none of the person's own work maps to any anchor, the anchors say
+  // nothing about them and the judge's evidence decides (v3.1)
+  if (!ca.demonstrated.size && !ca.claimed.size) return { status: "unrecognised", detail: ja.defining.map((d) => ({ id: d.id, label: byId.get(d.id)!.label, status: "unrecognised", quote: null })) };
   const fams = new Set([...ca.demonstrated.keys()].map((id) => byId.get(id)!.family));
   const detail = ja.defining.map((d) => { const a = byId.get(d.id)!; const q = ca.demonstrated.get(d.id) ?? null;
     const status = q ? "met" : ca.claimed.has(d.id) ? "claimed_only" : fams.has(a.family) ? "sibling_only" : "missing"; return { id: d.id, label: a.label, status, quote: q ?? ca.claimed.get(d.id) ?? null }; });
