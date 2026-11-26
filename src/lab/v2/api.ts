@@ -6,6 +6,8 @@
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 
 export const MODEL = "claude-sonnet-5-5";
+/** The key: GHOSTED_ANTHROPIC_KEY (cloud sessions may withhold a variable named ANTHROPIC_API_KEY), else ANTHROPIC_API_KEY. */
+export const apiKey = () => process.env.GHOSTED_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY || "";
 export const PRICE = { in: 2, out: 10, cw: 2.5, cr: 0.1 }, INR = 84, TOTAL_CAP = 3000;
 export const CHECKPOINTS = { 1: 300, 2: 1500, 3: 3000 } as const;
 export type Usage = { input_tokens: number; output_tokens: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
@@ -25,13 +27,13 @@ export function worstCase(systemChars: number, userChars: number, maxTokens: num
 export class BudgetError extends Error {}
 
 export async function callSonnet(o: { ledger: Ledger; ceiling: number; purpose: string; system: string; user: string; maxTokens: number; cacheSystem?: boolean; fetchImpl?: typeof fetch }): Promise<{ text: string; usage: Usage; inr: number; ms: number }> {
-  if (!process.env.ANTHROPIC_API_KEY) throw new BudgetError("ANTHROPIC_API_KEY is not set: no paid call is possible");
+  if (!apiKey()) throw new BudgetError("no API key (GHOSTED_ANTHROPIC_KEY or ANTHROPIC_API_KEY): no paid call is possible");
   if (o.ceiling > TOTAL_CAP) throw new BudgetError("ceiling above the approved ₹3,000");
   const spent = o.ledger.spent(), worst = worstCase(o.system.length, o.user.length, o.maxTokens);
   if (spent + worst > o.ceiling) throw new BudgetError(`refused: spent ₹${spent.toFixed(2)} + worst case ₹${worst.toFixed(2)} > ceiling ₹${o.ceiling}`);
   const t0 = Date.now();
   const res = await (o.fetchImpl ?? fetch)("https://api.anthropic.com/v1/messages", {
-    method: "POST", headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" },
+    method: "POST", headers: { "content-type": "application/json", "x-api-key": apiKey(), "anthropic-version": "2023-06-01" },
     body: JSON.stringify({ model: MODEL, max_tokens: o.maxTokens, temperature: 0, system: [{ type: "text", text: o.system, ...(o.cacheSystem ? { cache_control: { type: "ephemeral" } } : {}) }], messages: [{ role: "user", content: o.user }] }),
   });
   const ms = Date.now() - t0; const body: any = await res.json().catch(() => ({}));

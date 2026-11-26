@@ -80,7 +80,7 @@ await t("21 a suitable job a broad function filter used to reject is kept (no on
   assert.equal(shortlist([job({ title: "Lending Operations Analyst", agree: 0.1 })], backend).length, 1); });
 // budget guard
 const led = new Ledger(`${mkdtempSync(`${tmpdir()}/v2led-`)}/ledger.jsonl`);
-await t("budget: no key, no call", async () => { const k = process.env.ANTHROPIC_API_KEY; delete process.env.ANTHROPIC_API_KEY; await assert.rejects(callSonnet({ ledger: led, ceiling: 300, purpose: "t", system: "s", user: "u", maxTokens: 10 }), BudgetError); if (k) process.env.ANTHROPIC_API_KEY = k; });
+await t("budget: no key, no call", async () => { const k = process.env.ANTHROPIC_API_KEY, g = process.env.GHOSTED_ANTHROPIC_KEY; delete process.env.ANTHROPIC_API_KEY; delete process.env.GHOSTED_ANTHROPIC_KEY; await assert.rejects(callSonnet({ ledger: led, ceiling: 300, purpose: "t", system: "s", user: "u", maxTokens: 10 }), BudgetError); if (k) process.env.ANTHROPIC_API_KEY = k; if (g) process.env.GHOSTED_ANTHROPIC_KEY = g; });
 await t("budget: a request that could cross the ceiling is refused before sending", async () => { process.env.ANTHROPIC_API_KEY ??= "test-not-a-key"; let sent = false;
   await assert.rejects(callSonnet({ ledger: led, ceiling: 0.01, purpose: "t", system: "s".repeat(4000), user: "u", maxTokens: 4000, fetchImpl: (async () => { sent = true; return new Response("{}"); }) as any }), BudgetError); assert.equal(sent, false); });
 await t("budget: a substituted model is refused; usage is recorded from the provider", async () => {
