@@ -1,0 +1,48 @@
+{
+  "format": "ghosted-qa-truth/1",
+  "id": "QA001",
+  "synthetic": true,
+  "provenance": { "basis": "invented", "fictionalised": true, "permission": "not_required", "note": "Worked example shipped with the QA tools. Every person, employer and figure is invented." },
+  "person": { "name": "Leela Varghese", "city": "Bengaluru", "country": "India", "email": "leela.varghese@example.com", "phone": "+91 00000 01001", "languages": ["English", "Malayalam", "Hindi"] },
+  "summary": { "function": "category management", "other_functions": ["growth marketing"], "level": "head", "total_years": 16, "countries_worked": ["India", "Singapore", "United Kingdom"],
+    "covers": "Senior leader: promotion inside one employer, a concurrent advisory role, P&L ownership, two countries abroad, two-column two-page layout." },
+  "roles": [
+    { "employer": "Zentara Commerce", "title": "Vice President, Growth and Category", "start": "2022-04", "end": "present", "location": "Bengaluru", "country": "India", "promoted_from": "Director, Category Management", "team_size": 46,
+      "pnl": "₹1,400 crore GMV at an 11% contribution margin",
+      "cross_functional": ["supply chain", "product", "finance"],
+      "responsibilities": ["Owns the P&L for grocery, home and personal care.", "Chairs the weekly pricing council with finance and supply chain."],
+      "achievements": [
+        { "text": "Grew GMV from ₹820 crore to ₹1,400 crore in three years while lifting contribution margin from 7% to 11%.", "numbers": ["820", "1,400", "7%", "11%"] },
+        { "text": "Launched private label across 9 categories; it is now 13% of category revenue.", "numbers": ["9", "13%"] },
+        { "text": "Cut out-of-stock rate from 8.4% to 3.1% with the supply chain team.", "numbers": ["8.4%", "3.1%"] },
+        { "text": "Built and led a team of 46 across category, pricing and growth.", "numbers": ["46"] } ] },
+    { "employer": "Zentara Commerce", "title": "Director, Category Management", "start": "2019-07", "end": "2022-03", "location": "Bengaluru", "country": "India", "team_size": 18,
+      "achievements": [
+        { "text": "Ran the grocery category at ₹310 crore GMV and renegotiated terms with 140 brands for 2.4 points of back margin.", "numbers": ["310", "140", "2.4"] },
+        { "text": "Set up city-level pricing in 27 cities.", "numbers": ["27"] } ] },
+    { "employer": "Halden Foods", "title": "Advisor, Go-to-Market", "start": "2021-01", "end": "present", "location": "Remote", "country": "India", "kind": "consulting", "concurrent": true,
+      "achievements": [ { "text": "Advises the founders one day a month; helped the brand enter 3 modern-trade chains.", "numbers": ["3"] } ] },
+    { "employer": "Marlborne Retail Group", "title": "Regional Category Lead, South-East Asia", "start": "2015-02", "end": "2019-06", "location": "Singapore", "country": "Singapore", "team_size": 11,
+      "pnl": "SGD 95 million category revenue across 4 markets",
+      "cross_functional": ["sourcing", "store operations"],
+      "achievements": [
+        { "text": "Managed SGD 95 million of category revenue across 4 markets: Singapore, Malaysia, Thailand and Vietnam.", "numbers": ["95", "4"] },
+        { "text": "Moved 35% of sourcing to regional suppliers, reducing landed cost by 6%.", "numbers": ["35%", "6%"] } ] },
+    { "employer": "Marlborne Retail Group", "title": "Senior Buyer, Ambient Grocery", "start": "2012-09", "end": "2015-01", "location": "London", "country": "United Kingdom",
+      "achievements": [ { "text": "Bought a 1,200-line ambient range for 310 stores.", "numbers": ["1,200", "310"] } ] },
+    { "employer": "Okapi Consulting", "title": "Business Analyst", "start": "2010-07", "end": "2012-08", "location": "Mumbai", "country": "India",
+      "achievements": [ { "text": "Built pricing models for 5 retail clients.", "numbers": ["5"] } ] }
+  ],
+  "education": [ { "degree": "MBA", "institution": "Indian School of Business", "start": "2009", "end": "2010" }, { "degree": "B.A. (Hons) Economics", "institution": "St. Stephen's College, Delhi", "start": "2005", "end": "2008" } ],
+  "skills": ["Category P&L", "Pricing", "Private label", "Vendor negotiation", "Assortment planning", "Growth marketing", "Team leadership", "SQL"],
+  "certifications": [],
+  "layout": { "pages": 2, "columns": 2, "sidebar": true, "tables": false, "graphics": false, "notes": "Left sidebar with contact, skills and languages; experience runs across two pages in the right column." },
+  "must_keep": ["GMV from ₹820 crore to ₹1,400 crore", "contribution margin from 7% to 11%", "team of 46", "SGD 95 million across 4 markets"],
+  "must_not_claim": ["Chief Executive", "co-founder", "PhD", "machine learning", "Six Sigma"],
+  "expected": {
+    "record": { "level": ["head"], "years": [15, 17] },
+    "radar": { "for_you": ["cat-head"], "acceptable": ["mkt-head", "cat-senior"], "never": ["cat-junior", "cat-mid", "cat-closed", "swe-senior", "x-cat-head-singapore"], "locations": ["Bengaluru"], "exclude_employers": [],
+      "notes": "A head-level category leader. The Singapore role is a perfect title match in the wrong city and must not be shown. Mid and junior category roles must not be shown." },
+    "sharpen": [ { "job": "cat-head", "relevant_terms": ["P&L", "private label", "pricing", "vendor", "team"], "must_keep": ["13% of category revenue"], "must_not_claim": ["quick commerce"], "notes": "The posting stresses P&L and vendor terms; the Singapore and London years must remain." } ]
+  }
+}

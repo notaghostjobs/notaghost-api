@@ -1,3 +1,4 @@
+import { qaBefore, qaAfter, qaMalformed } from "../qa/budget.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../lib/env.js";
 import { record } from "./meter.js";
@@ -17,6 +18,7 @@ export async function json<T>(system: string, user: string, maxTokens = 4000, mo
     const content: Anthropic.MessageParam["content"] = pdf
       ? [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf.toString("base64") } }, { type: "text", text: user }]
       : user;
+    await qaBefore(); const t0 = Date.now();
     const r = await client.messages.create({
       model,
       max_tokens: maxTokens,
@@ -28,9 +30,10 @@ export async function json<T>(system: string, user: string, maxTokens = 4000, mo
         ...(pin ? [{ type: "text" as const, text: pin, cache_control: { type: "ephemeral" as const } }] : []),
       ],
       messages: [{ role: "user", content }],
-    });
+    }).catch(async (e) => { await qaAfter(model, system, null, Date.now() - t0); throw e; });
     if (r.usage) record(model, r.usage as any);
-    const text = r.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+    await qaAfter(model, system, r.usage ?? {}, Date.now() - t0);
+    const text = qaMalformed() ? "QA simulated malformed response" : r.content.map((b) => (b.type === "text" ? b.text : "")).join("");
     const a = text.indexOf("{"), b = text.lastIndexOf("}");
     try {
       return JSON.parse(text.slice(a, b + 1)) as T;

@@ -1,4 +1,6 @@
 import { checkedProfile, processResume } from "../engine/worker.js";
+import { QA } from "../qa/guard.js";
+import { qaPoolMode, isFixtureUrl } from "../qa/pool.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 // Radar (v2, 10 Nov): the live Bengaluru openings that are this person's function, level and years — discovered on facts.
@@ -124,16 +126,18 @@ async function deriveTargetsModel(p: ResumeProfile): Promise<Targets> {
 }
 
 export type Sighting = { id: number; title: string; company_name: string | null; location: string | null; url: string; posted_at: string | null; first_seen: string; employer_key: string | null; last_seen?: string; readable?: boolean };
-let poolCache: { at: number; hours: number; rows: Sighting[] } | null = null;
+let poolCache: { at: number; hours: number; rows: Sighting[]; mode?: string } | null = null;
 /** Every live Bengaluru sighting (title, employer, location, url), marked readable when its description is on file.
  *  The pulse counts all of them; scoring uses the readable ones. Cached in memory for 30 minutes. Only jobs confirmed
  *  within the freshness window (lib/fresh.ts, 72 h) are live here: an open job its feed has not listed lately is held
  *  back, not closed, and returns when a read lists it again. */
 export async function livePool(): Promise<Sighting[]> {
   const hours = freshHours();
-  if (poolCache && poolCache.hours === hours && Date.now() - poolCache.at < 30 * 60e3) return poolCache.rows;
+  // QA only: the pool is either the invented fixtures or the real listings QA has read, never a mixture
+  const qaMode = QA ? await qaPoolMode() : undefined;
+  if (poolCache && poolCache.hours === hours && poolCache.mode === qaMode && Date.now() - poolCache.at < (QA ? 2 : 30) * 60e3) return poolCache.rows;
   const now = Date.now();
-  const rows: Sighting[] = [];
+  let rows: Sighting[] = [];
   for (let from = 0; from < 80000; from += 1000) {
     const { data, error } = await freshOnly(db.from("sightings").select("id, title, company_name, location, url, posted_at, first_seen, employer_key, last_seen").eq("blr", true).is("gone_at", null) as any, now).order("id", { ascending: true }).range(from, from + 999);
     if (error) throw new Error(error.message);
@@ -148,7 +152,8 @@ export async function livePool(): Promise<Sighting[]> {
     if (!data || data.length < 1000) break;
   }
   for (const r of rows) r.readable = readable.has(r.id);
-  poolCache = { at: Date.now(), hours, rows };
+  if (qaMode) rows = rows.filter((r) => isFixtureUrl(r.url) === (qaMode === "fixtures"));
+  poolCache = { at: Date.now(), hours, rows, mode: qaMode };
   return rows;
 }
 /** The reader's first days (25–27 Oct) were seeding: thousands "came in" because we started reading, not because they opened.

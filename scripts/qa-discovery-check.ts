@@ -1,0 +1,23 @@
+// A live check of QA's real-discovery path with no database and no secrets: `npx tsx scripts/qa-discovery-check.ts`.
+// It turns discovery on with placeholder settings, reads real public boards with the product's own reader THROUGH the QA
+// boundary, asks a hiring system whether a real job is open, and tries the things discovery must never do.
+const E = process.env;
+Object.assign(E, { GHOSTED_ENV: "qa", SUPABASE_URL: "https://qaqaqaqaqaqaqaqaqaqa.supabase.co", QA_SUPABASE_REF: "qaqaqaqaqaqaqaqaqaqa", SUPABASE_SERVICE_ROLE_KEY: "placeholder", ANTHROPIC_API_KEY: "placeholder", QA_AI_KEY_IS_SEPARATE: "yes", QA_AI_BUDGET_INR: "1000", WA_TOKEN: "qa-simulated", WA_PHONE_ID: "qa-simulated", OTP_PROVIDER: "whatsapp",
+  QA_ACCESS_TOKEN: "x".repeat(40), QA_ACCESS_EXPIRES: new Date(Date.now() + 7 * 86400e3).toISOString().slice(0, 10), QA_PUBLIC_URL: "https://ghosted-qa-api.example.net", APP_ORIGIN: "https://ghosted-qa.example.net", QA_DISCOVERY: process.argv.includes("--off") ? "" : "authorised", QA_DISCOVERY_AUTHORISED_BY: "local check", QA_DISCOVERY_AUTHORISED_ON: new Date().toISOString().slice(0, 10) });
+for (const k of ["MSG91_AUTHKEY", "RESEND_API_KEY", "OTP_DEV_CODE", "OTP_TEST_PHONES", "RADAR_TESTERS", "ADMIN_SECRET", "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"]) delete E[k];
+let bad = 0; const say = (ok: boolean, what: string, detail = "") => { console.log(`${ok ? "✓" : "✗"} ${what}${detail ? ` — ${detail}` : ""}`); if (!ok) bad++; };
+(async () => {
+  await import("../src/qa/boot.js"); const { byId } = await import("../src/reader/systems/index.js"); const { isBlr } = await import("../src/reader/blr.js"); const { verifyListing } = await import("../src/qa/discovery.js"); const { outside } = await import("../src/qa/net.js");
+  if (process.argv.includes("--off")) { const r = await fetch("https://api.lever.co/v0/postings/cred?mode=json"); say(r.status === 599, "discovery not authorised: a public board cannot be read", `answer ${r.status}`); const v = await verifyListing({ id: 1, source: "lever", source_id: "cred:x", url: "https://jobs.lever.co/cred/x" }); say(v.status === "unverifiable", "…and nothing is reported as verified", v.how); process.exit(bad ? 1 : 0); }
+  const live: any[] = [];
+  for (const [sys, ref] of [["lever", "cred"], ["greenhouse", "groww"], ["smartrecruiters", "Freshworks"]]) { try { const f = await byId(sys)!.read(ref); const b = (f?.jobs ?? []).filter((j) => isBlr(j.location ?? "")); say(!!f && b.length > 0, `${sys}: the product's reader read a real board through the QA boundary`, `${f?.jobs.length ?? 0} open roles, ${b.length} in Bengaluru`); if (b[0]) live.push({ id: live.length + 1, source: sys, source_id: `${ref}:${b[0].id}`, url: b[0].url, title: b[0].title, posted_at: b[0].posted_at }); } catch (e: any) { say(false, `${sys}: read failed`, e.message); } }
+  for (const s of live) { const v = await verifyListing(s); say(v.status === "verified_active", `${s.source}: a job read a moment ago is confirmed open by its source`, `job ${v.job_id} “${(v.title_now ?? s.title).slice(0, 50)}” · HTTP ${v.http} · ${v.how}`); }
+  for (const s of [{ id: 9, source: "lever", source_id: "cred:00000000-0000-4000-8000-000000000000", url: "https://jobs.lever.co/cred/00000000-0000-4000-8000-000000000000" }, { id: 10, source: "greenhouse", source_id: "groww:1", url: "https://job-boards.eu.greenhouse.io/groww/jobs/1" }]) { const v = await verifyListing(s); say(v.status === "closed", `${s.source}: a job id that does not exist is reported closed, not open`, `HTTP ${v.http}`); }
+  const fx = await verifyListing({ id: 11, source: "greenhouse", source_id: "lumio:1001", url: "https://ghosted-qa-api.example.net/qa/jobs/pm-mid" }); say(fx.status === "invented_fixture", "a QA fixture is reported as invented, never as a real open job");
+  const p1 = await fetch("https://api.lever.co/v0/postings/cred/x/apply", { method: "POST", body: "{}" }); say(p1.status === 599, "a POST to a hiring system is refused", `answer ${p1.status}`);
+  const p2 = await fetch("https://jobs.lever.co/cred/x/apply"); say(p2.status === 599, "an “apply” page is refused", `answer ${p2.status}`);
+  const p3 = await fetch("https://www.naukri.com/"); say(p3.status === 599, "a job site outside the five systems is refused", `answer ${p3.status}`);
+  const p4 = await fetch("https://notaghost-api.onrender.com/health"); say(p4.status === 599, "production is still unreachable with discovery on", `answer ${p4.status}`);
+  console.log(`requests that left for hiring systems: ${[...outside].map(([h, n]) => `${h} ${n}`).join(", ")}`);
+  console.log(bad ? `\n${bad} FAILED` : "\nQA discovery: all passed"); process.exit(bad ? 1 : 0);
+})();

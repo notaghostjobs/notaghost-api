@@ -1,0 +1,19 @@
+{
+  "format": "ghosted-qa-jobs/1",
+  "employers": [
+    { "name": "Calder & Wren Retail", "slug": "calder-wren", "hiring_system": "followed", "about": "An invented department-store group used only for QA. Stores in Singapore and Bengaluru." }
+  ],
+  "roles": [
+    { "slug": "x-cat-head-singapore", "employer": "Calder & Wren Retail", "title": "Head of Category, Grocery", "function": "category management", "level": "head", "years": [12, 18], "location": "Singapore", "pay": null, "posted_days": 9,
+      "text": "About the role\nLead the grocery category for our Singapore stores. You own the category P&L, vendor terms and the private-label roadmap.\nWhat we are looking for\n• 12–18 years in category management or buying\n• P&L ownership above SGD 50 million\n• Experience leading teams of 20 or more\n• Based in Singapore; no relocation support",
+      "ghost_meter": { "verdicts": ["Real", "Caution"], "never": [20], "note": "A straightforward live role. Used here mainly as a Radar location exclusion." } },
+    { "slug": "x-contradictory-dates", "employer": "Calder & Wren Retail", "title": "Category Manager, Home", "function": "category management", "level": "mid", "years": [4, 7], "location": "Bengaluru, Karnataka, India", "pay": "₹22–30 LPA", "posted_days": 3,
+      "text": "About the role\nRun the home category for our Bengaluru stores: assortment, pricing and promotions for 2,000 products.\nWhat we are looking for\n• 4–7 years in category management\n• Strong vendor negotiation\n• Comfortable with pricing data and SQL\n• Based in Bengaluru",
+      "page": { "posted_text": "Posted 3 days ago" }, "system": { "listed": true, "first_seen_days": 140 },
+      "ghost_meter": { "verdicts": ["Caution", "Ghost"], "fire": [14], "note": "Contradictory evidence: the page claims 3 days; the employer's own system has carried the role for 140. The system's date must win." } },
+    { "slug": "x-ambiguous-unlisted", "employer": "Calder & Wren Retail", "title": "Senior Manager, Private Label", "function": "category management", "level": "senior", "years": [7, 11], "location": "Bengaluru, Karnataka, India", "pay": null, "posted_days": 6,
+      "text": "About the role\nBuild our private-label range in Bengaluru with three manufacturing partners. You will own quality, cost and launch plans.\nWhat we are looking for\n• 7–11 years in private label, sourcing or category management\n• Experience launching at least ten products\n• Based in Bengaluru",
+      "system": { "listed": false },
+      "ghost_meter": { "verdicts": ["Caution"], "fire": [9], "never": [20], "note": "Ambiguous evidence: a plausible, well-written page for a followed employer whose own system does not list it. Must not be Real." } }
+  ]
+}

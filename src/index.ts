@@ -1,3 +1,8 @@
+import "./qa/boot.js";   // FIRST: in QA, an unsafe configuration stops the process here, before any client exists
+import { createHash } from "node:crypto";
+import { QA, supabaseRef, QA_PHONE } from "./qa/guard.js";
+import { qaCtx, rid } from "./qa/state.js";
+import { qaRoutes, hasQaAccess } from "./qa/routes.js";
 import { doc } from "./routes/doc.js";
 import { us } from "./routes/us.js";
 import { Hono } from "hono";
@@ -26,7 +31,30 @@ import { snapshotDue } from "./engine/ghost/index.js";
 installWorkdayPause();   // WORKDAY_PAUSED: while set, no request from this process reaches Workday (src/lib/workdayPause.ts)
 const app = new Hono();
 app.use("*", logger());
-const origins = [...env.appOrigin.split(",").map((o) => o.trim()).filter(Boolean), "https://notaghost.jobs", "https://www.notaghost.jobs", "https://notaghost-web.onrender.com", "http://localhost:5173"];
+// ---- QA only: every request carries an id; nothing is served without QA access or a QA session; the tools are mounted ----
+if (QA) {
+  app.use("*", async (c, next) => {
+    const id = rid(); c.header("x-request-id", id); c.header("x-ghosted-env", "qa");
+    const path = new URL(c.req.url).pathname;
+    const open = c.req.method === "OPTIONS" || path === "/health" || /^\/qa\/(jobs|company)\//.test(path) || path === "/qa/report" || path === "/qa/bench/messages" /* temporary: carries its own token (qa/bench.ts) */ || path === "/qa/bench/ibm-probe" /* temporary: same token (qa/ibmprobe.ts) */ || path === "/qa/bench/greenhouse-probe" /* temporary: same token (qa/ghprobe.ts) */ || path === "/qa/bench/workday-pause-check" /* temporary: same token (qa/wdpause.ts) */ || path === "/payments/webhook";
+    const signed = (c.req.header("authorization") ?? "").startsWith("Bearer ");   // a session: the route's own check decides
+    if (!open && !signed && !hasQaAccess(c.req.header("x-qa-access"))) return c.json({ error: "This is the Ghosted QA environment. QA access is required, or it has expired.", request_id: id }, 401);
+    await qaCtx.run({ rid: id }, next);
+    // QA keeps a record of every failed product request, and of every Ghost Meter answer, whoever made it and however
+    // (the site or a tool). The evaluation reads these; it never assumes a quiet log means success.
+    const st = c.res.status; const isCheck = path === "/check" && c.req.method === "POST";
+    if (!path.startsWith("/qa/") && c.req.method !== "OPTIONS" && (st >= 400 || isCheck) && !(st === 401 && !signed)) {
+      try { const body: any = await c.res.clone().json().catch(() => ({})); const tok = (c.req.header("authorization") ?? "").slice(7);
+        const user = tok ? ((await db.from("sessions").select("user_id").eq("token", createHash("sha256").update(tok).digest("hex")).maybeSingle()).data?.user_id ?? null) : null;
+        const { store } = await import("./qa/state.js"); const req: any = isCheck ? await c.req.json().catch(() => ({})) : {};
+        if (isCheck) await store.log("check", { rid: id, user, url: String(req?.url ?? body?.url ?? "").split(/[?#]/)[0], status: st, verdict: st < 400 ? body?.verdict ?? null : null, score: body?.score ?? null, signals: (body?.signals ?? []).map((x: any) => ({ n: x?.n, kind: x?.kind, text: x?.text })), error: st >= 400 ? String(body?.error ?? "") : null });
+        if (st >= 400) await store.log("http", { rid: id, user, method: c.req.method, path, status: st, error: String(body?.error ?? "").slice(0, 300) });
+      } catch { /* the record is best-effort; the request itself is unaffected */ }
+    }
+  });
+}
+const origins = QA ? env.appOrigin.split(",").map((o) => o.trim()).filter(Boolean)   // QA answers its own front end only, never production's
+  : [...env.appOrigin.split(",").map((o) => o.trim()).filter(Boolean), "https://notaghost.jobs", "https://www.notaghost.jobs", "https://notaghost-web.onrender.com", "http://localhost:5173"];
 // The assistants' door (ChatGPT, Claude): public job search over MCP. Mounted before the site's CORS rule because its
 // callers are servers and tools on any origin, and it carries no cookie or session to protect.
 app.route("/mcp", mcp);
@@ -35,7 +63,7 @@ app.get("/.well-known/openai-apps-challenge", openaiChallenge);
 app.route("/jobs", jobs);
 app.use("/admin/*", cors({ origin: "*", allowHeaders: ["x-admin", "content-type"], allowMethods: ["GET", "POST", "OPTIONS"] }));  // secret header is the gate
 // the browser extension calls /check from chrome-extension:// origins
-app.use("*", cors({ origin: (o) => (o && (origins.includes(o) || /^(chrome|moz)-extension:\/\//.test(o)) ? o : origins[0]), allowHeaders: ["authorization", "content-type", "x-admin", "x-ghosted-anon", "x-ghosted-src-first", "x-ghosted-src-last"] }));
+app.use("*", cors({ origin: (o) => (o && (origins.includes(o) || /^(chrome|moz)-extension:\/\//.test(o)) ? o : origins[0]), allowHeaders: ["authorization", "content-type", "x-admin", "x-qa-access", "x-qa-real-access", "x-qa-tester", "x-ghosted-anon", "x-ghosted-src-first", "x-ghosted-src-last"] }));
 
 app.get("/health", async (c) => {
   const { error } = await db.from("users").select("id", { count: "exact", head: true });
@@ -50,6 +78,7 @@ app.get("/health", async (c) => {
   const { data: ur } = await db.from("reader_control").select("value").like("key", "unreadable:%").gt("updated_at", since);
   const rows = (ur ?? []).map((r: any) => r.value ?? {});
   const reader = { window_h: 3, unreadable: rows.length, recovered: rows.filter((v: any) => v.recovered).length, failed: rows.filter((v: any) => !v.recovered).length };
+  if (QA) return c.json({ ok: !error, env: "qa", commit: (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || null, db: error ? "error" : "ok", database: supabaseRef(env.supabaseUrl), access_expires: process.env.QA_ACCESS_EXPIRES });
   return c.json({ ok: !error, v: "0.1.3", commit: (process.env.RENDER_GIT_COMMIT ?? "").slice(0, 7) || null, db: error ? JSON.stringify(error) : "ok", raw, url: env.supabaseUrl, keylen: env.supabaseServiceKey.length, otp: env.otpProvider, dev_code: !!process.env.OTP_DEV_CODE, reader });
 });
 app.route("/auth", auth);
@@ -68,6 +97,7 @@ app.route("/open/public", openPublic);
 app.route("/open", open);
 app.route("/events", events);
 app.route("/admin", admin);
+if (QA) app.route("/qa", qaRoutes(app));
 
 app.onError((err, c) => {
   const status = (err as { status?: number }).status ?? 500;
@@ -90,6 +120,9 @@ setTimeout(() => resumeShots().then((n) => n && console.log(`[shots] picked up $
 setTimeout(() => unstickShots().then((n) => n && console.log(`[shots] closed ${n} left running by a restart`)).catch((e) => console.error("[shots] unstick", e?.message ?? e)), 60e3);
 setInterval(() => unstickShots().catch(() => {}), 10 * 60e3);
 import { experienceTick } from "./reader/experience.js";
+// In QA none of the scheduled jobs below run by the clock: the morning Radar, nudges, snapshots and the automatic walks
+// are started by a tester through the QA clock, so nothing spends the AI budget or writes to the outbox unasked.
+if (!QA) {
 setTimeout(() => experienceTick().then((r) => r && console.log("[experience] computed")).catch((e) => console.error("[experience]", e?.message ?? e)), 90e3);
 setInterval(() => experienceTick().then((r) => r && console.log("[experience] computed")).catch((e) => console.error("[experience]", e?.message ?? e)), 30 * 60e3);
 setTimeout(() => panelTick(app).catch((e) => console.error("[radar] panel", e?.message ?? e)), 3 * 60e3);
@@ -98,3 +131,21 @@ setInterval(() => radarMorning(notifyRadarMorning).then((n) => n && console.log(
 setInterval(() => runNudges().then((n) => n && console.log(`[whatsapp] nudges sent ${n}`)).catch((e) => console.error("[whatsapp] nudges", e?.message ?? e)), 5 * 60e3);
 ensureTemplates().then((r) => r.length && console.log("[whatsapp] templates", JSON.stringify(r.map((x: any) => ({ name: x.name, status: x.status ?? x.skipped }))))).catch((e) => console.error("[whatsapp] templates", e?.message ?? e));
 setInterval(() => snapshotDue(200).then((n) => n && console.log(`[snapshot] rechecked ${n}`)).catch((e) => console.error("[snapshot]", e)), 6 * 3600e3);
+}
+
+// ---- which database is this? QA must be on the QA database; anything else must not be ----
+(async () => {
+  const { data: marker } = await db.from("reader_control").select("value").eq("key", "qa:environment").maybeSingle();
+  if (!QA) { if (marker) { console.error("[qa] REFUSING TO RUN: this database carries the QA marker but GHOSTED_ENV is not qa"); process.exit(1); } return; }
+  const { data: people } = await db.from("users").select("phone").limit(1000);
+  const strangers = (people ?? []).filter((u: any) => !QA_PHONE.test(u.phone ?? ""));
+  if (strangers.length) { console.error(`[qa] REFUSING TO RUN: this database holds ${strangers.length} account(s) that are not QA identities — it is not a QA database`); process.exit(1); }
+  const { count: paid } = await db.from("payments").select("id", { count: "exact", head: true }).not("razorpay_payment_id", "is", null).not("razorpay_payment_id", "like", "pay_QA_%").not("razorpay_order_id", "like", "test_%");
+  if (paid) console.warn(`[qa] note: ${paid} payment row(s) came through Razorpay test checkout`);
+  // the database must have been prepared as QA (supabase/qa/qa-database.sql), and for this very project
+  const marked = (marker?.value as any)?.database;
+  if (!marker || marked !== supabaseRef(env.supabaseUrl)) { console.error(`[qa] REFUSING TO RUN: this database is ${marker ? `marked for project "${marked}", not the one in SUPABASE_URL` : "not marked as the QA database (run supabase/qa/qa-database.sql in the QA project)"}`); process.exit(1); }
+  console.log("[qa] database identity confirmed:", marked);
+  // every start proves the isolation again, and publishes the result at /qa/report
+  setTimeout(() => import("./qa/selftest.js").then((m) => m.isolationReport(app)).catch((e) => console.error("[qa] self-test", e?.message ?? e)), 15e3);
+})().catch((e) => { console.error("[qa] database identity check failed", e?.message ?? e); if (QA) process.exit(1); });

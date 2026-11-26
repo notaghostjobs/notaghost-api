@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomInt } from "node:crypto";
 import type { Context, Next } from "hono";
 import { db, type User } from "./db.js";
 import { env } from "./env.js";
+import { QA, QA_PHONE } from "../qa/guard.js";
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -9,6 +10,8 @@ export const PHONE_RE = /^\+91\d{10}$/;
 
 // ---------- OTP ----------
 export async function sendOtp(phone: string) {
+  // QA: only the synthetic identities exist. A real number is never stored, and no code is generated for one.
+  if (QA && !QA_PHONE.test(phone)) throw Object.assign(new Error("This is the QA environment. Use a QA candidate number (+91 00000 01001 to 01100)."), { status: 400 });
   // rate limit: max 3 codes per phone per 10 minutes
   const since = new Date(Date.now() - 10 * 60e3).toISOString();
   const { count, error: cerr } = await db
@@ -96,6 +99,7 @@ async function deliverOtp(phone: string, code: string) {
 }
 
 export async function verifyOtp(phone: string, code: string): Promise<User> {
+  if (QA && !QA_PHONE.test(phone)) throw Object.assign(new Error("This is the QA environment. Use a QA candidate number."), { status: 400 });
   const { data: rows } = await db
     .from("otp_codes")
     .select("*")
