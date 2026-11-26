@@ -69,7 +69,7 @@ export function cleanLines(lines: string[], names: string[], field: string): Red
     if (block > 0) { if (HEADING.test(n) || WORK.test(n) || n.length > 70) block = 0; else { block--; removed++; continue; } }   // continuation of a personal block
     if (/^[\d\s+()-]{4,}$/.test(n)) { removed++; continue; }   // a bare run of digits is never professional evidence (split phone numbers)
     let t = raw.replace(/\(cid:\d+\)/g, "").replace(/\s+/g, " ").trim();
-    if (nameRe) { const before = t; t = t.replace(nameRe, "[name]"); if (/^(\[name\][\s,.-]*)+$/.test(t)) { removed++; continue; } if (before !== t) uncertain.push({ field, reason: "name token replaced inside a line" }); }
+    if (nameRe) { const before = t; t = t.replace(nameRe, "[name]").replace(/\[name\](\s+[A-Z]\.?(?=[\s,]|$)){1,3}/g, "[name]"); if (/^(\[name\][\s,.-]*)+$/.test(t)) { removed++; continue; } if (before !== t) uncertain.push({ field, reason: "name token replaced inside a line" }); }
     if (PLACEWORD.test(n) && !WORK.test(n)) uncertain.push({ field, reason: "place word kept (check it is an employer or institution, not a home address)" });
     if (t) out.push(t);
   }
@@ -79,7 +79,7 @@ export function cleanLines(lines: string[], names: string[], field: string): Red
 /** Run every detector over serialized text. Zero hits is required before a package is issued. */
 export function audit(serialized: string, names: string[] = []): { hits: { kind: string; at: number }[] } {
   const hits: { kind: string; at: number }[] = []; const t = normalise(serialized.replace(/\\n/g, "\n"));
-  for (const r of [...LABEL.map((x) => new RegExp(x.source.replace(/^\^\\s\*/, "\\b"), "gi")), ...VALUE.map((x) => new RegExp(x.source, "g" + (x.flags.includes("i") ? "i" : "")))]) for (const m of t.matchAll(r)) hits.push({ kind: r.source.slice(0, 30), at: m.index ?? 0 });
+  for (const r of [...LABEL.map((x) => new RegExp(x.source.replace(/^\^\\s\*/, '(?:^|[\\n"])\\s*'), "gi")), ...VALUE.map((x) => new RegExp(x.source, "g" + (x.flags.includes("i") ? "i" : "")))]) for (const m of t.matchAll(r)) hits.push({ kind: r.source.slice(0, 30), at: m.index ?? 0 });
   for (const n of names) for (const m of t.matchAll(new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"))) hits.push({ kind: "candidate name", at: m.index ?? 0 });
   return { hits };
 }

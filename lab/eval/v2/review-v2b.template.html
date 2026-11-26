@@ -1,0 +1,82 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Radar match review</title>
+<style>
+:root{--ink:#16111a;--body:#2c2630;--muted:#6f6875;--rule:#e2dee5;--card:#f6f4f7;--warn:#8a5a00;--warnBg:#fbf0d9;--bad:#9b2c2c;--badBg:#f8e3e3}
+*{box-sizing:border-box}body{margin:0;font:15px/1.55 -apple-system,"Segoe UI",Inter,Arial,sans-serif;color:var(--body);background:#fff}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--rule);padding:10px 16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;z-index:2}
+header b{color:var(--ink)}#pos,#done{font-variant-numeric:tabular-nums}.sp{flex:1}
+main{max-width:1320px;margin:0 auto;padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){main{grid-template-columns:1fr}header{position:static}.scroll{max-height:none!important}}
+section{border:1px solid var(--rule);border-radius:10px;padding:14px;min-width:0}.full{grid-column:1/-1}h2{font-size:16px;margin:0 0 4px;color:var(--ink)}h3{font-size:13px;margin:12px 0 4px;color:var(--ink)}
+.scroll{max-height:70vh;overflow:auto}.jd{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.55 inherit;background:var(--card);padding:10px;border-radius:8px}
+ul{margin:4px 0 0 18px;padding:0}li{margin:2px 0}.note{color:var(--muted);font-size:13px}.sim{background:var(--warnBg);color:var(--warn);padding:6px 8px;border-radius:6px;font-size:13px}
+.opts{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.opts label{border:1px solid var(--rule);border-radius:8px;padding:8px 11px;cursor:pointer;min-height:42px;display:flex;align-items:center;gap:6px}
+.opts label:has(input:checked){background:var(--card);border-color:var(--ink)}fieldset{border:0;padding:0;margin:0 0 6px}legend{font-weight:600;color:var(--ink);padding:0}
+textarea,input[type=text]{width:100%;font:inherit;border:1px solid var(--rule);border-radius:8px;padding:8px}textarea{min-height:54px}
+button{font:inherit;border:1px solid var(--ink);background:#fff;color:var(--ink);border-radius:8px;padding:7px 11px;min-height:38px;cursor:pointer}button.primary{background:var(--ink);color:#fff}
+:focus-visible{outline:2px solid #6b4bd6;outline-offset:2px}.banner{grid-column:1/-1;padding:10px 12px;border-radius:8px}.banner.warn{background:var(--warnBg);color:var(--warn)}.banner.bad{background:var(--badBg);color:var(--bad)}
+.hidden{display:none!important}.req::after{content:" (required)";color:var(--muted);font-weight:400;font-size:13px}
+</style></head><body>
+<header><b>Radar match review</b><span id="pos"></span><span id="done" class="note"></span><span class="sp"></span>
+<button id="prev" title="Previous (←)">Previous</button><button id="nextOpen" class="primary" title="Next unanswered (→)">Next unanswered</button>
+<button id="exp">Export answers</button><label style="display:inline-flex;align-items:center;gap:6px"><span class="note">Import</span><input id="imp" type="file" accept="application/json" style="max-width:150px"></label></header>
+<main id="m"></main>
+<script>
+const D=__DATA__;const PKG={name:"ghosted-radar-review",version:"__VERSION__",data_sha:"__SHA__"};const KEY="ghosted-review:"+PKG.data_sha;
+const SUIT=[["direct","Direct fit"],["adjacent","Strong adjacent fit"],["stretch","Stretch"],["unsuitable","Unsuitable"],["cannot","Cannot judge"]];
+const APPLY=[["yes","Yes"],["maybe","Maybe, subject to clarification"],["no","No"],["cannot","Cannot determine"]];
+const REASONS=[["function","Wrong professional function"],["subspec","Wrong sub-specialisation"],["technical","Missing mandatory technical capability"],["credential","Missing mandatory credential"],["seniority","Seniority mismatch"],["ic_mgmt","Individual contributor vs management mismatch"],["domain","Industry/domain mismatch"],["location","Location or work-mode mismatch"],["preference","Candidate preference contradiction"],["resume_incomplete","Incomplete résumé evidence"],["jd_incomplete","Incomplete job description"],["jd_unclear","Unclear job requirements"],["other","Other (explain)"]];
+const CONF=[["high","High"],["medium","Medium"],["low","Low"]];
+let st={reviewer:"",answers:{},dirty:false};try{const s=JSON.parse(localStorage.getItem(KEY)||"null");if(s&&s.answers)st={...s,dirty:false}}catch(e){}
+let i=0,banner=null;const $=id=>document.getElementById(id);const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const persist=()=>{try{localStorage.setItem(KEY,JSON.stringify({reviewer:st.reviewer,answers:st.answers}))}catch(e){}};
+const needsReason=a=>a&&["stretch","unsuitable","cannot"].includes(a.suitability);
+const complete=a=>!!(a&&a.suitability&&a.apply&&a.confidence&&(!needsReason(a)||(a.reasons&&a.reasons.primary))&&(a.confidence==="high"||(a.uncertainty||"").trim()));
+const radios=(n,o,c)=>o.map(([v,l])=>'<label><input type="radio" name="'+n+'" value="'+v+'"'+(c===v?" checked":"")+">"+esc(l)+"</label>").join("");
+const list=(h,xs)=>xs&&xs.length?"<h3>"+h+"</h3><ul>"+xs.map(x=>"<li>"+esc(x)+"</li>").join("")+"</ul>":"";
+function person(p){return '<div class="note">Experience: about '+esc(p.years??"unknown")+' years ('+esc(p.years_basis)+')</div>'+(p.roles.length?"<h3>Roles</h3><ul>"+p.roles.map(r=>"<li>"+esc(r.title)+" ("+esc(r.from)+"–"+esc(r.to)+")</li>").join("")+"</ul>":"")
+ +list("Work",p.work)+list("Achievements",p.achievements)+list("Projects",p.projects)+list("Summary (candidate's own claims)",p.summary)+list("Skills listed (not shown in work)",p.skills_listed)+list("Education and credentials",p.education)
+ +'<p class="sim">Career direction: SIMULATED test answer, not the candidate\'s own statement — '+esc(p.intent_simulated)+"</p>"}
+function render(){const c=D.cases[i],a=st.answers[c.code]||{},p=D.people[c.cand];const r=a.reasons||{primary:null,secondary:[]};
+ let h=banner?'<div class="banner '+banner.kind+'">'+banner.html+"</div>":"";
+ if(!st.reviewer)h+='<section class="full"><h2>Before you start</h2><p>Enter an anonymous reviewer ID (for example <b>rev-1</b>). Do not use your name. Two reviewers grade independently; do not discuss cases until both have exported.</p><input id="rid" type="text" placeholder="Reviewer ID" autocomplete="off"><div class="opts"><button id="setrid" class="primary">Start reviewing</button></div></section>';
+ h+='<section class="full"><details'+(st.reviewer&&Object.keys(st.answers).length?"":" open")+'><summary><b>How to grade</b> (rubric)</summary><p><b>A. Professional suitability</b> — <b>Direct fit</b>: has demonstrated the core capabilities to do this job now, meets essential requirements, realistic seniority and specialisation. <b>Strong adjacent fit</b>: substantial relevant, transferable evidence; core work realistic without a major career change; remaining gaps limited and identifiable. <b>Stretch</b>: related, but a meaningful specialisation, seniority, domain, technical or responsibility gap. <b>Unsuitable</b>: one or more defining requirements materially misaligned. <b>Cannot judge</b>: not enough evidence for a defensible call.</p><p><b>B. Would apply</b> — If you were this candidate, and the stated career preferences are accurate, would you seriously consider applying? This is separate from suitability.</p><p><b>C. Reasons</b> — for Stretch, Unsuitable or Cannot judge: one primary reason (required), others optional. <b>D. Confidence</b> — High, Medium or Low; say why if not High.</p><p class="note">The same job can appear for several candidates. Judge each case on its own. Names, contacts and personal details are removed. Which system proposed a job is not shown. Answers save in this browser; export when done.</p></details></section>';
+ h+='<section><h2>'+esc(c.title)+'</h2><div class="note">'+esc(c.employer)+(c.location?" · "+esc(c.location):"")+'</div><div class="note">Full job description (third-party contact details removed; nothing else omitted)</div><div class="jd scroll">'+esc(c.text)+"</div></section>";
+ h+='<section><h2>'+esc(c.cand)+'</h2><div class="scroll">'+person(p)+"</div></section>";
+ const dis=st.reviewer?"":" disabled";
+ h+='<section class="full" id="form"'+(st.reviewer?"":' style="opacity:.5"')+'><h2>'+c.code+"</h2>"
+  +'<fieldset'+dis+'><legend class="req">A. Professional suitability</legend><div class="opts">'+radios("suitability",SUIT,a.suitability)+"</div></fieldset>"
+  +'<fieldset'+dis+'><legend class="req">B. Would you seriously consider applying?</legend><div class="opts">'+radios("apply",APPLY,a.apply)+"</div></fieldset>"
+  +'<fieldset id="rs"'+dis+(needsReason(a)?"":' class="hidden"')+'><legend class="req">C. Primary reason</legend><div class="opts">'+radios("primary",REASONS,r.primary)+'</div><legend>Other reasons (optional)</legend><div class="opts">'+REASONS.map(([v,l])=>'<label><input type="checkbox" name="secondary" value="'+v+'"'+((r.secondary||[]).includes(v)?" checked":"")+">"+esc(l)+"</label>").join("")+"</div></fieldset>"
+  +'<fieldset'+dis+'><legend class="req">D. Confidence</legend><div class="opts">'+radios("confidence",CONF,a.confidence)+'</div><input id="unc" type="text" placeholder="If not High: why are you unsure?" value="'+esc(a.uncertainty||"")+'"'+dis+"></fieldset>"
+  +'<textarea id="note" placeholder="Reasoning (optional; required in practice for Other)"'+dis+">"+esc(a.note||"")+"</textarea>"
+  +'<div class="note" id="state">'+(complete(a)?"Complete":"Not complete yet")+"</div></section>";
+ $("m").innerHTML=h;counts();
+ if(!st.reviewer)$("setrid").onclick=()=>{const v=$("rid").value.trim();if(!/^[A-Za-z0-9_-]{2,24}$/.test(v)){banner={kind:"bad",html:"Use 2–24 letters, digits, - or _ (no names)."};render();return}st.reviewer=v;persist();banner=null;render()};
+}
+function save(){const c=D.cases[i],g=n=>{const x=document.querySelector("input[name="+n+"]:checked");return x?x.value:null};
+ const a={suitability:g("suitability"),apply:g("apply"),reasons:{primary:g("primary"),secondary:[...document.querySelectorAll("input[name=secondary]:checked")].map(x=>x.value)},confidence:g("confidence"),uncertainty:$("unc").value,note:$("note").value,at:new Date().toISOString()};
+ if(!needsReason(a))a.reasons={primary:null,secondary:[]};st.answers[c.code]=a;st.dirty=true;persist();$("rs").classList.toggle("hidden",!needsReason(a));$("state").textContent=complete(a)?"Complete":"Not complete yet";counts()}
+function counts(){const n=D.cases.filter(c=>complete(st.answers[c.code])).length;$("pos").textContent=D.cases[i].code+" · "+(i+1)+" of "+D.cases.length;$("done").textContent=n+" complete · "+(D.cases.length-n)+" remaining"+(st.reviewer?" · reviewer "+st.reviewer:"")}
+const go=n=>{i=(n+D.cases.length)%D.cases.length;banner=null;render();scrollTo(0,0)};
+document.addEventListener("change",e=>{if(e.target.closest("#form"))save()});document.addEventListener("input",e=>{if(e.target.id==="note"||e.target.id==="unc")save()});
+document.addEventListener("keydown",e=>{if(/INPUT|TEXTAREA/.test(document.activeElement.tagName)&&document.activeElement.type!=="radio"&&document.activeElement.type!=="checkbox")return;if(e.key==="ArrowLeft")go(i-1);if(e.key==="ArrowRight")$("nextOpen").click()});
+$("prev").onclick=()=>go(i-1);$("nextOpen").onclick=()=>{for(let k=1;k<=D.cases.length;k++){const n=(i+k)%D.cases.length;if(!complete(st.answers[D.cases[n].code]))return go(n)}banner={kind:"warn",html:"All cases are complete. Export your answers."};render()};
+function exportObj(){const codes=D.cases.map(c=>c.code);return{package:PKG,reviewer:st.reviewer,exported_at:new Date().toISOString(),answers:Object.fromEntries(codes.filter(k=>st.answers[k]).map(k=>[k,st.answers[k]])),complete:codes.filter(k=>complete(st.answers[k])),missing:codes.filter(k=>!complete(st.answers[k]))}}
+$("exp").onclick=()=>{if(!st.reviewer){banner={kind:"bad",html:"Set a reviewer ID first."};return render()}const b=new Blob([JSON.stringify(exportObj(),null,1)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="radar-review-"+st.reviewer+"-"+PKG.data_sha+".json";document.body.appendChild(a);a.click();a.remove();st.dirty=false;banner={kind:"warn",html:"Exported "+Object.keys(exportObj().answers).length+" answers ("+exportObj().missing.length+" still missing)."};render()};
+let pending=null;
+function applyImport(raw){const x=clean(raw);st.reviewer=x.reviewer;st.answers=x.answers;st.dirty=false;persist();banner={kind:"warn",html:"Imported "+Object.keys(x.answers).length+" answers for reviewer "+esc(x.reviewer)+"."};pending=null;render()}
+$("imp").onchange=async e=>{const f=e.target.files[0];if(!f)return;let x;try{x=JSON.parse(await f.text())}catch(err){banner={kind:"bad",html:"That file is not valid JSON."};return render()}
+ const codes=new Set(D.cases.map(c=>c.code));
+ if(!x||!x.package||x.package.name!==PKG.name||x.package.data_sha!==PKG.data_sha){banner={kind:"bad",html:"Rejected: this export belongs to a different review package ("+esc(x&&x.package&&x.package.version)+" / "+esc(x&&x.package&&x.package.data_sha)+"). Nothing was changed."};e.target.value="";return render()}
+ if(!x.answers||typeof x.answers!=="object"||Array.isArray(x.answers)){banner={kind:"bad",html:"Rejected: the file has no answers. Nothing was changed."};e.target.value="";return render()}
+ const bad=Object.keys(x.answers).filter(k=>!codes.has(k));if(bad.length){banner={kind:"bad",html:"Rejected: unknown case IDs ("+esc(bad.slice(0,5).join(", "))+"). Nothing was changed."};e.target.value="";return render()}
+ const have=Object.keys(st.answers).length;if(have){pending=x;banner={kind:"warn",html:"This browser holds "+have+" answers for reviewer "+esc(st.reviewer||"(none)")+". Importing will replace them with "+Object.keys(x.answers).length+" answers for reviewer "+esc(x.reviewer)+'. <button id="okimp" class="primary">Replace</button> <button id="noimp">Keep current</button>'};render();$("okimp").onclick=()=>applyImport(pending);$("noimp").onclick=()=>{pending=null;banner=null;render()};e.target.value="";return}
+ applyImport(x);e.target.value=""};
+// only known fields with known values survive an import; nothing in a file can add data or change the cases
+function clean(x){const ok=(v,o)=>o.some(([k])=>k===v)?v:null,s=v=>typeof v==="string"?v.slice(0,4000):"";const out={};
+ for(const [k,a] of Object.entries(x.answers||{})){if(!a||typeof a!=="object")continue;const r=a.reasons||{};
+  out[k]={suitability:ok(a.suitability,SUIT),apply:ok(a.apply,APPLY),reasons:{primary:ok(r.primary,REASONS),secondary:Array.isArray(r.secondary)?r.secondary.filter(v=>ok(v,REASONS)):[]},confidence:ok(a.confidence,CONF),uncertainty:s(a.uncertainty),note:s(a.note),at:s(a.at)}}
+ return{reviewer:/^[A-Za-z0-9_-]{2,24}$/.test(x.reviewer||"")?x.reviewer:"",answers:out}}
+addEventListener("beforeunload",e=>{if(st.dirty){e.preventDefault();e.returnValue=""}});
+render();
+</script></body></html>

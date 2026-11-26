@@ -24,4 +24,7 @@ t("13 credentials and professional work history are preserved", () => { const ke
 t("job text: third-party contacts removed, requirements unchanged", () => { const j = "Must have 5+ years in Java. Apply to hr@acme.example or call 9876543210. See https://acme.example/jobs"; const c = cleanJobText(j); assert.ok(c.startsWith("Must have 5+ years in Java.")); assert.ok(!/@|\d{10}|https?:/.test(c)); });
 t("residual risk is surfaced: a kept place word is listed for manual review", () => { const r = cleanLines(["Branch Operations, Jayanagar branch"], [], "work"); assert.equal(r.value.length, 1); assert.ok(r.uncertain.length >= 1); });
 t("education lines with a locality and cross-functional work are kept", () => { const keep = ["B.Com, Sri Vidya College, Rajajinagar, Bengaluru 2012", "Drove cross-functional M&A integration across 4 business units, FY 2021", "PGDM (Finance), XYZ Institute, Malleswaram 2016"]; assert.deepEqual(C(keep), keep); });
+t("audit: line-start labels are caught inside serialized JSON; the same word mid-sentence is not", () => { assert.ok(audit(JSON.stringify(["Built APIs", "Address: Lake View"])).hits.length > 0); assert.ok(audit(JSON.stringify(["Phone: 98"])).hits.length > 0);
+  assert.equal(audit(JSON.stringify(["Identified opportunities to address these problems", "Web / Mobile: Flutter exposure"])).hits.length, 0); });
+t("initials next to a removed name are removed too", () => assert.deepEqual(C(["Asha K B APPLICATION SUPPORT BANGALORE"], ["Asha"]), ["[name] APPLICATION SUPPORT BANGALORE"]));
 console.log(`${n} tests passed`);
