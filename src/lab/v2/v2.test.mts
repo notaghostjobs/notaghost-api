@@ -108,4 +108,9 @@ await t("evidence: a genuine sentence across a wrapped line verifies; years are 
     { requirement: "REST APIs and data models", job_quote: "Build REST APIs and data models", status: "demonstrated", resume_quote: "Implemented Data Models, multiple Rest API functions" },
     { requirement: "3+ years backend", job_quote: "3+ years of backend experience", status: "unverified", resume_quote: null }] }, j, block, block);
   assert.equal(v.fit, "direct"); assert.equal(v.core[0].status, "demonstrated"); assert.equal(v.core[1].status, "demonstrated"); });
+await t("gate: a job title two rungs below the person is never a strong fit", () => {
+  const lead = { ...backend, years_total: { value: 11, basis: "dated_roles" as const }, roles: [{ title: "Engineering Manager", from: "2015", to: "2026", lines: [] }] };
+  const v = { job_id: "1", fit: "direct", function: "same", specialisation: "same", seniority: "right", confidence: "high", why: "x", gaps: [], unverified: [], core: [{ requirement: "Java", job_quote: "q", status: "demonstrated", resume_quote: "r" }] } as any;
+  assert.equal(display([v], lead, new Map([["1", { title: "Associate Engineer", employer: "C", eligible: true }]])).strong.length, 0);
+  assert.equal(display([v], lead, new Map([["1", { title: "Engineering Lead", employer: "C", eligible: true }]])).strong.length, 1); });
 console.log(`${n} tests passed`);

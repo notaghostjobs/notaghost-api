@@ -72,7 +72,8 @@ export function shortlist(cands: Cand[], c: CER, max = 30, perEmployer = 5, keep
 }
 
 // ── F. the judge's contract ─────────────────────────────────────────────────────────────────────────────────────
-export const JUDGE_VERSION = "j3";   // iteration 2 (dev): wrapped lines join for quote checks, years checked from the computed total, dates as years, direct shown at high or medium confidence   // validator v2: names inside names count (sql/mysql, git/gitlab)
+export const JUDGE_VERSION = "j3";
+export const GATE_VERSION = "g3";   // iteration 3 (dev, free): direct at high/medium, adjacent at high, no title ≥2 rungs below the person   // iteration 2 (dev): wrapped lines join for quote checks, years checked from the computed total, dates as years, direct shown at high or medium confidence   // validator v2: names inside names count (sql/mysql, git/gitlab)
 export const JUDGE_PROMPT = "j3";   // j2: medium effort; "demonstrated" must share a content word with its requirement
 export type Fit = "direct" | "adjacent" | "stretch" | "unsuitable" | "cannot_judge";
 export type ReqCheck = { requirement: string; job_quote: string; status: "demonstrated" | "transferable" | "unverified" | "confirmed_gap"; resume_quote: string | null };
@@ -144,8 +145,10 @@ export function validateVerdict(raw: any, job: { id: string; text: string; title
 export type Shown = { strong: { job_id: string; fit: Fit; why: string; evidence: { job: string; resume: string }[] }[]; stretch: string[]; none_reason: string | null };
 export function display(verdicts: Verdict[], c: CER, jobs: Map<string, { title: string; employer: string; eligible: boolean }>, max = 5, maxUnverified = 0.4): Shown {
   const openAdj = !/^(no|false)/i.test(c.target.open_to_adjacent);
+  const pr = personRung(c);
   const ok = (v: Verdict) => {
     const j = jobs.get(v.job_id); if (!j || !j.eligible || v.failed) return false;
+    const jr = rungOf(j.title).rung; if (jr !== null && pr - jr >= 2) return false;   // iteration 3 (dev): a title two or more rungs below the person is a step back, whatever the judge says
     if (v.fit === "direct") return v.function === "same" && v.specialisation !== "different" && (v.seniority === "right" || v.seniority === "one_up") && v.confidence !== "low";   // iteration 2: direct at high or medium
     if (v.fit === "adjacent") return openAdj && v.function !== "different" && v.seniority !== "too_far" && v.confidence === "high";
     return false;
