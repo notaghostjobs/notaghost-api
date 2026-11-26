@@ -23,7 +23,8 @@ import * as SL from "../shortlist.js";
 import * as G from "../gate.js";
 import { htmlToText, descSha } from "../jobtext.js";
 import { EXTRACT_SYSTEM, extractUser, validateCJR } from "../../v2/cjr.js";
-import { JUDGE_SYSTEM, candidateBlock, judgeUser, validateVerdict, eligibility } from "../../v2/pipeline.js";
+import { JUDGE_SYSTEM, candidateBlock, validateVerdict, eligibility } from "../../v2/pipeline.js";
+import * as J3 from "../judge3.js";
 import { buildCER, verifyCER } from "../../v2/cer.js";
 import { firstJson } from "../../v2/api.js";
 import { validity2 } from "../../validity.js";
@@ -148,7 +149,7 @@ export async function v3Stage(root: EvalRoot, o: V3Opts) {
   let seq = 0; const runId = `${new Date().toISOString().replace(/[-:.]/g, "").slice(0, 15)}-${o.mode}-${Math.random().toString(36).slice(2, 6)}`;   // request files never overwrite an earlier run
   const send = async (kind: "extract" | "judge", purpose: string, system: string, user: string, maxTokens: number, effort: "low" | "medium") => {
     const worst = A.worstCase3(system.length, user.length, maxTokens); plan.worst_case_reserved_inr += worst; plan[kind === "extract" ? "extract_requests" : "judge_requests"]++;
-    const n = ++seq; root.write(`judge/requests/${runId}-${String(n).padStart(5, "0")}-${kind}.json`, { run: runId, purpose, system_sha256: sha256(system), user, max_tokens: maxTokens, worst_case_inr: worst });
+    const n = ++seq; root.write(`judge/requests/${runId}-${String(n).padStart(5, "0")}-${kind}.json`, { run: runId, purpose, system_sha256: sha256(system), system_chars: system.length, user, max_tokens: maxTokens, worst_case_inr: worst });
     if (o.mode === "dry") return { ok: false as const, reason: "dry run", n };
     const r = await A.call3(guard, { purpose, system, user, maxTokens, cacheSystem: true, effort, key: o.mode === "mock" ? "mock" : o.key!, fetchImpl: o.fetchImpl });
     root.write(`judge/responses/${runId}-${String(n).padStart(5, "0")}-${kind}.json`, { run: runId, ...r }); return { ...r, n };
@@ -198,9 +199,12 @@ export async function v3Stage(root: EvalRoot, o: V3Opts) {
     // 10–11. judging in batches of five, every verdict validated against the posting and the evidence
     const block = candidateBlock(c); const usable = reps.filter((id) => cjrOf.get(id)?.usable); const verdicts: any[] = [];
     for (const id of reps.filter((id) => !usable.includes(id))) { verdicts.push({ job_id: id, fit: "cannot_judge", failed: cjrOf.get(id) ? `posting not usable: ${cjrOf.get(id).usable_reason}` : `not judged: ${trace.get(id).extraction}`, core: [] }); }
-    for (let i = 0; i < usable.length; i += 5) {
-      const b = usable.slice(i, i + 5).map((id) => { const v: any = J.views.get(id); return { id, title: v.title, company: v.employer ?? "", text: J.jobFor(id).text, cjr: cjrOf.get(id) }; });
-      const r = await send("judge", `judge j3 ${p}`, JUDGE_SYSTEM(block), judgeUser(b), SETTINGS.max_tokens.judge, "medium");
+    // judge input j3-fulltext (judge3.ts): complete posting text; batches shrink to stay within the request budget, text is never cut
+    const jobsToJudge = usable.map((id) => { const v: any = J.views.get(id); return { id, title: v.title, company: v.employer ?? "", text: J.jobFor(id).text, cjr: cjrOf.get(id) }; });
+    const bt = J3.batchJobs(jobsToJudge, JUDGE_SYSTEM(block).length);
+    for (const x of bt.tooLarge) { verdicts.push({ job_id: x.id, fit: "cannot_judge", failed: "judge request too large: not sent, not cut", core: [] }); }
+    for (const b of bt.batches) {
+      const r = await send("judge", `judge ${J3.JUDGE3_INPUT} ${p}`, JUDGE_SYSTEM(block), J3.judgeUserFull(b), bt.maxTokens(b), "medium");
       const list: any[] = r.ok ? ((firstJson((r as any).text) as any)?.verdicts ?? []) : [];
       for (const x of b) verdicts.push(o.mode === "dry" ? { job_id: x.id, fit: "cannot_judge", failed: "dry run (no call made)", core: [] } : r.ok ? validateVerdict(list.find((v) => String(v?.job_id) === x.id), x, block, block) : { job_id: x.id, fit: "cannot_judge", failed: `judge call ${r.reason}`, core: [] });
     }

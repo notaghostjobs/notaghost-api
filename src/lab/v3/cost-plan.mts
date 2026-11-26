@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 const D = await import("./data.mjs"); const F = await import("./features.mjs"); const SL = await import("./shortlist.js");
 const { PRICE, INR } = await import("../v2/api.js"); const { worstCase3: worstCase } = await import("./api3.js"); const { EXTRACT_SYSTEM, extractUser, EXTRACTOR_VERSION, CJR_SCHEMA } = await import("../v2/cjr.js");
-const { JUDGE_SYSTEM, candidateBlock, judgeUser, shortlist } = await import("../v2/pipeline.js"); const { descSha, EXTRACT_CHAR_LIMIT } = await import("./jobtext.js");
+const { JUDGE_SYSTEM, candidateBlock, judgeUser, shortlist } = await import("../v2/pipeline.js"); const { judgeUserFull } = await import("./judge3.js"); const { descSha, EXTRACT_CHAR_LIMIT } = await import("./jobtext.js");
 const { skillsIn } = await import("../skills.js"); const { GENERIC } = await import("../v2/terms.js");
 const SIZE = Number(process.env.SIZE ?? 40), MAXTOK = { extract: 4000, judge: 10000 };
 const ledger = readFileSync(`${D.S}/v2/frozen-archive/ledger.FINAL.jsonl`, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.ok && r.usage);
@@ -34,7 +34,7 @@ for (const p of [...D.split.development, ...D.split.heldout]) {
   const reps = SL.shortlist3(sc, { size: SIZE, ...SL.DEFAULT_SHORT }).chosen.map((cl) => cl.rep.id);
   const sys = JUDGE_SYSTEM(candidateBlock(c)).length; const calls: any[] = [];
   for (let i = 0; i < reps.length; i += 5) { const b = reps.slice(i, i + 5).map((id) => ({ id, title: D.views.get(id).title, company: D.views.get(id).employer ?? "", text: D.fullText.get(id) ?? view(id), cjr: {} as any }));
-    const userChars = judgeUser(b).length + b.length * (cjrMean - 2); calls.push({ sys, userChars, userCharsP90: judgeUser(b).length + b.length * (cjrP90 - 2) }); }
+    const u = judgeUserFull(b.map((x) => ({ ...x, cjr: {} as any }))).length; const userChars = u + b.length * (cjrMean - 2); calls.push({ sys, userChars, userCharsP90: u + b.length * (cjrP90 - 2) }); }   // V3 judge input j3-fulltext
   const xs = reps.map((id) => { const text = D.fullText.get(id) ?? view(id); const hit = existsSync(`${D.S}/ho/v2/cjr/${id}.${descSha(text).slice(0, 16)}.${CJR_SCHEMA.replace("/", "")}.${EXTRACTOR_VERSION}.json`) || ["cp1", "cp1b", "cp2"].some((d) => existsSync(`${D.S}/${d}/v2/cjr/${id}.${descSha(text).slice(0, 16)}.${CJR_SCHEMA.replace("/", "")}.${EXTRACTOR_VERSION}.json`)); if (hit) cacheHits++;
     return { id, hit, chars: EXTRACT_SYSTEM.length + extractUser(D.views.get(id).title, D.views.get(id).employer ?? "", text.slice(0, EXTRACT_CHAR_LIMIT)).length, sysChars: EXTRACT_SYSTEM.length, truncated: text.length > EXTRACT_CHAR_LIMIT }; });
   xs.forEach((x) => distinct.add(x.id));

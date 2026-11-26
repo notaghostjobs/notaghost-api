@@ -3,7 +3,7 @@
 // often never saw the requirements section. Extraction keeps a hard ceiling only to bound cost (60,000 characters;
 // anything longer is recorded as oversized and not judged, never silently cut).
 import { createHash } from "node:crypto";
-export const EXTRACT_CHAR_LIMIT = 60000, JUDGE_CHAR_LIMIT = 6000;   // 60,000 chars ≈ 20k tokens, far inside the model context; longer postings are flagged "oversized", never cut. The judge gets the complete extracted requirements plus the first 6,000 chars (the frozen j3 judgeUser format).
+export const EXTRACT_CHAR_LIMIT = 60000, JUDGE_CHAR_LIMIT = EXTRACT_CHAR_LIMIT;   // 60,000 chars ≈ 24k tokens, far inside the 1M context; longer postings are flagged "oversized", never cut. Since j3-fulltext (26 Nov) the judge reads the same complete text as extraction (judge3.ts); the frozen V2 judgeUser still cuts at 6,000.
 export function htmlToText(h: string): string {
   return (h || "").replace(/<(br|\/p|\/li|\/h\d|\/div|\/tr)[^>]*>/gi, "\n").replace(/<li[^>]*>/gi, "\n• ").replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"')

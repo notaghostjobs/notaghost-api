@@ -5,7 +5,7 @@
 //   SUPABASE_URL=https://offline.invalid SUPABASE_SERVICE_ROLE_KEY=offline npx tsx src/lab/v3/eval/late-req.test.mts
 import assert from "node:assert/strict";
 const { extractUser, validateCJR, EXTRACT_SYSTEM } = await import("../../v2/cjr.js"); const { judgeUser, validateVerdict, eligibility, JUDGE_SYSTEM, candidateBlock } = await import("../../v2/pipeline.js");
-const G = await import("../gate.js"); const MK = await import("./mock.js");
+const G = await import("../gate.js"); const MK = await import("./mock.js"); const J3 = await import("../judge3.js"); const A = await import("../api3.js");
 let n = 0; const t = async (name: string, f: () => any) => { await f(); n++; console.log("ok", n, name); };
 
 const OPEN = "Fable Software is hiring a Senior Backend Engineer in Bengaluru.\nWhat you will do\n" + "• Build and run payment services in Java and Spring Boot for millions of customers across India.\n".repeat(70) + "Requirements\n• 3+ years of Java and Spring Boot microservices experience.\n";
@@ -37,9 +37,9 @@ function idealJudge(request: string, evidence: string) {
   return { verdicts: [{ job_id: "J1", fit, function: "same", specialisation: "same", seniority: "right", core, gaps: [], unverified: [], why: distinct.length > 1 ? `conflicting minimum years: ${distinct.join(" vs ")}` : "x", confidence: "high" }] };
 }
 const evidence = block;
-function outcome(text: string, cjr: any, judgeText = "frozen") {
-  const b = [{ ...job(text), cjr }]; let request = judgeUser(b);
-  if (judgeText === "full") request = request.replace(/\nJOB TEXT:\n[\s\S]*$/, `\nJOB TEXT:\n${text}`);   // the proposed correction: the judge reads the same complete text as extraction
+/** judgeText "frozen" = V2's judgeUser (first 6,000 characters); "full" = V3's judgeUserFull (approved Option A, now in use). */
+function outcome(text: string, cjr: any, judgeText = "full") {
+  const b = [{ ...job(text), cjr }]; const request = judgeText === "full" ? J3.judgeUserFull(b) : judgeUser(b);
   const raw = idealJudge(request, evidence).verdicts[0]; const v = validateVerdict(raw, job(text), block, block);
   const d = G.decide(v as any, { compat: { verdict: "fit", reasons: [] }, anchors: { status: "met", detail: [] }, eligible: !eligibility({ id: "J1", title: "Senior Backend Engineer", location: "Bengaluru", text, invalid: false, closed: false }, cand as any, block).excluded, employer: "Fable Software", title: "Senior Backend Engineer" });
   return { request, verdict: v, tier: d.tier, reasons: d.reasons };
@@ -54,17 +54,38 @@ await t("effective inputs: extraction gets the complete text; the judge gets the
   assert.ok(EXTRACT_SYSTEM.includes("Read the WHOLE posting"));
 });
 await t("1. late requirement captured by extraction → the unsuitable candidate is rejected", () => { const text = posting([LATE_CKA]); const o = outcome(text, record(text)); assert.equal(o.tier, "rejected"); assert.match(o.reasons.join(), /judged unsuitable|confirmed gap/); });
-await t("2. late requirement omitted by extraction → the judge cannot see it → a strong match is shown (DEFECT, conditional on omission)", () => {
-  const text = posting([LATE_CKA]); const o = outcome(text, record(text, (q) => !/CKA/.test(q))); assert.equal(o.tier, "strong"); assert.ok(!o.request.includes("CKA"), "nothing in the judge's input mentions the requirement");
+await t("2. [frozen V2 judge input] late requirement omitted by extraction → the judge cannot see it → a strong match is shown (the defect)", () => {
+  const text = posting([LATE_CKA]); const o = outcome(text, record(text, (q) => !/CKA/.test(q)), "frozen"); assert.equal(o.tier, "strong"); assert.ok(!o.request.includes("CKA"), "nothing in the judge's input mentions the requirement");
 });
-await t("2c. same omission with the complete text given to the judge → rejected", () => { const text = posting([LATE_CKA]); const o = outcome(text, record(text, (q) => !/CKA/.test(q)), "full"); assert.equal(o.tier, "rejected"); });
+await t("2c. [V3 judgeUserFull] same omission: the judge reads the late requirement in the text → rejected", () => { const text = posting([LATE_CKA]); const o = outcome(text, record(text, (q) => !/CKA/.test(q)), "full"); assert.equal(o.tier, "rejected"); });
 await t("3. conflicting opening and closing requirements, both extracted → the case is not judgeable (not shown)", () => { const text = posting([LATE_YRS]); const o = outcome(text, record(text)); assert.notEqual(o.tier, "strong"); assert.equal(o.verdict.fit, "cannot_judge"); });
-await t("3b. conflict where extraction keeps only the opening value → a strong match is shown (DEFECT, conditional)", () => { const text = posting([LATE_YRS]); const o = outcome(text, record(text, (q) => !/Minimum 8 years/.test(q))); assert.equal(o.tier, "strong"); });
-await t("3c. same, with the complete text given to the judge → the conflict is visible and the case is not shown", () => { const text = posting([LATE_YRS]); const o = outcome(text, record(text, (q) => !/Minimum 8 years/.test(q)), "full"); assert.notEqual(o.tier, "strong"); });
+await t("3b. [frozen V2 judge input] conflict where extraction keeps only the opening value → a strong match is shown (the defect)", () => { const text = posting([LATE_YRS]); const o = outcome(text, record(text, (q) => !/Minimum 8 years/.test(q)), "frozen"); assert.equal(o.tier, "strong"); });
+await t("3c. [V3 judgeUserFull] same conflict: both values visible → not shown", () => { const text = posting([LATE_YRS]); const o = outcome(text, record(text, (q) => !/Minimum 8 years/.test(q)), "full"); assert.notEqual(o.tier, "strong"); });
 await t("4. extraction fails or is truncated → no record → cannot judge, never shown", () => { const text = posting([LATE_CKA]); const d = G.decide({ job_id: "J1", fit: "cannot_judge", failed: "no extracted requirements", core: [] } as any, { compat: { verdict: "fit", reasons: [] }, anchors: { status: "met", detail: [] }, eligible: true, employer: "x", title: "y" }); assert.equal(d.tier, "rejected"); });
 await t("5. a stated licence after character 6,000 (CA, MBBS, advocate) is caught by deterministic eligibility on the full text, whatever extraction does", () => { const text = posting([LATE_CA]); const o = outcome(text, record(text, (q) => !/Chartered/.test(q))); assert.equal(o.tier, "rejected"); assert.match(o.reasons.join(), /not eligible/); });
 await t("6. the mock extractor (line-based, complete text) records late requirements: the plumbing carries them", async () => {
   const text = posting([LATE_CKA, LATE_YRS]); const f = MK.mockFetch(); const r = await f("x", { body: JSON.stringify({ system: [{ text: EXTRACT_SYSTEM }], messages: [{ content: extractUser("Senior Backend Engineer", "Fable Software", text) }], max_tokens: 4000 }) } as any);
   const body: any = await (r as any).json(); const raw = JSON.parse(body.content[0].text); const v = validateCJR(raw, { id: "J1", text, title: "Senior Backend Engineer" }, "m"); assert.ok(v.ok); assert.ok((v as any).cjr.mandatory.some((m: any) => /CKA/.test(m.quote)) && (v as any).cjr.mandatory.some((m: any) => /Minimum 8 years/.test(m.quote)));
+});
+await t("7. [V3] judgeUserFull keeps the j3 format and the complete text; late requirements sit in JOB TEXT", () => {
+  const text = posting([LATE_CKA, LATE_YRS]); const cj = record(text); const full = J3.judgeUserFull([{ ...job(text), cjr: cj }]), old = judgeUser([{ ...job(text), cjr: cj }]);
+  assert.equal(full.split("\nJOB TEXT:\n")[0], old.split("\nJOB TEXT:\n")[0], "same header and requirement record as frozen j3"); assert.equal(full.split("\nJOB TEXT:\n")[1], text, "the complete text");
+  assert.ok(full.split("\nJOB TEXT:\n")[1].includes(LATE_CKA) && full.split("\nJOB TEXT:\n")[1].includes(LATE_YRS));
+});
+await t("8. [V3] every outcome case is safe with the full-text judge (no strong match for the unsuitable candidate)", () => {
+  for (const late of [[LATE_CKA], [LATE_YRS], [LATE_CKA, LATE_YRS], [LATE_CA]]) { const text = posting(late);
+    for (const keep of [() => true, (q: string) => !late.some((l) => q.includes(l.slice(0, 25)))]) assert.notEqual(outcome(text, record(text, keep)).tier, "strong", late.join(" + ")); }
+});
+await t("9. oversized judge requests: never cut; batches shrink to fit; a job that cannot fit alone is not judged", () => {
+  const big = (i: number, chars: number) => ({ ...job("x".repeat(chars)), id: `J${i}`, cjr: record(posting([LATE_CKA])) });
+  assert.throws(() => J3.judgeUserFull([big(1, 60001)]), /must be flagged oversized, not cut/);
+  const five = [1, 2, 3, 4, 5].map((i) => big(i, 60000)); const b1 = J3.batchJobs(five, 12000); assert.equal(b1.batches.length, 1, "five maximum-size postings fit one request within the 150k-token budget"); assert.ok(J3.estTokens(12000 + J3.judgeUserFull(b1.batches[0]).length) <= J3.JUDGE_INPUT_TOKEN_BUDGET);
+  const b2 = J3.batchJobs(five, 12000, { inputBudget: 60000 }); assert.ok(b2.batches.length > 1 && b2.batches.every((b) => J3.estTokens(12000 + J3.judgeUserFull(b).length) <= 60000), "a smaller budget splits batches instead of cutting text"); assert.equal(b2.batches.flat().length, 5);
+  const b3 = J3.batchJobs([big(9, 60000)], 12000, { inputBudget: 10000 }); assert.deepEqual(b3.tooLarge.map((x) => x.id), ["J9"]); assert.equal(b3.batches.length, 0);
+  assert.ok(b1.maxTokens(b1.batches[0]) <= J3.MODEL_MAX_OUTPUT_TOKENS && b1.maxTokens(b1.batches[0]) >= 10000); assert.ok(J3.JUDGE_INPUT_TOKEN_BUDGET + b1.maxTokens(b1.batches[0]) < J3.MODEL_CONTEXT_TOKENS);
+});
+await t("10. the guard reserves for the larger request: worst case grows with the full text and covers full max_tokens", () => {
+  const text = posting([LATE_CKA]); const cj = record(text); const sys = JUDGE_SYSTEM(block); const oldU = judgeUser([{ ...job(text), cjr: cj }]), newU = J3.judgeUserFull([{ ...job(text), cjr: cj }]);
+  assert.ok(A.worstCase3(sys.length, newU.length, 10000) > A.worstCase3(sys.length, oldU.length, 10000)); assert.ok(A.worstCase3(sys.length, newU.length, 10000) >= ((Math.ceil((sys.length + newU.length) / 2.5) * A.PRICE.in + 10000 * A.PRICE.out) / 1e6) * A.INR_PER_USD);
 });
 console.log(`${n} tests passed`);
