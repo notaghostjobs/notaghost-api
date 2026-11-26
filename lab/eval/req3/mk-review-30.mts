@@ -31,6 +31,10 @@ const shown = [...chosen].sort((a, b) => h(`show30:${a.code}`) - h(`show30:${b.c
 // 2. redaction
 // a street address: a PIN code, a house number, "5th cross", "main road", a layout or apartment, or "<Name> Road/Street/Nagar"
 const ADDR = /\[pin\]|\bno\.\s?#?\d|#\s?\d|\b\d+(st|nd|rd|th)\s+(cross|main)\b|\b(main road|layout|apartments?|flat no|premier)\b|\b[A-Z][a-z]+\s(Road|Street|Nagar)\b/i;
+// personal-details rows: any non-letter prefix (spaces, bullets, a PDF icon glyph), label, an optional colon or dash, then the value up to the column gap
+const PERSONAL_LABEL = /^(date of birth|d\.?o\.?b\.?|birth ?date|age|(husband|father|mother|spouse|wife|guardian)('?s)? name|spouse|address|permanent address|present address|current address|residential address|gender|sex|marital status|nationality|religion|caste|passport( no\.?| number)?|aadha?ar( no\.?| number)?|pan( no\.?| number)|blood group|place|date)\b/i;
+const PERSONAL = /^[^A-Za-z0-9]{0,14}(date of birth|d\.?o\.?b\.?|birth ?date|age|(husband|father|mother|spouse|wife|guardian)('?s)? name|spouse|address|permanent address|present address|current address|residential address|gender|sex|marital status|nationality|religion|caste|passport( no\.?| number)?|aadha?ar( no\.?| number)?|pan( no\.?| number)|blood group|place|date)\s*([:\-]|\s{3,})\s*\S/i;
+const PERSONAL_ROW = /^([^A-Za-z0-9]{0,14})(date of birth|d\.?o\.?b\.?|birth ?date|age|(?:husband|father|mother|spouse|wife|guardian)(?:'?s)? name|spouse|address|permanent address|present address|current address|residential address|gender|sex|marital status|nationality|religion|caste|passport(?: no\.?| number)?|aadha?ar(?: no\.?| number)?|pan(?: no\.?| number)|blood group|place|date)\s*(?:[:\-]|\s{3,})\s*\S.*?(?=\s{3,}|$)/i;
 const NOT_NAME = /^(resume|résumé|curriculum|vitae|cv|profile|summary|contact|personal|details)$/i;
 function redact(text: string): { text: string; nameTokens: number } {
   const lines = text.split("\n"); const first = lines.map((l) => l.trim()).find((l) => l.length > 0) ?? "";
@@ -51,6 +55,15 @@ function redact(text: string): { text: string; nameTokens: number } {
     if (!out[k].trim()) continue; seen++;
     if (looksName && seen === 1) { out[k] = out[k].replace(/\S.*\S|\S/, "[name]"); continue; }
     if (out[k].length < 200 && ADDR.test(out[k])) out[k] = out[k].split("|").map((seg) => (ADDR.test(seg) ? " [address] " : seg)).join("|");
+  }
+  // 26 Nov fix: a personal-details block anywhere in the résumé (not only the header). A labelled row loses its value up to
+  // the column gap (3+ spaces), so text in a second column survives; an address keeps losing its indented continuation lines.
+  let inAddr = false;
+  for (let k = 0; k < out.length; k++) {
+    const l = out[k];
+    if (PERSONAL.test(l)) { out[k] = l.replace(PERSONAL_ROW, (_m, pre, lab) => `${pre}${lab}: [removed]`); inAddr = /address/i.test(l); continue; }
+    if (inAddr && /^\s{8,}\S/.test(l) && !PERSONAL_LABEL.test(l.trim())) { out[k] = l.replace(/^(\s+)\S.*?(?=\s{3,}|$)/, "$1[removed]"); continue; }
+    inAddr = false;
   }
   return { text: out.join("\n"), nameTokens: nameToks.length };
 }
