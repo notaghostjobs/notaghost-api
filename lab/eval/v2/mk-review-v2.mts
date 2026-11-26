@@ -1,0 +1,47 @@
+// Matching v2: blinded human-review package (prepared, not published). Every job V2 showed (gate g3) and every job the
+// original control matcher put in its top 5, for all 19 candidates, merged, de-duplicated and shuffled by a fixed hash.
+// Hidden: which system proposed a job, model verdicts, ranks, scores, AI labels, candidate identity. The candidate side
+// is the redacted evidence record (names, contacts, links and addresses removed). Writes to the private workspace only.
+//   SUPABASE_URL=https://offline.invalid SUPABASE_SERVICE_ROLE_KEY=offline npx tsx lab/eval/v2/mk-review-v2.mts
+import { readFileSync, writeFileSync, readdirSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+const { display } = await import("../../../src/lab/v2/pipeline.ts"); const { postingProblem } = await import("../../../src/lib/textfit.ts");
+const S = "/tmp/claude-0/-home-claude/e75d385d-3415-5d05-84bc-8c909535d0ed/scratchpad", OUT = `${S}/v2/review`; mkdirSync(OUT, { recursive: true });
+const h = (s: string) => createHash("sha256").update(s).digest("hex");
+const views = new Map(readFileSync(`${S}/arch/views-det.jsonl`, "utf8").split("\n").filter(Boolean).map((l) => { const v = JSON.parse(l); return [v.id, v]; }));
+const ctrl = JSON.parse(readFileSync(`${S}/req2/arms-R2.json`, "utf8")).arms["R2:A_control"];
+const items = new Map<string, { p: string; id: string; arms: string[] }>();
+const add = (p: string, id: string, arm: string) => { const k = `${p}|${id}`; const x = items.get(k) ?? { p, id, arms: [] }; if (!x.arms.includes(arm)) x.arms.push(arm); items.set(k, x); };
+for (const [set, root] of [["dev", `${S}/it2/v2/verdicts`], ["heldout", `${S}/ho/v2/verdicts`]]) for (const f of readdirSync(root).filter((x) => x.startsWith(`${set}-B`))) {
+  const p = f.slice(set.length + 1, set.length + 4); const c = JSON.parse(readFileSync(`${S}/v2/cer/${p}.json`, "utf8")); const vs = JSON.parse(readFileSync(`${root}/${f}`, "utf8")).verdicts.filter((x: any) => x.core);
+  const jobs = new Map(vs.map((x: any) => { const w: any = views.get(x.job_id); return [x.job_id, { title: w?.title ?? "", employer: w?.employer ?? "", eligible: true }]; }));
+  for (const s of display(vs, c, jobs as any).strong) add(p, s.job_id, "v2"); for (const id of ctrl[p].top) add(p, id, "control"); }
+const cand = new Map([...new Set([...items.values()].map((x) => x.p))].sort((a, b) => h(`rv2c:${a}`).localeCompare(h(`rv2c:${b}`))).map((p, i) => [p, `Candidate ${String.fromCharCode(65 + Math.floor(i / 26))}${String.fromCharCode(65 + (i % 26))}`]));
+const list = [...items.values()].sort((a, b) => h(`rv2:${a.p}|${a.id}`).localeCompare(h(`rv2:${b.p}|${b.id}`))).map((x, i) => ({ ...x, code: `R${String(i + 1).padStart(3, "0")}` }));
+const cerBlock = (p: string) => { const c = JSON.parse(readFileSync(`${S}/v2/cer/${p}.json`, "utf8")); const sec = (t: string, xs: string[], n: number) => (xs.length ? `${t}\n${xs.slice(0, n).map((x) => `• ${x}`).join("\n")}` : "");
+  return [`Experience: about ${c.years_total.value ?? "unknown"} years`, sec("WORK", c.work_lines, 60), sec("ACHIEVEMENTS", c.achievement_lines, 15), sec("PROJECTS", c.project_lines, 15), sec("LISTED SKILLS (not shown in work)", c.listed_lines, 25), sec("EDUCATION", c.education_lines, 8),
+    `Stated direction (simulated): ${c.target.functions.map((f: any) => f[0]).join(", ")}; level ${c.target.level}`].filter(Boolean).join("\n\n"); };
+const pub = { cases: list.map((x) => { const v: any = views.get(x.id); return { code: x.code, cand: cand.get(x.p)!, title: v.title, employer: v.employer ?? "", posting: postingProblem(v.title, v.whole_raw.slice(v.title.length + 2)).text }; }),
+  cands: Object.fromEntries([...cand].map(([p, c]) => [c, cerBlock(p)])) };
+writeFileSync(`${OUT}/review-v2-key.json`, JSON.stringify(list.map((x) => ({ code: x.code, profile: x.p, candidate: cand.get(x.p), job_id: x.id, arms: x.arms })), null, 1));
+const data = JSON.stringify(pub).replace(/</g, "\\u003c");
+writeFileSync(`${OUT}/Radar-v2-review.html`, `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Radar match review</title>
+<style>:root{--ink:#16111a;--body:#2c2630;--muted:#6f6875;--rule:#e6e2e8;--card:#f6f4f7}*{box-sizing:border-box}body{margin:0;font:15px/1.55 -apple-system,"Segoe UI",Inter,Arial,sans-serif;color:var(--body);background:#fff}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--rule);padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;z-index:2}main{max-width:1280px;margin:0 auto;padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:900px){main{grid-template-columns:1fr}header{position:static}pre{max-height:none!important}}section{border:1px solid var(--rule);border-radius:10px;padding:14px;min-width:0}.full{grid-column:1/-1}h2{font-size:16px;margin:0 0 4px;color:var(--ink)}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 ui-monospace,Menlo,monospace;max-height:62vh;overflow:auto;background:var(--card);padding:10px;border-radius:8px;margin:8px 0 0}.note{color:var(--muted);font-size:13px}
+.opts{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.opts label{border:1px solid var(--rule);border-radius:8px;padding:9px 12px;cursor:pointer;min-height:44px;display:flex;align-items:center}.opts label:has(input:checked){background:var(--card);border-color:var(--ink)}
+.opts input{margin:0 8px 0 0}textarea{width:100%;min-height:56px;font:inherit;border:1px solid var(--rule);border-radius:8px;padding:8px}button{font:inherit;border:1px solid var(--ink);background:#fff;color:var(--ink);border-radius:8px;padding:8px 12px;min-height:40px;cursor:pointer}:focus-visible{outline:2px solid #6b4bd6;outline-offset:2px}</style></head><body>
+<header><b>Radar match review</b><span id="pos"></span><button id="prev">Previous</button><button id="next">Next unanswered</button><button id="exp">Export answers</button><span id="done" class="note"></span></header><main id="m"></main>
+<script>const D=${data};const KEY="ghosted-review-v2";let st={};try{st=JSON.parse(localStorage.getItem(KEY)||"{}")||{}}catch(e){}let i=0;const $=id=>document.getElementById(id);const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const FIT=[["direct","Direct fit"],["adjacent","Adjacent fit"],["stretch","Stretch"],["unsuitable","Unsuitable"],["cant","Cannot judge"]],APPLY=[["yes","Would apply"],["maybe","Maybe"],["no","Would not apply"]];
+const r=(n,o,c)=>o.map(([v,l])=>'<label><input type="radio" name="'+n+'" value="'+v+'"'+(c===v?" checked":"")+">"+l+"</label>").join("");
+function save(){const c=D.cases[i],f=document.querySelector("input[name=fit]:checked"),a=document.querySelector("input[name=apply]:checked");st[c.code]={fit:f?f.value:null,apply:a?a.value:null,note:$("note").value,at:new Date().toISOString()};try{localStorage.setItem(KEY,JSON.stringify(st))}catch(e){}cnt()}
+function cnt(){const n=D.cases.filter(c=>st[c.code]&&st[c.code].fit&&st[c.code].apply).length;$("pos").textContent=D.cases[i].code+" · "+(i+1)+" of "+D.cases.length;$("done").textContent=n+" answered"}
+function render(){const c=D.cases[i],s=st[c.code]||{};$("m").innerHTML='<section class="full"><details><summary><b>How to grade</b></summary><p>Each screen is one job proposed for one candidate. Read the candidate\\'s evidence and the job. <b>Direct fit</b>: same work and specialisation at a realistic level, core requirements shown. <b>Adjacent fit</b>: neighbouring work with strong transferable evidence. <b>Stretch</b>: plausible, but core evidence missing or too big a step. <b>Unsuitable</b>: different work, wrong level or a clear missing must-have. <b>Cannot judge</b>: posting or evidence too thin. Then say whether you would realistically apply in their place, with a short reason if not.</p><p class="note">Names and contact details are hidden. Which system proposed the job is hidden. Answers stay in this browser until exported.</p></details></section>'
++'<section><h2>'+esc(c.title)+'</h2><div class="note">'+esc(c.employer)+'</div><pre>'+esc(c.posting)+'</pre></section><section><h2>'+esc(c.cand)+'</h2><pre>'+esc(D.cands[c.cand])+'</pre></section>'
++'<section class="full"><h2>'+c.code+': fit</h2><div class="opts">'+r("fit",FIT,s.fit)+'</div><h2>Would you realistically apply?</h2><div class="opts">'+r("apply",APPLY,s.apply)+'</div><textarea id="note" placeholder="Reason, if not a clear yes">'+esc(s.note||"")+'</textarea></section>';cnt()}
+document.addEventListener("change",save);document.addEventListener("input",e=>{if(e.target.id==="note")save()});$("prev").onclick=()=>{if(i>0){i--;render();scrollTo(0,0)}};
+$("next").onclick=()=>{for(let k=1;k<=D.cases.length;k++){const n=(i+k)%D.cases.length,a=st[D.cases[n].code];if(!a||!a.fit||!a.apply){i=n;render();scrollTo(0,0);return}}};
+$("exp").onclick=()=>{const b=new Blob([JSON.stringify({audit:"ghosted-review-v2",answers:st},null,1)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="radar-v2-review-answers.json";document.body.appendChild(a);a.click();a.remove()};render();</script></body></html>`);
+console.log(`${list.length} cases · ${cand.size} candidates · v2 ${list.filter((x) => x.arms.includes("v2")).length} · control ${list.filter((x) => x.arms.includes("control")).length} · both ${list.filter((x) => x.arms.length === 2).length}`);
