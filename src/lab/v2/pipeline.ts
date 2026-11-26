@@ -58,9 +58,14 @@ export function shortlistScore(j: Cand, c: CER, subs: Set<string>, rung: number,
   const score = 0.3 * Math.max(0, spec) + 0.25 * cover + 0.15 * lvl + 0.1 * intent + 0.2 * ret + mgr;
   return { score, why };
 }
-export function shortlist(cands: Cand[], c: CER, max = 30, perEmployer = 3) {
+/** Setup change s1 (26 Nov, development only, before any paid run): retrieval's own top 10 eligible jobs are always kept
+ *  (the scorer was demoting jobs retrieval ranked 1–7), and up to 5 per employer (large employers post many real fits). */
+export const SHORTLIST_VERSION = "s1";
+export function shortlist(cands: Cand[], c: CER, max = 30, perEmployer = 5, keepTop = 10) {
   const subs = candidateSubspecs(c), rung = personRung(c), n = cands.length;
-  const scored = cands.map((j) => ({ j, ...shortlistScore(j, c, subs, rung, n) })).sort((a, b) => b.score - a.score);
+  const byScore = cands.map((j) => ({ j, ...shortlistScore(j, c, subs, rung, n) })).sort((a, b) => b.score - a.score);
+  const top = byScore.filter((x) => x.j.poolRank !== null).sort((a, b) => a.j.poolRank! - b.j.poolRank!).slice(0, keepTop);
+  const scored = [...top, ...byScore.filter((x) => !top.includes(x))];
   const per = new Map<string, number>(), seen = new Set<string>(), out: typeof scored = [];
   for (const x of scored) { const e = x.j.employer.toLowerCase(), k = `${e}|${norm(x.j.title)}`; if (seen.has(k) || (per.get(e) ?? 0) >= perEmployer) continue; seen.add(k); per.set(e, (per.get(e) ?? 0) + 1); out.push(x); if (out.length >= max) break; }
   return out;

@@ -16,7 +16,7 @@ export type CJR = {
   credentials: Req[]; usable: boolean; usable_reason: string | null;
 };
 export const sha = (s: string) => createHash("sha256").update(s).digest("hex");
-export const norm = (s: string) => s.toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+export const norm = (s: string) => s.normalize("NFKC").replace(/[•●▪◦‣∙·]/g, " ").toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
 /** A quote is verified when, normalised, it is a substring of the source (at least 8 characters). */
 export function quoted(q: string | null | undefined, source: string): boolean { if (!q) return false; const n = norm(q); return n.length >= 8 && norm(source).includes(n); }
 

@@ -5,6 +5,7 @@
 // is used or sent anywhere.
 import { provenance, type Item } from "../provenance.js";
 import { TOOL_FAMILY_IDS } from "./terms.js";
+import { norm } from "./cjr.js";
 
 export const CER_SCHEMA = "cer/1";
 type Line = { page: number; column: string; section: string; text: string; is_heading?: boolean };
@@ -76,8 +77,11 @@ export function buildCER(id: string, resumeSha: string, layout: { lines: Line[];
 
 /** Every quote in the record must be the résumé's own text (whitespace-normalised, names removed). */
 export function verifyCER(c: CER, resumeText: string): string[] {
-  const hay = clean(resumeText).toLowerCase(); const bad: string[] = [];
-  const check = (q: string) => { const s = q.replace(/\[name\]/g, "").split(/\s{2,}|\|/).map((x) => clean(x).toLowerCase()).filter((x) => x.length > 12); if (s.length && !s.some((x) => hay.includes(x.slice(0, 40)))) bad.push(q.slice(0, 80)); };
+  // compare word sequences after Unicode normalisation (PDF ligatures such as "ﬁ"), without bullets or line wraps
+  const words = (t: string) => norm(t).replace(/[^a-z0-9&%.+#/ -]/g, " ").split(/\s+/).filter(Boolean);
+  const hay = " " + words(resumeText).join(" ") + " "; const bad: string[] = [];
+  const check = (q: string) => { const parts = q.replace(/\[name\]/g, "|").split(/\s{2,}|\|/).map(words).filter((w) => w.join(" ").length > 12);
+    if (parts.length && !parts.some((w) => hay.includes(" " + w.slice(0, 8).join(" ") + " "))) bad.push(q.slice(0, 80)); };
   [...c.work_lines, ...c.listed_lines, ...c.skills.map((s) => s.quote)].forEach(check);
   return bad;
 }
