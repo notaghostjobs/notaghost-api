@@ -1,0 +1,20 @@
+const { chromium, devices } = require("playwright"); const fs = require("fs");
+const F = "file://" + process.argv[2], OUT = process.argv[3];
+(async () => {
+  const b = await chromium.launch(); const ctx = await b.newContext({ acceptDownloads: true, viewport: { width: 1280, height: 900 } }); const p = await ctx.newPage();
+  const errs = []; p.on("pageerror", (e) => errs.push(e.message)); await p.goto(F);
+  const keys = await p.evaluate(() => Object.keys(D.cases[0]).join(","));
+  await p.check("input[name=answer][value=apply]"); await p.click("#next");
+  await p.check("input[name=answer][value=no]"); const why = await p.isVisible("#why-box"); await p.check("input[name=reason][value=level]"); await p.fill("#note", "senior role, candidate is mid");
+  await p.click("#nextOpen"); const pos = await p.textContent("#pos"); const done = await p.textContent("#done");
+  const [dl] = await Promise.all([p.waitForEvent("download"), p.click("#exp")]); const path = await dl.path(); const ex = JSON.parse(fs.readFileSync(path, "utf8"));
+  await p.reload(); const afterReload = await p.textContent("#done");
+  await p.evaluate(() => localStorage.clear()); await p.reload(); const cleared = await p.textContent("#done");
+  await p.evaluate(() => document.querySelector("section.full:last-child details").open = true);
+  await p.fill("#out", JSON.stringify(ex)); await p.click("#restore"); const restored = await p.textContent("#done");
+  await p.screenshot({ path: OUT + "/desk.png" });
+  const m = await b.newContext({ ...devices["iPhone 13"] }); const mp = await m.newPage(); await mp.goto(F); await mp.evaluate(() => document.querySelector("details").open = false);
+  const overflow = await mp.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1); await mp.screenshot({ path: OUT + "/phone.png" });
+  console.log(JSON.stringify({ errs, case_fields: keys, why_shown_on_no: why, pos, done, export: { audit: ex.audit, n: Object.keys(ex.answers).length, v01: ex.answers.V01?.answer, v02: ex.answers.V02 }, afterReload, cleared, restored, phone_horizontal_overflow: overflow }, null, 1));
+  await b.close();
+})();
