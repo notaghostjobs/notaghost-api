@@ -3,7 +3,7 @@
 //   judge:   the evidence judge on each candidate's shortlist (5 jobs a call; candidate evidence cached), then the 0–5 gate
 //   SUPABASE_URL=https://offline.invalid SUPABASE_SERVICE_ROLE_KEY=offline npx tsx src/lab/v2/run-paid.mts <extract|judge> <dev|heldout> <checkpoint 1|2|3> [limit]
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-const { callSonnet, Ledger, firstJson, CHECKPOINTS, MODEL } = await import("./api.js");
+const { callSonnet, Ledger, firstJson, CHECKPOINTS, MODEL, TruncatedError } = await import("./api.js");
 const { CJRCache, validateCJR, EXTRACT_SYSTEM, extractUser, EXTRACTOR_VERSION } = await import("./cjr.js");
 const { JUDGE_SYSTEM, JUDGE_VERSION, candidateBlock, judgeUser, validateVerdict, display, SHORTLIST_VERSION } = await import("./pipeline.js");
 const S = process.env.V2_DATA ?? "/tmp/claude-0/-home-claude/e75d385d-3415-5d05-84bc-8c909535d0ed/scratchpad", OUT = `${S}/v2`;
@@ -20,7 +20,9 @@ if (step === "extract") {
   let done = 0, cached = 0, rejected = 0, dropped = 0;
   for (const id of ids) {
     const j = job(id); if (cache.get(id, j.text)) { cached++; continue; }
-    const r = await callSonnet({ ledger, ceiling, purpose: `extract ${EXTRACTOR_VERSION} ${id}`, system: EXTRACT_SYSTEM, user: extractUser(j.title, j.company, j.text.slice(0, 16000)), maxTokens: 1800, cacheSystem: true });
+    let r: any;
+    try { r = await callSonnet({ ledger, ceiling, purpose: `extract ${EXTRACTOR_VERSION} ${id}`, system: EXTRACT_SYSTEM, user: extractUser(j.title, j.company, j.text.slice(0, 16000)), maxTokens: 4000, cacheSystem: true, thinking: "between_tools", effort: "low" }); }
+    catch (err) { if (err instanceof TruncatedError) { rejected++; writeFileSync(`${OUT}/cjr/${id}.rejected.json`, JSON.stringify({ errors: ["truncated"] })); continue; } throw err; }
     const v = validateCJR(firstJson(r.text), j, MODEL);
     if (!v.ok) { rejected++; writeFileSync(`${OUT}/cjr/${id}.rejected.json`, JSON.stringify({ errors: v.errors, reply: r.text.slice(0, 4000) })); continue; }
     cache.put(v.cjr, j.text); dropped += v.dropped; done++;
@@ -38,7 +40,9 @@ if (step === "judge") {
     const ok = items.filter((x: any) => x.cjr && x.cjr.usable);
     for (let i = 0; i < ok.length; i += 5) {
       const batch = ok.slice(i, i + 5);
-      const r = await callSonnet({ ledger, ceiling, purpose: `judge ${JUDGE_VERSION} ${p}`, system: JUDGE_SYSTEM(block), user: judgeUser(batch), maxTokens: 4000, cacheSystem: true });
+      let r: any = { text: "" };
+      try { r = await callSonnet({ ledger, ceiling, purpose: `judge ${JUDGE_VERSION} ${p}`, system: JUDGE_SYSTEM(block), user: judgeUser(batch), maxTokens: 10000, cacheSystem: true, thinking: "between_tools", effort: "medium" }); }
+      catch (err) { if (!(err instanceof TruncatedError)) throw err; }   // truncated: every job in the batch fails closed below
       const parsed: any = firstJson(r.text); const list: any[] = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
       for (const b of batch) verdicts.push(validateVerdict(list.find((v) => String(v?.job_id) === b.id), b, evidenceText));
     }

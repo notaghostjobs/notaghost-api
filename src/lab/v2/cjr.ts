@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
-export const CJR_SCHEMA = "cjr/1", EXTRACTOR_VERSION = "x1";
+export const CJR_SCHEMA = "cjr/1", EXTRACTOR_VERSION = "x2";   // x2: thinking between_tools, effort low, 4,000 output tokens
 export type Req = { text: string; quote: string; kind: "tool" | "credential" | "domain" | "responsibility" | "experience" | "other"; alternatives?: string[] };
 export type CJR = {
   schema: typeof CJR_SCHEMA; extractor: string; job_id: string; desc_sha256: string; model: string;

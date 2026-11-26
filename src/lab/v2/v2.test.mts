@@ -91,5 +91,14 @@ await t("budget: a substituted model is refused; usage is recorded from the prov
 await t("budget: the request body carries only fields the model accepts (no temperature)", async () => { let body: any = null;
   const cap = async (_u: any, init: any) => { body = JSON.parse(init.body); return new Response(JSON.stringify({ model: "claude-sonnet-5-5", usage: { input_tokens: 1, output_tokens: 1 }, content: [] }), { status: 200 }); };
   await callSonnet({ ledger: led, ceiling: 300, purpose: "t", system: "s", user: "u", maxTokens: 10, fetchImpl: cap as any });
-  assert.deepEqual(Object.keys(body).sort(), ["max_tokens", "messages", "model", "system"]); });
+  assert.deepEqual(Object.keys(body).sort(), ["max_tokens", "messages", "model", "output_config", "system", "thinking"]); assert.equal(body.thinking.type, "between_tools"); });
+await t("budget: a reply cut off at max_tokens is an error, never parsed as a result", async () => { const trunc = async () => new Response(JSON.stringify({ model: "claude-sonnet-5-5", stop_reason: "max_tokens", usage: { input_tokens: 1, output_tokens: 10 }, content: [{ type: "text", text: "{\"function\":" }] }), { status: 200 });
+  const { TruncatedError } = await import("./api.js"); await assert.rejects(callSonnet({ ledger: led, ceiling: 300, purpose: "t", system: "s", user: "u", maxTokens: 10, fetchImpl: trunc as any }), TruncatedError); });
+await t("evidence: a real résumé quote that does not speak to the requirement is downgraded, not demonstrated", () => {
+  const j = { id: "1", title: "Backend", text: "Strong coding skills in Go, Java, or a similar backend language." };
+  const ev = "Highly scalable, handles about 1 million invoices per month. Built Java Spring Boot services.";
+  const off = validateVerdict({ job_id: "1", fit: "stretch", function: "same", specialisation: "same", seniority: "right", confidence: "high", why: "x", core: [{ requirement: "Go or Java", job_quote: "Strong coding skills in Go, Java", status: "demonstrated", resume_quote: "handles about 1 million invoices per month" }] }, j, ev);
+  assert.equal(off.core[0].status, "unverified");
+  const on = validateVerdict({ job_id: "1", fit: "stretch", function: "same", specialisation: "same", seniority: "right", confidence: "high", why: "x", core: [{ requirement: "Go or Java", job_quote: "Strong coding skills in Go, Java", status: "demonstrated", resume_quote: "Built Java Spring Boot services" }] }, j, ev);
+  assert.equal(on.core[0].status, "demonstrated"); });
 console.log(`${n} tests passed`);

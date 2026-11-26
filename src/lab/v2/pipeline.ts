@@ -72,7 +72,7 @@ export function shortlist(cands: Cand[], c: CER, max = 30, perEmployer = 5, keep
 }
 
 // ── F. the judge's contract ─────────────────────────────────────────────────────────────────────────────────────
-export const JUDGE_VERSION = "j1";
+export const JUDGE_VERSION = "j2";   // j2: medium effort; "demonstrated" must share a content word with its requirement
 export type Fit = "direct" | "adjacent" | "stretch" | "unsuitable" | "cannot_judge";
 export type ReqCheck = { requirement: string; job_quote: string; status: "demonstrated" | "transferable" | "unverified" | "confirmed_gap"; resume_quote: string | null };
 export type Verdict = { job_id: string; fit: Fit; function: "same" | "neighbour" | "different"; specialisation: "same" | "neighbour" | "different"; seniority: "right" | "one_up" | "below" | "too_far"; core: ReqCheck[]; gaps: string[]; unverified: string[]; why: string; confidence: "high" | "medium" | "low"; failed?: string };
@@ -100,6 +100,14 @@ export function candidateBlock(c: CER): string {
 export const judgeUser = (jobs: { id: string; title: string; company: string; text: string; cjr: CJR }[]) => jobs.map((j) => `JOB ${j.id}: ${j.title} — ${j.company}\nREQUIREMENTS (extracted, each with its source text):\n${JSON.stringify({ function: j.cjr.function, specialisation: j.cjr.specialisation, mandatory: j.cjr.mandatory, secondary: j.cjr.secondary, years: j.cjr.years, seniority: j.cjr.seniority, manages_people: j.cjr.manages_people, credentials: j.cjr.credentials })}\nJOB TEXT:\n${j.text.slice(0, 6000)}`).join("\n\n=====\n\n");
 
 const FITS = new Set(["direct", "adjacent", "stretch", "unsuitable", "cannot_judge"]), FN = new Set(["same", "neighbour", "different"]), SEN = new Set(["right", "one_up", "below", "too_far"]), ST = new Set(["demonstrated", "transferable", "unverified", "confirmed_gap"]), CONF = new Set(["high", "medium", "low"]);
+const STOP = new Set(["with","and","the","for","from","that","this","have","has","will","your","you","our","years","year","experience","experienced","strong","skills","skill","ability","knowledge","working","work","good","excellent","using","including","such","other","similar","solid","proven","hands","related","least","must","required","requirement","preferred","plus","role","team","teams","across","within","understanding","familiarity","based","level","high","well","more","like","etc"]);
+const content = (t: string) => new Set(norm(t).replace(/[^a-z0-9+#./ ]/g, " ").split(/\s+/).map((w) => w.replace(/[.]+$/, "")).filter((w) => w.length >= 3 && !STOP.has(w)));
+/** The résumé quote shares at least one content word with the requirement or its job quote (stems of 5+ letters count). */
+export function speaksTo(k: { requirement: string; job_quote: string; resume_quote: string | null }): boolean {
+  if (!k.resume_quote) return false; const need = new Set([...content(k.requirement), ...content(k.job_quote)]); const have = content(k.resume_quote);
+  for (const w of have) { if (need.has(w)) return true; if (w.length >= 5) for (const n of need) if (n.length >= 5 && (n.startsWith(w.slice(0, 5)) || w.startsWith(n.slice(0, 5)))) return true; }
+  return false;
+}
 const closed = (job_id: string, failed: string): Verdict => ({ job_id, fit: "cannot_judge", function: "different", specialisation: "different", seniority: "too_far", core: [], gaps: [], unverified: [], why: "", confidence: "low", failed });
 /** Validate one verdict against its sources. Any invented quote, schema breach or contradiction fails closed. */
 export function validateVerdict(raw: any, job: { id: string; text: string; title: string }, evidenceText: string): Verdict {
@@ -113,6 +121,9 @@ export function validateVerdict(raw: any, job: { id: string; text: string; title
     if (k.resume_quote !== null && k.resume_quote !== undefined && !quoted(k.resume_quote, evidenceText)) return closed(job.id, `résumé quote not in evidence: ${String(k.resume_quote).slice(0, 60)}`);
     if ((k.status === "demonstrated" || k.status === "transferable") && !k.resume_quote) return closed(job.id, "demonstrated without a résumé quote");
   }
+  // a real quote that does not speak to the requirement is not evidence: "demonstrated"/"transferable" need a shared content word
+  const core: ReqCheck[] = raw.core.map((k: any) => ((k.status === "demonstrated" || k.status === "transferable") && !speaksTo(k) ? { ...k, status: "unverified", downgraded: true } : k));
+  raw = { ...raw, core };
   const v: Verdict = { job_id: job.id, fit: raw.fit, function: raw.function, specialisation: raw.specialisation, seniority: raw.seniority, core: raw.core, gaps: (raw.gaps ?? []).map(String), unverified: (raw.unverified ?? []).map(String), why: raw.why.slice(0, 400), confidence: raw.confidence };
   // contradictions: a strong fit cannot carry a confirmed gap, a different function, or a too-far level
   if ((v.fit === "direct" || v.fit === "adjacent") && (v.core.some((k) => k.status === "confirmed_gap") || v.function === "different" || v.seniority === "too_far")) return closed(job.id, "verdict contradicts its own checks");

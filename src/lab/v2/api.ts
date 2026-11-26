@@ -26,7 +26,10 @@ export function worstCase(systemChars: number, userChars: number, maxTokens: num
 }
 export class BudgetError extends Error {}
 
-export async function callSonnet(o: { ledger: Ledger; ceiling: number; purpose: string; system: string; user: string; maxTokens: number; cacheSystem?: boolean; fetchImpl?: typeof fetch }): Promise<{ text: string; usage: Usage; inr: number; ms: number }> {
+/** Sonnet 5.5 thinks by default at high effort and thinking uses max_tokens (Checkpoint 1: 80 of 93 replies truncated).
+ *  Every call now names its thinking mode and effort: between_tools is the lowest setting (docs: whats-new-sonnet-5-5). */
+export class TruncatedError extends Error {}
+export async function callSonnet(o: { ledger: Ledger; ceiling: number; purpose: string; system: string; user: string; maxTokens: number; cacheSystem?: boolean; thinking?: "between_tools" | "adaptive"; effort?: "low" | "medium" | "high"; fetchImpl?: typeof fetch }): Promise<{ text: string; usage: Usage; inr: number; ms: number }> {
   if (!apiKey()) throw new BudgetError("no API key (GHOSTED_ANTHROPIC_KEY or ANTHROPIC_API_KEY): no paid call is possible");
   if (o.ceiling > TOTAL_CAP) throw new BudgetError("ceiling above the approved ₹3,000");
   const spent = o.ledger.spent(), worst = worstCase(o.system.length, o.user.length, o.maxTokens);
@@ -34,14 +37,16 @@ export async function callSonnet(o: { ledger: Ledger; ceiling: number; purpose: 
   const t0 = Date.now();
   const res = await (o.fetchImpl ?? fetch)("https://api.anthropic.com/v1/messages", {
     method: "POST", headers: { "content-type": "application/json", "x-api-key": apiKey(), "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: MODEL, max_tokens: o.maxTokens, system: [{ type: "text", text: o.system, ...(o.cacheSystem ? { cache_control: { type: "ephemeral" } } : {}) }], messages: [{ role: "user", content: o.user }] }),
+    body: JSON.stringify({ model: MODEL, max_tokens: o.maxTokens, thinking: { type: o.thinking ?? "between_tools" }, output_config: { effort: o.effort ?? "low" }, system: [{ type: "text", text: o.system, ...(o.cacheSystem ? { cache_control: { type: "ephemeral" } } : {}) }], messages: [{ role: "user", content: o.user }] }),
   });
   const ms = Date.now() - t0; const body: any = await res.json().catch(() => ({}));
   if (!res.ok) { o.ledger.add({ at: new Date().toISOString(), purpose: o.purpose, ok: false, status: res.status, error: String(body?.error?.message ?? "").slice(0, 200), inr: 0, ms }); throw new Error(`API ${res.status}: ${body?.error?.type ?? "error"}`); }
   if (body.model && !String(body.model).startsWith(MODEL)) throw new BudgetError(`provider served ${body.model}, not ${MODEL}`);
   const usage: Usage = body.usage; const inr = rupees(usage);
   o.ledger.add({ at: new Date().toISOString(), purpose: o.purpose, ok: true, model: body.model, usage, inr, ms, stop: body.stop_reason });
-  return { text: (body.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join(""), usage, inr, ms };
+  const text = (body.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
+  if (body.stop_reason === "max_tokens") throw new TruncatedError(`reply cut off at max_tokens (${usage.output_tokens} output tokens)`);
+  return { text, usage, inr, ms };
 }
 /** First JSON object in a reply; null when there is none or it does not parse (callers fail closed). */
 export function firstJson(text: string): unknown { const s = text.indexOf("{"), e = text.lastIndexOf("}"); if (s < 0 || e <= s) return null; try { return JSON.parse(text.slice(s, e + 1)); } catch { return null; } }
