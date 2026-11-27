@@ -113,7 +113,7 @@ await t("cache: exact identity only; reuse within a run and hits from an earlier
 });
 await t("paid calls: impossible without stage authorisation; failed and truncated calls are in the ledger; zero budget refuses", async () => {
   let fetched = 0; const spy = (async () => { fetched++; throw new Error("must not be called"); }) as any;
-  await throwsAsync(() => PL.v3Stage(root, { mode: "paid", modelsDir: MODELS, stage: "pilot", key: "k", fetchImpl: spy }), /not authorised/); assert.equal(fetched, 0); assert.ok(!existsSync(PL.AUTH_FILE), "no authorisation file exists in this commit");
+  await throwsAsync(() => PL.v3Stage(root, { mode: "paid", modelsDir: MODELS, stage: "pilot", key: "k", fetchImpl: spy }), /not authorised|does not cover stage/); assert.equal(fetched, 0); assert.ok(!existsSync(PL.AUTH_FILE), "no authorisation file exists in this commit");
   const fake = join(T, "AUTH.json"); writeFileSync(fake, JSON.stringify({ stage: "pilot", ceiling_inr: 1350, approved_by: "x", approved_at: "y", root_id: root.meta.id })); 
   assert.throws(() => PL.authorisation("pilot", root.meta.id, fake), /not committed/, "an uncommitted authorisation file is refused");
   const L = new A.Ledger3(join(T, "led.jsonl"), "t"); const g = new A.Guard(L, 5); const big = { purpose: "judge", system: "s".repeat(10000), user: "u".repeat(40000), maxTokens: 10000, key: "k" };
@@ -130,6 +130,9 @@ await t("review packages: every displayed job is a case; overlaps share one code
     for (const s of o.strong) assert.ok(key.some((k: any) => k.profile === p && k.job_id === s.job_id && k.arms.includes("v3") && k.package === "P"));
     for (const j of ctl.top) assert.ok(key.some((k: any) => k.profile === p && k.job_id === j && k.arms.includes("control") && k.package === "P")); }
   assert.ok(c.overlap_cases >= 1 && key.filter((k: any) => k.arms.length === 2).every((k: any) => k.arms.join() === "control,v3"));
+  // the case categories are disjoint and add up; shown-by totals count an overlap once per arm (27 Nov reconciliation)
+  assert.equal(c.v3_only_cases + c.control_only_cases + c.overlap_cases + c.audit_cases, c.cases_total); assert.equal(c.v3_only_cases + c.control_only_cases + c.overlap_cases, c.displayed_cases);
+  assert.equal(c.v3_shown + c.control_shown - c.overlap_cases, c.displayed_cases); assert.equal(c.P + c.Q, c.cases_total); assert.equal(c.v3_cases, undefined);
   assert.ok(c.audit_cases > 0 && key.filter((k: any) => !k.arms.length).every((k: any) => k.strata.every((s: string) => /^audit:[ABC]$/.test(s))));
   for (const pkg of ["P", "Q"]) { const html = readFileSync(root.p("review", `Radar-review-synthetic-${pkg}.html`), "utf8"); const data = /const D=(\{.*?\});const PKG/s.exec(html)![1]; const D = JSON.parse(data.replace(/\\u003c/g, "<"));
     assert.deepEqual(Object.keys(D).sort(), ["cases", "people", "version"]); for (const c of D.cases) assert.deepEqual(Object.keys(c).sort(), ["cand", "code", "employer", "location", "text", "title"], "a case carries only what a reviewer needs");

@@ -4,7 +4,7 @@
 import type { Compat } from "./scope.js";
 import type { AnchorCheck } from "./anchors.js";
 
-export const GATE3_VERSION = "g3v3.2";   // v3.2: an anchor the vocabulary cannot see ("none"/"unrecognised") no longer blocks an adjacent fit; the judge's evidence thresholds still apply
+export const GATE3_VERSION = "g3v3.3";   // v3.3: reasons say what the level check found (a step up, a change of track, or not established) and record when it disagrees with the judge; a "neighbour" craft counts like a claimed one; tiers unchanged.  v3.2: an anchor the vocabulary cannot see ("none"/"unrecognised") no longer blocks an adjacent fit; the judge's evidence thresholds still apply
 export type V = { job_id: string; fit: string; function: string; specialisation: string; seniority: string; confidence: string; core: { status: string; resume_quote: string | null; job_quote: string; requirement: string }[]; why: string; failed?: string };
 export type Ctx = { compat: Compat; anchors: AnchorCheck; eligible: boolean; employer: string; title: string };
 export type Decision = { tier: "strong" | "stretch" | "rejected"; reasons: string[] };
@@ -13,6 +13,13 @@ export const DEFAULT_OPTS: GateOpts = { admitAdjacentMedium: true, requireAnchor
 
 const coreCounts = (v: V) => { const n = (s: string) => v.core.filter((k) => k.status === s).length; return { dem: n("demonstrated"), tr: n("transferable"), un: n("unverified"), gap: n("confirmed_gap"), all: v.core.length }; };
 
+/** The level check and the judge read the level in opposite directions: say so instead of asserting one of them. */
+export function levelNote(v: V, x: Ctx): string[] {
+  const up = (x.compat.verdict === "step_up" && x.compat.basis !== "track_change") || x.compat.verdict === "too_far_up", down = x.compat.verdict === "below" || x.compat.verdict === "below_mild";
+  if (up && v.seniority === "below") return ["level readings disagree: the level check reads a step up, the judge reads the job as below the person's level"];
+  if (down && (v.seniority === "one_up" || v.seniority === "too_far")) return ["level readings disagree: the level check reads the job as below the person's level, the judge reads a step up"];
+  return [];
+}
 export function decide(v: V, x: Ctx, o: GateOpts = DEFAULT_OPTS): Decision {
   const r: string[] = [];
   if (!x.eligible) return { tier: "rejected", reasons: ["not eligible"] };
@@ -45,7 +52,7 @@ export function decide(v: V, x: Ctx, o: GateOpts = DEFAULT_OPTS): Decision {
   // neither anchors nor scope could be checked independently: only the judge's own "direct" can carry it
   if (["none", "unrecognised"].includes(x.anchors.status) && x.compat.verdict === "unknown") return { tier: "stretch", reasons: ["adjacent, and nothing could be checked independently of the judge"] };
   if (o.requireAnchorForAdjacent && !["met", "none", "unrecognised"].includes(x.anchors.status)) return { tier: "stretch", reasons: ["adjacent without a demonstrated defining requirement"] };
-  if (x.compat.verdict !== "fit" && x.compat.verdict !== "below_mild") return { tier: "stretch", reasons: ["adjacent and a step up"] };
+  if (x.compat.verdict !== "fit" && x.compat.verdict !== "below_mild") return { tier: "stretch", reasons: [x.compat.verdict === "unknown" ? "adjacent, and the level could not be established" : x.compat.basis === "track_change" ? "adjacent, and a move from management to a hands-on role" : "adjacent and a step up", ...levelNote(v, x)] };
   if (k.dem / k.all < 0.5 || k.un / k.all > 0.25) return { tier: "stretch", reasons: ["adjacent with too little demonstrated"] };
   r.push(`adjacent fit (${v.confidence} confidence, anchors met, scope ${x.compat.verdict})`); return { tier: "strong", reasons: r };
 }

@@ -16,7 +16,7 @@ export const FREEZE_SCHEMA = "ghosted-v3-freeze/1";
 export const FROZEN_FILES: Record<string, string> = {
   // matching
   "src/lab/v3/scope.ts": "seniority rules", "src/lab/v3/anchors.ts": "anchor vocabulary", "src/lab/v3/shortlist.ts": "shortlist and clustering", "src/lab/v3/gate.ts": "gate thresholds",
-  "src/lab/v3/featcore.ts": "features", "src/lab/v3/jobtext.ts": "posting text", "src/lab/v3/judge3.ts": "judge input (full text) and batching", "src/lab/v3/dates.ts": "employment-date reader", "src/lab/v2/pipeline.ts": "eligibility, judge prompt j3, validator", "src/lab/v2/cjr.ts": "extraction prompt x3, validator",
+  "src/lab/v3/featcore.ts": "features", "src/lab/v3/jobtext.ts": "posting text", "src/lab/v3/judge3.ts": "judge input (full text) and batching", "src/lab/v3/dates.ts": "employment-date reader", "src/lab/v3/validate3.ts": "verdict validator (val3.1)", "src/lab/v2/pipeline.ts": "eligibility, judge prompt j3, quote relevance", "src/lab/v2/cjr.ts": "extraction prompt x3, validator",
   "src/lab/v2/terms.ts": "terms", "src/lab/v2/cer.ts": "candidate evidence record", "src/lab/provenance.ts": "provenance", "src/lab/validity.ts": "job validity rules", "src/lab/skills.ts": "skills",
   "src/lab/cir.ts": "candidate record", "src/lib/ontology.ts": "function ontology", "src/lib/career.ts": "career reading", "src/lab/jir.ts": "job records", "src/lab/build-jir.mts": "job record build", "src/lab/prep-cands.mts": "candidate prep",
   // retrieval
@@ -28,7 +28,7 @@ export const FROZEN_FILES: Record<string, string> = {
   "src/lab/v3/api3.ts": "budget enforcement", "src/lab/v2/review-redact.ts": "review privacy boundary", "lab/eval/v3/review-v3.template.html": "review rubric and form", "src/lab/v3/eval/freeze.ts": "freeze rules", "src/lab/v3/eval/cli.mts": "evaluation commands", "lab/eval/v3/feedback.template.html": "candidate feedback form",
   "lab/eval/v2/score-review-v2b.py": "evaluation scoring",
 };
-export const SETTINGS = { model: "claude-sonnet-5-5", extractor: "x3", judge: "j3", shortlist: "s3.3", gate: "g3v3.2", shortlist_size: 40, strong_max: 5, retrieval: { pool: 200, fallback_channels: ["fallback_fulltext", "fallback_title"], fallback_depth: 50, embedding: "bge-small 256 (Xenova ONNX int8)" },
+export const SETTINGS = { model: "claude-sonnet-5-5", extractor: "x3", judge: "j3", shortlist: "s3.4", gate: "g3v3.3", anchors: "v3.2", validator: "val3.1", shortlist_size: 40, strong_max: 5, retrieval: { pool: 200, fallback_channels: ["fallback_fulltext", "fallback_title"], fallback_depth: 50, embedding: "bge-small 256 (Xenova ONNX int8)" },
   freshness_hours: 72, extract_char_limit: 60000, judge_text_chars: 60000, judge_input: "j3-fulltext", date_reader: "v3-dates/1", judge_batch_max: 5, judge_input_token_budget: 150000, max_tokens: { extract: 4000, judge: 10000 }, effort: { extract: "low", judge: "medium" }, thinking: "between_tools", retries: 0, audit_per_candidate: 4, audit_double_share: 0.25 };
 export const EMBED_MODEL_FILE = "Xenova_bge-small-en-v1.5/model_quantized.onnx";
 

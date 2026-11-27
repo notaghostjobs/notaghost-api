@@ -83,7 +83,9 @@ export function reviewStage(root: EvalRoot) {
   for (const [p, l] of labels) { const ks = shuffle(key.filter((k) => k.profile === p && k.arms.length), r); const data = { candidate: p, jobs: ks.map((k) => { const c = caseOf(k); return { code: c.code, title: c.title, employer: c.employer, location: c.location, text: c.text }; }) };
     const dj = JSON.stringify(data); const ds = sha256(dj).slice(0, 16); if (/"arms"|"v3"|"control"/.test(dj)) throw new RootError("feedback form leaks system information");
     root.write(`review/feedback-${p}.html`, ftpl.replace("__DATA__", dj.replace(/</g, "\\u003c")).replace("__SHA__", ds).replace(/__VERSION__/g, FEEDBACK_VERSION)); out.feedback[p] = { data_sha: ds, jobs: ks.length, label: l }; }
-  const counts = { cases_total: key.length, displayed_cases: key.filter((k) => k.arms.length).length, v3_cases: key.filter((k) => k.arms.includes("v3")).length, control_cases: key.filter((k) => k.arms.includes("control")).length,
+  const counts = { cases_total: key.length, displayed_cases: key.filter((k) => k.arms.length).length, v3_only_cases: key.filter((k) => k.arms.length === 1 && k.arms[0] === "v3").length, control_only_cases: key.filter((k) => k.arms.length === 1 && k.arms[0] === "control").length,
+    // shown-by totals count an overlap case in both arms: v3_shown + control_shown − overlap = displayed_cases
+    v3_shown: key.filter((k) => k.arms.includes("v3")).length, control_shown: key.filter((k) => k.arms.includes("control")).length,
     overlap_cases: key.filter((k) => k.arms.length === 2).length, audit_cases: key.filter((k) => !k.arms.length).length, P: key.filter((k) => k.package === "P").length, Q: key.filter((k) => k.package === "Q").length,
     reviewer_judgements: 2 * key.filter((k) => k.package === "P").length + key.filter((k) => k.package === "Q").length };
   out.counts = counts; root.write("review/review-manifest.json", out); root.log("review", counts); return out;

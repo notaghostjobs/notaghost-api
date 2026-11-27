@@ -103,7 +103,9 @@ export function jobScope(job: { title: string; text: string; cjr?: any; det?: an
   return { floor, ceiling, juniorBand, levelBasis: basis, yearsMin, yearsMax, demands, managesPeople, handsOnIC: IC.test(all) && !managesPeople, principal, seniority: sen };
 }
 
-export type Compat = { verdict: "fit" | "step_up" | "below_mild" | "below" | "too_far_up" | "unknown"; reasons: string[] };
+/** basis (v3.2): why a "step_up" was given. "track_change" = the only reason is a move from recent management work to
+ *  a hands-on role, which is a change of track and not a more senior job; "level" = years, floor or scope asked. */
+export type Compat = { verdict: "fit" | "step_up" | "below_mild" | "below" | "too_far_up" | "unknown"; reasons: string[]; basis?: "level" | "track_change" };
 const LEADS = ["team_leadership", "functional_management", "department_leadership", "business_pnl"];
 /** Seniority and responsibility compatibility. "below" and "too_far_up" are hard for the strong list; "step_up" and
  *  "below_mild" may still be strong when the rest of the evidence is strong. Years alone never make someone "below":
@@ -130,8 +132,9 @@ export function compat(cs: CandidateScope, js: JobScope): Compat {
   }
   if (cs.statedLevel !== null && js.ceiling !== null && cs.statedLevel - js.ceiling >= 2) { down = Math.max(down, 2); r.push(`person's stated target ${LEVELS[cs.statedLevel]} is above this band`); }
   if (cs.statedLevel !== null && js.ceiling !== null && cs.statedLevel <= js.ceiling && down) { down = 0; r.push("person's stated target matches this band"); }
+  const levelUp = up;
   if (js.handsOnIC && !cs.recentHandsOn && capacity >= 4) { r.push("hands-on IC role; recent work is management"); up = Math.max(up, 1); }
   if (down >= 2) return { verdict: "below", reasons: r };
-  if (up === 1) return { verdict: "step_up", reasons: r };
+  if (up === 1) return { verdict: "step_up", reasons: r, basis: levelUp >= 1 ? "level" : "track_change" };
   return { verdict: down === 1 ? "below_mild" : "fit", reasons: r };
 }

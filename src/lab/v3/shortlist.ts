@@ -9,7 +9,7 @@
 import type { Compat } from "./scope.js";
 import type { AnchorCheck } from "./anchors.js";
 
-export const SHORTLIST3_VERSION = "s3.3";   // s3.3: clusters split on requirement signature (27 Nov, synthetic fixtures); s3.2: per-channel quota 0, 8 clusters per employer (sweep on the 19 seen profiles)
+export const SHORTLIST3_VERSION = "s3.4";   // s3.4: a defining craft named in the title that the person has not worked in (and no neighbouring one) weighs 0.15; "neighbour" crafts 0.6 (27 Nov, after the pilot; synthetic fixtures).  s3.3: clusters split on requirement signature (27 Nov, synthetic fixtures); s3.2: per-channel quota 0, 8 clusters per employer (sweep on the 19 seen profiles)
 export const DEFAULT_SHORT = { perChannel: 0, perEmployerClusters: 8 };
 /** What must match for two same-title postings to be treated as one: a posting that differs in any of these is
  *  judged on its own. tools: the role-defining tools the posting asks for (generic terms excluded). */
@@ -26,7 +26,11 @@ export function sameRequirements(a?: Signature, b?: Signature): boolean {
 export type ShortOpts = { size: number; perChannel: number; perEmployerClusters: number };
 /** Near-duplicate key: the title's distinct words, order-free, without locations, codes and requisition numbers. */
 export const normTitle = (t: string) => [...new Set(t.toLowerCase().replace(/\(.*?\)|\[.*?\]|r-?\d{4,}|\b\d{3,}\b/g, " ").replace(/[^a-z0-9+#&]+/g, " ").replace(/\b(bengaluru|bangalore|india|blr|karnataka|remote|hybrid|dm|in|the|and|of|for)\b/g, " ").split(/\s+/).filter(Boolean))].sort().join(" ");
-const ANCHOR_W: Record<string, number> = { met: 1, partial: 0.7, claimed_only: 0.55, unrecognised: 0.5, none: 0.5, sibling_only: 0.15, missing: 0.3 };
+const ANCHOR_W: Record<string, number> = { met: 1, partial: 0.7, neighbour: 0.6, claimed_only: 0.55, unrecognised: 0.5, none: 0.5, sibling_only: 0.15, missing: 0.3 };
+/** The job's title itself names a craft from a family the person has not worked in, nor a neighbouring one: sharing
+ *  an industry's words (an operations person and an accountant both write "reconciliation") must not carry it. */
+export const MISSING_IN_TITLE_W = 0.15;
+export const anchorWeight = (a: AnchorCheck) => (a.status === "missing" && a.detail.some((d) => d.status === "missing" && d.source === "title") ? MISSING_IN_TITLE_W : ANCHOR_W[a.status]);
 const SCOPE_W: Record<string, number> = { fit: 1, below_mild: 0.8, step_up: 0.7, unknown: 0.6, too_far_up: 0.15, below: 0.1 };
 /** Kept out of judging: scope clearly below or far above, or the person's recognised craft is a different sibling in
  *  the job's own family. A "missing" anchor only lowers the score (s3.3): the vocabulary may not know the person's
@@ -37,7 +41,7 @@ export const rrf = (ch: Record<string, number | null>) => Object.values(ch).redu
 export function score3(x: SCand): number {
   const ret = Math.min(1, rrf(x.channels) / 0.06);   // ~ top-3 in four channels saturates
   const intent = x.agree === null ? 0.5 : Math.min(1, x.agree);
-  return 0.3 * ANCHOR_W[x.anchors.status] + 0.25 * SCOPE_W[x.compat.verdict] + 0.25 * ret + 0.1 * intent + 0.1 * x.cover;
+  return 0.3 * anchorWeight(x.anchors) + 0.25 * SCOPE_W[x.compat.verdict] + 0.25 * ret + 0.1 * intent + 0.1 * x.cover;
 }
 export type Cluster = { key: string; rep: SCand; members: string[]; score: number };
 export function shortlist3(cands: SCand[], o: ShortOpts) {

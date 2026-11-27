@@ -24,3 +24,28 @@ Evaluation roots now pass the snapshot's capture time as the evaluation date and
 - Found on: 2 of 3 pilot résumés (both read as 1.9 years instead of about 9.5 and 13.5). On the 19 development
   résumés the two readers agree within a year for 16.
 - Decision: recorded, not fixed in production. A production change needs separate approval.
+
+## K5. Defects found in the three-candidate pilot (27 Nov 2026) and what was done
+Fixed on the V3 branch after the pilot (freeze after `35866128…`; regression tests in `src/lab/v3/pilot-fixes.test.mts`):
+- Shortlist took accounting, audit and actuarial postings for a banking/insurance operations candidate. Cause: the
+  vocabulary let shared words ("reconciliation", "audit") stand for the accounting craft and had no anchors for
+  operations crafts. Now: operations families exist, neighbouring crafts are "neighbour", and a craft named in the
+  title that the person has not worked in weighs 0.15 in the shortlist (s3.4).
+- Anchor coverage: 56 → 84 anchors, 19 → 30 families (anchors v3.2).
+- Validator (val3.1, `src/lab/v3/validate3.ts`; the V2 validator is untouched): quotes compared word for word ignoring
+  spacing and punctuation; years of education no longer compared with years of work; a requirement decided by the
+  computed years needs no résumé line.
+- Gate label (g3v3.3): "adjacent and a step up" was shown for a move from management to a hands-on role.
+- Review manifest counted an overlap case in both arms' totals (categories summed to 38 for 36 cases).
+
+Still open after the fixes:
+- K5a. The judge sometimes writes a "résumé quote" that is not in the résumé (3 invented, 1 near-paraphrase in 120
+  pilot verdicts). The verdict is rejected and the posting dropped; there is no repair or retry (proposal on Issue #2,
+  not enabled).
+- K5b. A person's craft counts as "demonstrated" when an anchor word appears in a work line. One loose word can still
+  place someone in a craft they only worked beside.
+- K5c. An adjacent fit that is a move from management to a hands-on role stays "stretch". Whether that is right is a
+  product decision, not settled here.
+- K5d. The cost model was 18% low in the pilot (₹108.53 per candidate against ₹92).
+- K5e. The fixes were written after seeing P01–P03. Those three are development data; the fixes are unvalidated until
+  a fresh, untouched candidate set is run.
