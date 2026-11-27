@@ -1,0 +1,431 @@
+{
+ "at": "2026-11-27T22:39:35.838Z",
+ "limit": "all",
+ "found": {
+  "greenhouse": 4290,
+  "lever": 0,
+  "ashby": 1100
+ },
+ "archive": "CC-MAIN-2026-47",
+ "totals": {
+  "boards": 6835,
+  "answered": 6057,
+  "gone": 778,
+  "other_status": 0,
+  "roles": 215301,
+  "us": 138181,
+  "us_employers": 4763,
+  "curated": 42216,
+  "curated_employers": 4081,
+  "curated_remote": 10277,
+  "curated_text_mb": 265,
+  "seconds": 2211
+ },
+ "storing": true,
+ "store": {
+  "rows": 138181,
+  "failed": 0,
+  "said": null,
+  "closed": "done",
+  "known": 6094
+ },
+ "left_behind": {
+  "not_fresh": 62592,
+  "thin_text": 94,
+  "same_role_elsewhere": 30799,
+  "middleman": 2028,
+  "commission": 452
+ },
+ "by": {
+  "func": {
+   "finance": 1297,
+   "support": 874,
+   "marketing": 1898,
+   "engineering": 9909,
+   "product": 1277,
+   "sales": 3343,
+   "other": 14064,
+   "data": 3145,
+   "people": 1185,
+   "legal": 675,
+   "design": 980,
+   "operations": 1723,
+   "healthcare": 1846
+  },
+  "level": {
+   "mid": 17961,
+   "entry": 1654,
+   "senior": 16779,
+   "leader": 4659,
+   "intern": 1163
+  },
+  "visa": {
+   "unstated": 36412,
+   "yes": 365,
+   "no": 5439
+  }
+ },
+ "middlemen": [
+  {
+   "system": "lever",
+   "ref": "jobgether",
+   "us": 1362
+  },
+  {
+   "system": "greenhouse",
+   "ref": "wilsonelserattorneys",
+   "us": 152
+  },
+  {
+   "system": "greenhouse",
+   "ref": "praxisprecisionmedicines",
+   "us": 141
+  },
+  {
+   "system": "greenhouse",
+   "ref": "morrisonmaierle",
+   "us": 57
+  },
+  {
+   "system": "greenhouse",
+   "ref": "wilsonelser",
+   "us": 46
+  },
+  {
+   "system": "greenhouse",
+   "ref": "ensafeinc",
+   "us": 39
+  },
+  {
+   "system": "greenhouse",
+   "ref": "thebrattlegroup",
+   "us": 32
+  },
+  {
+   "system": "greenhouse",
+   "ref": "theknotworldwide",
+   "us": 23
+  },
+  {
+   "system": "greenhouse",
+   "ref": "onbe",
+   "us": 18
+  },
+  {
+   "system": "greenhouse",
+   "ref": "logicsource",
+   "us": 16
+  },
+  {
+   "system": "greenhouse",
+   "ref": "verisign",
+   "us": 13
+  },
+  {
+   "system": "ashby",
+   "ref": "pragmatike",
+   "us": 9
+  },
+  {
+   "system": "greenhouse",
+   "ref": "edb",
+   "us": 9
+  },
+  {
+   "system": "greenhouse",
+   "ref": "finitestate",
+   "us": 9
+  },
+  {
+   "system": "greenhouse",
+   "ref": "citrushealthgroup",
+   "us": 7
+  },
+  {
+   "system": "greenhouse",
+   "ref": "pilothq",
+   "us": 6
+  },
+  {
+   "system": "greenhouse",
+   "ref": "submittable",
+   "us": 6
+  }
+ ],
+ "middlemen_count": 17,
+ "biggest_curated": [
+  [
+   "andurilindustries",
+   616,
+   2470
+  ],
+  [
+   "spacex",
+   559,
+   2859
+  ],
+  [
+   "bayada",
+   475,
+   2557
+  ],
+  [
+   "accenturefederalservices",
+   327,
+   708
+  ],
+  [
+   "hearst",
+   251,
+   383
+  ],
+  [
+   "surgerypartners",
+   229,
+   350
+  ],
+  [
+   "rocketlab",
+   217,
+   471
+  ],
+  [
+   "openai",
+   206,
+   672
+  ],
+  [
+   "relativity",
+   175,
+   405
+  ],
+  [
+   "oosmanagementcorp",
+   165,
+   1527
+  ],
+  [
+   "equipmentsharecom",
+   158,
+   996
+  ],
+  [
+   "saronic",
+   135,
+   310
+  ],
+  [
+   "loenbro",
+   131,
+   379
+  ],
+  [
+   "anthropic",
+   129,
+   493
+  ],
+  [
+   "lucidmotors",
+   119,
+   377
+  ],
+  [
+   "crusoe",
+   116,
+   289
+  ],
+  [
+   "stripe",
+   115,
+   358
+  ],
+  [
+   "chaosindustries",
+   111,
+   174
+  ],
+  [
+   "altentechnologyusa",
+   110,
+   230
+  ],
+  [
+   "axon",
+   110,
+   369
+  ],
+  [
+   "formlabs",
+   110,
+   212
+  ],
+  [
+   "voyagertechnologiesinc",
+   109,
+   189
+  ],
+  [
+   "CesiumAstro",
+   99,
+   353
+  ],
+  [
+   "cssmerge",
+   94,
+   272
+  ],
+  [
+   "base-power",
+   91,
+   199
+  ],
+  [
+   "coreweave",
+   91,
+   309
+  ],
+  [
+   "clera",
+   90,
+   173
+  ],
+  [
+   "cloudflare",
+   89,
+   267
+  ],
+  [
+   "natera",
+   89,
+   218
+  ],
+  [
+   "purestorage",
+   89,
+   212
+  ],
+  [
+   "ecpcareers",
+   86,
+   444
+  ],
+  [
+   "zoox",
+   85,
+   243
+  ],
+  [
+   "fluidstack",
+   84,
+   243
+  ],
+  [
+   "hadrian-automation",
+   84,
+   187
+  ],
+  [
+   "vardaspace",
+   84,
+   135
+  ],
+  [
+   "databricks",
+   83,
+   471
+  ],
+  [
+   "apex-technology-inc",
+   83,
+   141
+  ],
+  [
+   "esri",
+   83,
+   454
+  ],
+  [
+   "snowflake",
+   81,
+   225
+  ],
+  [
+   "trueanomalyinc",
+   80,
+   214
+  ],
+  [
+   "grvty",
+   79,
+   217
+  ],
+  [
+   "formenergy",
+   78,
+   211
+  ],
+  [
+   "otterbein",
+   76,
+   173
+  ],
+  [
+   "waymo",
+   75,
+   287
+  ],
+  [
+   "spsnorthamerica",
+   74,
+   146
+  ],
+  [
+   "harvey",
+   73,
+   269
+  ],
+  [
+   "olsson",
+   71,
+   312
+  ],
+  [
+   "doordashusa",
+   70,
+   400
+  ],
+  [
+   "rebuildmanufacturing",
+   70,
+   138
+  ],
+  [
+   "specialtydentalbrands",
+   70,
+   124
+  ]
+ ],
+ "by_system": [
+  {
+   "system": "greenhouse",
+   "boards": 5008,
+   "answered": 4274,
+   "us": 102379,
+   "curated": 30684
+  },
+  {
+   "system": "lever",
+   "boards": 223,
+   "answered": 223,
+   "us": 11042,
+   "curated": 1598
+  },
+  {
+   "system": "ashby",
+   "boards": 1604,
+   "answered": 1560,
+   "us": 24760,
+   "curated": 9934
+  }
+ ]
+}
