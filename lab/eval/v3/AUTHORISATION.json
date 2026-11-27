@@ -1,0 +1,9 @@
+{
+ "stage": "pilot",
+ "root_id": "pilot-2026-11-27",
+ "ceiling_inr": 800,
+ "approved_by": "founder (Karthik), in chat",
+ "approved_at": "2026-11-27T08:21:00Z",
+ "approval": "Pilot approved up to ₹1,400 for five candidates (26 Nov); 'run the three now' (27 Nov). Ceiling set to ₹800: above the ₹787.50 worst-case reservation for these three candidates, below the approved maximum.",
+ "conditions": ["Sonnet 5.5 only", "frozen configuration 35866128…", "stop after the first candidate and report before the remaining two", "not an authorisation for the 40-person evaluation"]
+}
