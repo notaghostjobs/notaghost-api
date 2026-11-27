@@ -6,7 +6,7 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { extname, join } from "node:path";
 import { SPEC } from "../../../lib/ontology.js";
-import { analyse } from "../../../lib/career.js";
+import { employment } from "../dates.js";
 import { sha256 } from "./root.js";
 
 export const INTAKE_SCHEMA = "ghosted-intake/1", CONSENT_VERSION = "consent-v1", TEST_ID = "ghosted-radar-v3-eval";
@@ -75,8 +75,8 @@ export function validate(dir: string, intake: any, others: { id: string; sketch:
   if (typeof intake.years_experience !== "number" || !(intake.years_experience >= 0 && intake.years_experience <= 50)) hold("years of experience missing or invalid", "How many years have you worked full-time?");
   if (typeof intake.preferred_industry !== "string" || !intake.preferred_industry) hold("industry preference not answered (\"any\" is a valid answer)", "Do you prefer a particular industry?");
   // contradictions: hold and ask, never resolve ourselves
-  if (text && typeof intake.years_experience === "number") { const a = analyse(text, now); d.resume_years = a.years ?? null;
-    if (a.years !== null && Math.abs(a.years - intake.years_experience) > 3) hold(`stated ${intake.years_experience} years; the résumé reads about ${a.years}`, "Your résumé and your answer differ on years of experience. Which is right?"); }
+  if (text && typeof intake.years_experience === "number") { const e = employment(text, now); d.resume_years = e.total_years; (d as any).resume_years_basis = e.basis;
+    if (e.total_years !== null && Math.abs(e.total_years - intake.years_experience) > 3) hold(`stated ${intake.years_experience} years; the résumé's ${e.basis === "dated_roles" ? "dated roles add up to" : "own statement says"} about ${e.total_years}`, "Your résumé and your answer differ on years of experience. Which is right?"); }
   if (intake.target_level === "leader" && intake.years_experience < LEADER_MIN_YEARS && intake.career_change === "no") hold(`leader roles with ${intake.years_experience} years`, "You chose leader roles with fewer than 8 years: is that intended?");
   if (intake.target_level === "senior" && intake.years_experience < 2) hold(`senior roles with ${intake.years_experience} years`, "You chose senior roles with under 2 years: is that intended?");
   if (intake.target_level === "entry" && intake.years_experience > SENIOR_MIN_YEARS * 2 && intake.career_change === "no") hold(`entry roles with ${intake.years_experience} years and no career change`, "You chose entry roles with many years of experience: is this a career change?");

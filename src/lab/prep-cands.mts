@@ -14,7 +14,7 @@ for (const r of raw) { const e = entryFor({ id: r.id, title: cleanTitle(r.title)
 const jirs = readFileSync(jirF, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); const ids = jirs.map((j: any) => j.posting.id);
 const answers = JSON.parse(readFileSync(ans, "utf8"));
 for (const p of JSON.parse(readFileSync(prof, "utf8"))) {
-  const resume = readFileSync(p.resume, "utf8").slice(0, 14000); const intent = intentFrom(answers[p.id]); const c = cir(p.id, resume, intent);
+  const resume = readFileSync(p.resume, "utf8").slice(0, 14000); const intent = intentFrom(answers[p.id]); const c = process.env.CIR_DATES ? cir(p.id, resume, intent, new Date(process.env.CIR_NOW!), { dates: process.env.CIR_DATES }) : cir(p.id, resume, intent);   // evaluation roots pass the V3 date reader and the evaluation date
   const want = new Map<string, number>(intent.secondary ? [[intent.primary, 0.7], [intent.secondary, 0.3]] : [[intent.primary, 1]]);
   const belief = { want, level: intent.level, years: intent.years, field: intent.domain, stretch: intent.stretch, move: intent.transition };
   const mine = resumeTerms(resume, idf); const pool: any[] = []; const sig: number[][] = [];

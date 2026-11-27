@@ -90,19 +90,22 @@ export function prepareStage(root: EvalRoot, modelsDir: string) {
   const rows = root.readLines("inventory", "snapshot.jsonl"); const fresh = rows.filter((r) => r.description && ts(r.last_seen).getTime() >= new Date(cutoff).getTime());
   root.write("jobs/eligible-snapshot.jsonl", fresh.map((r) => JSON.stringify(r)).join("\n") + "\n");
   root.write("jobs/eligibility.json", { cutoff, snapshot_rows: rows.length, fresh_with_description: fresh.length, stale_or_empty: rows.length - fresh.length });
-  for (const d of ["jobs/emb", "candidates/layout", "candidates/cand", "candidates/cer", "candidates/cand-v2", "judge/requests", "judge/responses"]) mkdirSync(root.p(d), { recursive: true });
+  for (const d of ["jobs/emb", "candidates/layout", "candidates/cand", "candidates/cer", "candidates/employment", "candidates/cand-v2", "judge/requests", "judge/responses"]) mkdirSync(root.p(d), { recursive: true });
   // job records, views and local embeddings
   tsx(root, "src/lab/build-jir.mts", [root.p("jobs/eligible-snapshot.jsonl"), root.p("jobs")]);
   sh(root, "python3", ["-I", join(REPO, "lab/py/embed.py"), "--model", "bge-small", "--views", root.p("jobs/views-det.jsonl"), "--fields", "resp,skills,whole,whole_raw", "--out", root.p("jobs/emb"), "--models", modelsDir]);
   // 2. résumés: layout with provenance (PDF reader, or the same headings for text), then the candidate records
   for (const p of profiles) { const lay = root.p(`candidates/layout/${p.id}.json`);
     if (p.format === "pdf") sh(root, "python3", ["-I", join(REPO, "lab/py/resume_layout.py"), root.need("intake", p.id, p.source_file), lay]); else sh(root, "python3", ["-I", join(REPO, "lab/py/text_layout.py"), p.resume, lay]); }
-  tsx(root, "src/lab/prep-cands.mts", [root.p("candidates/profiles.json"), root.p("intent/answers.json"), root.p("jobs/eligible-snapshot.jsonl"), root.p("jobs/jir-det.jsonl"), root.p("candidates/cand")]);
+  // candidate records with the V3 employment-date reader, ongoing roles ending at the snapshot's capture time
+  tsx(root, "src/lab/prep-cands.mts", [root.p("candidates/profiles.json"), root.p("intent/answers.json"), root.p("jobs/eligible-snapshot.jsonl"), root.p("jobs/jir-det.jsonl"), root.p("candidates/cand")], { CIR_DATES: "v3", CIR_NOW: new Date(meta.captured_at).toISOString() });
   const label = (k: string) => (SPEC.get(k) as any)?.label ?? k;
   for (const p of profiles) {
     const resume = readFileSync(p.resume, "utf8"); const old = root.read("candidates", "cand", `${p.id}.json`); const lay = root.read("candidates", "layout", `${p.id}.json`);
     const c: any = buildCER(p.id, sha256(resume), lay, old.cir.done, answers[p.id], label); c.target.source = "candidate";
     const bad = verifyCER(c, resume); root.write(`candidates/cer/${p.id}.json`, c);
+    if (!old.cir.done.employment) throw new RootError(`candidate ${p.id}: no employment-date record (the V3 date reader did not run)`);
+    root.write(`candidates/employment/${p.id}.json`, old.cir.done.employment);   // every date range with its source line, classification and flags
     const v = { ...old.cir.views, experience: [...c.work_lines, ...c.achievement_lines, ...c.project_lines].join(". ").slice(0, 4000), skills: c.listed_lines.join(", ").slice(0, 1200) };
     root.write(`candidates/cand-v2/${p.id}.json`, { ...old, cir: { ...old.cir, views: v } }); root.log("cer", { candidate: p.id, work_lines: c.work_lines.length, unverified_quotes: bad.length, warnings: c.parser.warnings });
   }
