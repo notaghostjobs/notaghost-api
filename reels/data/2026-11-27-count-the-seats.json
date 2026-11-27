@@ -1,0 +1,15 @@
+{
+  "slug": "2026-11-27-count-the-seats",
+  "hook": { "count": 19, "line": "internships open in Bengaluru right now.", "sub": "Count them." },
+  "companies": [
+    { "name": "Thermo Fisher Scientific", "openings": 10, "example": "IT Intern", "checked": "26 Nov" },
+    { "name": "CloudThat", "openings": 5, "example": "Tech Trainer Intern, Jan 2027 batch", "checked": "27 Nov" },
+    { "name": "Sarvam AI", "openings": 2, "example": "Product User Research Intern", "checked": "26 Nov" },
+    { "name": "Deconstruct", "openings": 2, "example": "Intern, Founder's Office", "checked": "26 Nov" }
+  ],
+  "turn": { "old": "Applying everywhere?", "new": "Apply where it's open." },
+  "send": "Send this to your batchmate.",
+  "cta": { "pill": "Comment INTERN", "sub": "We'll DM you every link." },
+  "definition": "Openings = internship postings open on each company's own careers site, checked 26–27 Nov 2026.",
+  "caption": "19 internships open in Bengaluru right now, every one checked on the company's own careers site.\n\nWhich one are you applying to first: 1, 2, 3 or 4?\n\nComment INTERN and we'll DM you all the links.\nNo résumé yet? Our first résumé for one role is ₹49 (link in bio).\n\n#bangaloreinternships #internship #freshersjobs #bengalurujobs"
+}
